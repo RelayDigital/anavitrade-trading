@@ -16,19 +16,6 @@ import { createExecutionJobsForIntent } from "./execution/dispatch";
 import { validateStructure, structuralConfidenceMultiplier } from "./smc/validator";
 import { quickMtfAdjust } from "./signals/mtf-matrix";
 
-/* ─── Market allowlist ──────────────────────────────────────────────────
-   Only symbols in this list are dispatched to live exchange connections.
-   This is the strict trust boundary between third-party signal data and
-   real order submission. Update this list as new pairs are traded.
-   Core: BTC, ETH, SOL, BNB, XRP, ADA, DOGE, DOT, AVAX, LINK, MATIC.
-   Alt:  APT, ARB, OP, ATOM, NEAR, SUI, TIA, INJ, SEI, PYTH, JTO, WIF. */
-const ALLOWLIST_MARKETS = new Set([
-  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
-  "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT", "MATICUSDT",
-  "APTUSDT", "ARBUSDT", "OPUSDT", "ATOMUSDT", "NEARUSDT",
-  "SUIUSDT", "TIAUSDT", "INJUSDT", "SEIUSDT", "PYTHUSDT", "JTOUSDT", "WIFUSDT",
-]);
-
 /* ─── Sources ─────────────────────────────────────────────────────────── */
 
 const PROXY_URL = "https://coinlegs-worker.erhazeariel.workers.dev/latest";
@@ -389,16 +376,6 @@ export async function runCoinlegsScraper() {
   if (tierASignals.length > 0) {
     for (const sig of tierASignals) {
       try {
-        // ── Market allowlist gate ──
-        // Reject signals for unlisted pairs — this is the trust boundary between
-        // third-party Coinlegs data and live exchange orders.
-        const marketKey = (sig.marketName ?? "").replace("/", "").toUpperCase();
-        if (!ALLOWLIST_MARKETS.has(marketKey)) {
-          smcRejected++;
-          console.log(`[CoinlegsScraper] allowlist rejected ${sig.marketName} ${sig.period} — not in ALLOWLIST_MARKETS`);
-          continue;
-        }
-
         // ── SMC Structural Gating ──
         const structuralRecheck = validateStructure({
           period: sig.period, price: sig.price || 0, pct24: 0,
