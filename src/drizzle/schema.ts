@@ -31,6 +31,7 @@ export const liveAccounts = sqliteTable("live_accounts", {
   maxLeverage: text().default("10.00").notNull(),
   maxPositionSizePct: text().default("10.00").notNull(),
   maxTotalExposurePct: text().default("25.00").notNull(),
+  displayMode: text().default("live").notNull(),
   createdAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
   updatedAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
 });
@@ -40,6 +41,7 @@ export type InsertLiveAccount = typeof liveAccounts.$inferInsert;
 
 export const demoAccounts = sqliteTable("demo_accounts", {
   id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+  userId: integer({ mode: "number" }).unique(),
   username: text().notNull(),
   email: text().notNull(),
   startingCapital: text().notNull(),

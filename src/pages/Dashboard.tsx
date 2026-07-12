@@ -11,7 +11,8 @@ import {
   DollarSign, Activity, Settings, LogOut,
   Zap, ZapOff, Clock, HardDrive, Wifi,
   RefreshCw, ChevronLeft, ChevronRight, Trophy, Flame,
-  Bot, AlertTriangle, CheckCircle2, XCircle, SkipForward
+  Bot, AlertTriangle, CheckCircle2, XCircle, SkipForward,
+  BarChart3, Percent, TrendingUp as ChartUp,
 } from "lucide-react";
 import WalletPanel from "@/components/WalletPanel";
 import ConnectedExchangesPanel from "@/components/ConnectedExchangesPanel";

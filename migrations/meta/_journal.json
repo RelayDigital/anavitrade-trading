@@ -50,6 +50,13 @@
       "when": 1783930000000,
       "tag": "0006_unified_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786400000000,
+      "tag": "0007_demo_mode",
+      "breakpoints": true
     }
   ]
 }

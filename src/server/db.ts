@@ -10,6 +10,7 @@ import {
   web3WalletSessions, InsertWeb3WalletSession,
   coinlegsSignals,
   scraperRuns,
+  type DemoAccount, type DemoTrade, type PortfolioSnapshot,
 } from "../drizzle/schema";
 import { nanoid } from "nanoid";
 
@@ -262,15 +263,83 @@ export async function updateRiskSettings(userId: number, settings: { maxDailyLos
   await writeAuditLog(userId, "RISK_SETTINGS_UPDATED", JSON.stringify(settings));
 }
 
+/* ── Per-User Demo Account ────────────────────────────────────────── */
+
+export async function getOrCreateDemoAccountForUser(
+  userId: number,
+  opts?: { startingCapital?: string; username?: string; email?: string }
+): Promise<DemoAccount> {
+  const db = getDb();
+  const existing = await db.select().from(demoAccounts).where(eq(demoAccounts.userId, userId)).limit(1);
+  if (existing.length > 0) return existing[0];
+
+  const now = new Date();
+  const capital = opts?.startingCapital ?? "10000.00";
+  await db.insert(demoAccounts).values({
+    username: opts?.username ?? `user_${userId}`,
+    email: opts?.email ?? `user_${userId}@anavitrade.demo`,
+    startingCapital: capital,
+    currentBalance: capital,
+    accessToken: nanoid(32),
+    status: "active",
+    userId,
+    positionSizePct: "5.00",
+    leverage: "3.00",
+    strategyTier: "A",
+    pyramidingEnabled: false,
+    pyramidMaxEntries: 3,
+    pyramidScalePct: "0.50",
+    createdAt: now,
+    updatedAt: now,
+  } as any);
+
+  const created = await db.select().from(demoAccounts).where(eq(demoAccounts.userId, userId)).limit(1);
+  return created[0];
+}
+
+export async function getDemoAccountByUserId(userId: number): Promise<DemoAccount | null> {
+  const db = getDb();
+  const result = await db.select().from(demoAccounts).where(eq(demoAccounts.userId, userId)).limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function getDemoTradesByUserId(userId: number): Promise<DemoTrade[]> {
+  const account = await getDemoAccountByUserId(userId);
+  if (!account) return [];
+  return getDemoTradesByAccountId(account.id);
+}
+
+export async function getPortfolioSnapshotsByUserId(userId: number): Promise<PortfolioSnapshot[]> {
+  const account = await getDemoAccountByUserId(userId);
+  if (!account) return [];
+  return getPortfolioSnapshotsByAccountId(account.id);
+}
+
+/* ── Display Mode ─────────────────────────────────────────────────── */
+
+export async function getDisplayMode(userId: number): Promise<"live" | "demo"> {
+  const db = getDb();
+  const result = await db.select({ displayMode: liveAccounts.displayMode })
+    .from(liveAccounts).where(eq(liveAccounts.userId, userId)).limit(1);
+  if (result.length === 0) return "live";
+  return (result[0].displayMode as "live" | "demo") ?? "live";
+}
+
+export async function setDisplayMode(userId: number, mode: "live" | "demo"): Promise<void> {
+  const db = getDb();
+  await getOrCreateLiveAccount(userId);
+  await db.update(liveAccounts).set({ displayMode: mode } as any).where(eq(liveAccounts.userId, userId));
+}
+
 /* Demo Account Helpers */
 
-export async function createDemoAccount(input: { username: string; email: string; startingCapital: string }) {
+export async function createDemoAccount(input: { username: string; email: string; startingCapital: string; userId?: number }) {
   const db = getDb();
   const accessToken = nanoid(32);
   await db.insert(demoAccounts).values({
     username: input.username, email: input.email,
     startingCapital: input.startingCapital, currentBalance: input.startingCapital,
-    accessToken, status: "active",
+    accessToken, status: "active", userId: input.userId ?? null,
   } as any);
   return { accessToken };
 }

@@ -21,6 +21,12 @@ import {
   getJulyResults,
   getOrCreatePublicDemoAccount, updateDemoAccountSettings, PUBLIC_DEMO_TOKEN,
   getPublicDemoStats,
+  getOrCreateDemoAccountForUser,
+  getDemoAccountByUserId,
+  getDemoTradesByUserId,
+  getPortfolioSnapshotsByUserId,
+  getDisplayMode,
+  setDisplayMode,
 } from "./db";
 import {
   getBinanceSettings, toggleKillSwitch as toggleBinanceKillSwitch,
@@ -156,6 +162,14 @@ export const appRouter = router({
       await updateRiskSettings(ctx.user.id, input);
       return { success: true };
     }),
+    getDisplayMode: protectedProcedure.query(async ({ ctx }) => {
+      const mode = await getDisplayMode(ctx.user.id);
+      return { mode };
+    }),
+    setDisplayMode: protectedProcedure.input(z.object({ mode: z.enum(["live", "demo"]) })).mutation(async ({ input, ctx }) => {
+      await setDisplayMode(ctx.user.id, input.mode);
+      return { success: true, mode: input.mode };
+    }),
   }),
 
   /* Web3 Wallet & Copytrade */
@@ -180,8 +194,45 @@ export const appRouter = router({
   /* Demo Account */
   demo: router({
     create: protectedProcedure.input(z.object({ startingCapital: z.number().int().positive() })).mutation(async ({ input, ctx }) => {
-      const { accessToken } = await createDemoAccount({ username: ctx.user.name ?? ctx.user.email ?? `user_${ctx.user.id}`, email: ctx.user.email ?? `user_${ctx.user.id}@anavitrade.demo`, startingCapital: String(input.startingCapital) });
+      const { accessToken } = await createDemoAccount({
+        username: ctx.user.name ?? ctx.user.email ?? `user_${ctx.user.id}`,
+        email: ctx.user.email ?? `user_${ctx.user.id}@anavitrade.demo`,
+        startingCapital: String(input.startingCapital),
+        userId: ctx.user.id,
+      });
       return { accessToken };
+    }),
+
+    /* Per-User Demo (userId-based, protected — for Dashboard mode toggle) */
+    getMyDemo: protectedProcedure.query(async ({ ctx }) => {
+      const account = await getOrCreateDemoAccountForUser(ctx.user.id, {
+        username: ctx.user.name ?? `user_${ctx.user.id}`,
+        email: ctx.user.email ?? `user_${ctx.user.id}@anavitrade.demo`,
+      });
+      return { account };
+    }),
+    getMyTrades: protectedProcedure.query(async ({ ctx }) => {
+      return getDemoTradesByUserId(ctx.user.id);
+    }),
+    getMyPortfolioSeries: protectedProcedure.query(async ({ ctx }) => {
+      const account = await getDemoAccountByUserId(ctx.user.id);
+      if (!account) return [];
+      const snapshots = await getPortfolioSnapshotsByUserId(ctx.user.id);
+      const JULY_1 = new Date("2026-07-01T00:00:00Z");
+      const startingCapital = parseFloat(String(account.startingCapital));
+      const firstSnapshotTime = snapshots.length > 0 ? new Date(snapshots[0].snapshotAt).getTime() : Date.now();
+      const baselinePoints: Array<{ value: number; timestamp: number; label: string; tradeCount: number }> = [];
+      const ONE_DAY = 24 * 60 * 60 * 1000;
+      let cursor = JULY_1.getTime();
+      while (cursor < firstSnapshotTime) {
+        baselinePoints.push({ value: startingCapital, timestamp: cursor, label: new Date(cursor).toLocaleDateString("en-US", { month: "short", day: "numeric" }), tradeCount: 0 });
+        cursor += ONE_DAY;
+      }
+      const tradePoints = snapshots.map((s) => ({ value: parseFloat(String(s.balance)), timestamp: new Date(s.snapshotAt).getTime(), label: new Date(s.snapshotAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }), tradeCount: s.tradeCount ?? 0 }));
+      return [...baselinePoints, ...tradePoints];
+    }),
+    syncMySignals: protectedProcedure.mutation(async () => {
+      return syncSignalsToDemoAccounts();
     }),
     getByToken: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
       const account = await getDemoAccountByToken(input.token);
