@@ -110,7 +110,11 @@ export default function Dashboard() {
     onError: () => toast.error("Failed to toggle kill switch."),
   });
 
-  const killActive = account?.killSwitchActive ?? web3Session?.killSwitchActive ?? false;
+  // Derive killActive from the same target handleKillSwitch mutates,
+  // not a fixed precedence — if web3 is connected, use its state.
+  const killActive = web3Connected
+    ? (web3Session?.killSwitchActive ?? false)
+    : (account?.killSwitchActive ?? false);
 
   // ── First-run wizard ──
   const [showWizard, setShowWizard] = useState(false);
@@ -241,7 +245,7 @@ export default function Dashboard() {
   const rankMedals = ["🥇", "🥈", "🥉"];
 
   return (
-    <><div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
       {/* Top nav */}
       <div className="border-b px-6 py-4 sticky top-0 z-40" style={{ borderColor: "oklch(0.60 0.22 220 / 0.12)", background: "oklch(0.07 0.015 255 / 0.85)", backdropFilter: "blur(24px)" }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -1068,7 +1072,7 @@ export default function Dashboard() {
       </div>
 
       {/* First-run wizard overlay */}
-    <AnimatePresence>
+      <AnimatePresence>
       {showWizard && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -1170,7 +1174,9 @@ export default function Dashboard() {
         refetchWeb3();
       }}
     />
-  </>
+  </div>
+);
+}
 
 function AsterExecutionPanel() {
   const utils = trpc.useUtils();
