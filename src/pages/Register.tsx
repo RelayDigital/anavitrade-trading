@@ -215,86 +215,54 @@ export default function Register() {
                         <input
                           type={showPassword ? "text" : "password"}
                           autoComplete="new-password"
-                          placeholder="At least 8 characters"
+                          placeholder="Min 8 characters"
                           value={form.password}
                           onChange={(e) => { setErrors({}); setForm({ ...form, password: e.target.value }); }}
-                          className={`w-full px-4 py-3 pr-12 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.password ? "border-red-500/70" : "border-border"}`}
+                          className={`w-full px-4 py-3 pr-11 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.password ? "border-red-500/70" : "border-border"}`}
                         />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                           {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
                       {errors.password && <p className="text-red-400 text-xs mt-1">{errors.password}</p>}
                     </div>
 
-                    {/* Confirm */}
+                    {/* Confirm Password */}
                     <div>
                       <label className="block text-sm font-medium text-foreground mb-1.5">Confirm Password</label>
                       <div className="relative">
                         <input
                           type={showConfirm ? "text" : "password"}
                           autoComplete="new-password"
-                          placeholder="Repeat your password"
+                          placeholder="Re-enter your password"
                           value={form.confirm}
                           onChange={(e) => { setErrors({}); setForm({ ...form, confirm: e.target.value }); }}
-                          className={`w-full px-4 py-3 pr-12 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.confirm ? "border-red-500/70" : "border-border"}`}
+                          className={`w-full px-4 py-3 pr-11 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.confirm ? "border-red-500/70" : "border-border"}`}
                         />
-                        <button type="button" onClick={() => setShowConfirm(!showConfirm)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                        <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                           {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
                       {errors.confirm && <p className="text-red-400 text-xs mt-1">{errors.confirm}</p>}
                     </div>
 
-                    {/* Global error */}
-                    {errors._ && (
-                      <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                        className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                        {errors._}
-                      </motion.p>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={register.isPending}
-                      className="w-full py-3.5 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all duration-150 shadow-lg shadow-primary/25 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {register.isPending ? (
-                        <span className="flex items-center gap-2">
-                          <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                          Creating account…
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-2">
-                          {wantDemo ? "Create Account & Set Up Demo" : "Create Account"}
-                          <ArrowRight className="w-4 h-4" />
-                        </span>
-                      )}
-                    </button>
                   </div>
 
-                  {/* Trust badges */}
-                  <div className="flex items-center justify-center gap-6">
-                    {[
-                      { icon: Shield, text: "Non-custodial" },
-                      { icon: Zap, text: "Instant setup" },
-                      { icon: CheckCircle2, text: "Free to start" },
-                    ].map(({ icon: Icon, text }) => (
-                      <div key={text} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Icon className="w-3.5 h-3.5 text-primary/70" />
-                        {text}
-                      </div>
-                    ))}
-                  </div>
+                  {errors._ && <p className="text-red-400 text-xs text-center">{errors._}</p>}
 
-                  <p className="text-xs text-muted-foreground/50 text-center">
-                    By creating an account you agree to our{" "}
-                    <Link href="/terms" className="hover:text-muted-foreground underline">Terms of Service</Link>{" "}
-                    and{" "}
-                    <Link href="/privacy" className="hover:text-muted-foreground underline">Privacy Policy</Link>.
-                  </p>
+                  <button
+                    type="submit"
+                    disabled={register.isPending}
+                    className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
+                    style={{
+                      fontFamily: "var(--font-heading)",
+                      color: "oklch(0.14 0.02 255)",
+                      background: "var(--grad-arctic)",
+                      boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)",
+                    }}
+                  >
+                    {register.isPending ? "Creating account..." : (wantDemo ? "Create Account & Set Up Demo" : "Create Account")}
+                  </button>
                 </form>
               </motion.div>
             )}
@@ -302,70 +270,60 @@ export default function Register() {
             {/* ── STEP 2: Demo capital selection ── */}
             {step === "demo-capital" && (
               <motion.div key="demo-capital" {...fadeUp}>
-                <div className="text-center mb-8">
-                  <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-4">
-                    <TrendingUp className="w-7 h-7 text-primary" />
-                  </div>
-                  <h1 className="font-heading text-3xl font-bold text-foreground mb-2">Choose your demo capital</h1>
-                  <p className="text-muted-foreground text-sm">
-                    Pick a starting balance for your demo portfolio. Simulated only — no real funds used.
-                  </p>
-                </div>
+                <h1 className="text-3xl font-heading font-bold text-foreground mb-2">Choose your demo capital</h1>
+                <p className="text-muted-foreground mb-7">Start with simulated capital to explore the platform risk-free.</p>
 
-                <div className="p-6 rounded-2xl bg-card border border-border/50 space-y-5" style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.25)" }}>
-                  <div className="grid grid-cols-3 gap-3">
-                    {CAPITAL_OPTIONS.map((opt) => (
+                <div className="grid grid-cols-2 gap-3 mb-8">
+                  {CAPITAL_OPTIONS.map((opt) => {
+                    const selected = demoCapital === opt.value;
+                    return (
                       <button
                         key={opt.value}
                         type="button"
                         onClick={() => setDemoCapital(opt.value)}
-                        className={`py-3 rounded-xl text-sm font-semibold border transition-all duration-200 ${
-                          demoCapital === opt.value
-                            ? "bg-primary text-primary-foreground border-primary shadow-lg shadow-primary/25"
-                            : "bg-background text-foreground border-border/60 hover:border-primary/40 hover:bg-primary/5"
+                        className={`p-4 rounded-xl border text-center transition-all ${
+                          selected
+                            ? "bg-primary/10 border-primary/50 text-primary shadow-[0_0_16px_oklch(0.65_0.2_255/0.12)]"
+                            : "bg-card border-border/50 text-foreground hover:border-border"
                         }`}
                       >
-                        {opt.label}
+                        <span className="font-heading font-bold text-lg">{opt.label}</span>
                       </button>
-                    ))}
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-primary/5 border border-primary/15 text-sm text-muted-foreground">
-                    Your demo account starts with{" "}
-                    <span className="text-primary font-semibold">${demoCapital.toLocaleString()}</span>{" "}
-                    in simulated capital. Trade signals will be mirrored to your demo portfolio once the algo is connected.
-                  </div>
-
-                  <button
-                    onClick={() => createDemo.mutate({ startingCapital: demoCapital })}
-                    disabled={createDemo.isPending}
-                    className="w-full py-3.5 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all duration-150 shadow-lg shadow-primary/25 disabled:opacity-60"
-                  >
-                    {createDemo.isPending ? (
-                      <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                        Setting up demo…
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        Start Demo with ${demoCapital.toLocaleString()}
-                        <ArrowRight className="w-4 h-4" />
-                      </span>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => navigate("/dashboard")}
-                    className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
-                  >
-                    Skip for now — go to dashboard
-                  </button>
+                    );
+                  })}
                 </div>
+
+                <div className="flex items-center gap-3 mb-8 p-4 rounded-xl bg-primary/5 border border-primary/20">
+                  <TrendingUp className="w-5 h-5 text-primary shrink-0" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    This demo account mirrors live signals with simulated $10,000 in capital. You can adjust position size, leverage, and strategy tier anytime.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => createDemo.mutate({ startingCapital: demoCapital })}
+                  disabled={createDemo.isPending}
+                  className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    color: "oklch(0.14 0.02 255)",
+                    background: "var(--grad-arctic)",
+                    boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)",
+                  }}
+                >
+                  {createDemo.isPending ? "Setting up demo..." : `Start with ${CAPITAL_OPTIONS.find((o) => o.value === demoCapital)?.label}`}
+                </button>
               </motion.div>
             )}
-
           </AnimatePresence>
+
+          {/* Footer */}
+          <p className="text-center text-xs text-muted-foreground/50 mt-8">
+            By creating an account you agree to our{" "}
+            <Link href="/terms" className="underline hover:text-muted-foreground">Terms</Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="underline hover:text-muted-foreground">Privacy Policy</Link>
+          </p>
         </div>
       </div>
     </div>

@@ -1,18 +1,18 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid
+  AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, ReferenceLine
 } from "recharts";
 import {
   Shield, Key, TrendingUp, TrendingDown,
   DollarSign, Activity, Settings, LogOut,
   Zap, ZapOff, Clock, HardDrive, Wifi,
   RefreshCw, ChevronLeft, ChevronRight, Trophy, Flame,
-  Bot, AlertTriangle, CheckCircle2, XCircle, SkipForward,
-  BarChart3, Percent, TrendingUp as ChartUp,
+  AlertTriangle, CheckCircle2,
+  BarChart3, Wallet, Loader2, X, Sparkles,
 } from "lucide-react";
 import WalletPanel from "@/components/WalletPanel";
 import ConnectedExchangesPanel from "@/components/ConnectedExchangesPanel";
@@ -111,8 +111,87 @@ export default function Dashboard() {
   });
 
   const killActive = account?.killSwitchActive ?? web3Session?.killSwitchActive ?? false;
-  // Portfolio data: empty until a live account is connected and trades are synced.
-  // The demo dashboard (DemoDashboard.tsx) shows the real equity curve from signal history.
+
+  // ── First-run wizard ──
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const wizardSteps = [
+    { title: "Welcome to Anavitrade", desc: "You're in Demo mode — the portfolio below shows simulated paper trades from our live signals. Try it out.", icon: <Sparkles className="w-6 h-6" /> },
+    { title: "Connect a wallet", desc: "Link a wallet to activate DEX execution. Your funds stay in your own account — we never get withdrawal access.", icon: <Wallet className="w-6 h-6" /> },
+    { title: "You're all set", desc: "Toggle between Demo and Live mode anytime from the top bar. Let's start trading.", icon: <CheckCircle2 className="w-6 h-6" /> },
+  ];
+
+  // ── Inline Aster Activation ──
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showActivationPanel, setShowActivationPanel] = useState(false);
+  const activate = trpc.aster.activateWithWallet.useMutation({
+    onSuccess: () => {
+      toast.success("Aster execution activated!");
+      refetchAster();
+      refetch();
+      setShowActivationPanel(false);
+    },
+    onError: (e) => toast.error(e.message || "Failed to activate Aster."),
+  });
+
+  // When a wallet is connected while the activation panel is open, auto-activate
+  useEffect(() => {
+    if (showActivationPanel && web3Connected && !activate.isPending && !asterConnected) {
+      if (web3Session?.walletAddress) {
+        activate.mutate({ walletAddress: web3Session.walletAddress });
+      }
+    }
+  }, [web3Connected, showActivationPanel, web3Session?.walletAddress]);
+
+  // ── Display Mode ──
+  const { data: displayModeData, refetch: refetchDisplayMode } = trpc.liveAccount.getDisplayMode.useQuery();
+  const currentMode = displayModeData?.mode ?? "live";
+  const isDemoMode = currentMode === "demo";
+
+  const setDisplayMode = trpc.liveAccount.setDisplayMode.useMutation({
+    onSuccess: (d) => {
+      refetchDisplayMode();
+      toast.success(d.mode === "demo" ? "Switched to Demo mode — data is simulated paper trades." : "Switched to Live mode.");
+    },
+    onError: () => toast.error("Failed to switch display mode."),
+  });
+
+  // ── Demo Data (fetched only when in demo mode) ──
+  const { data: myDemoData } = trpc.demo.getMyDemo.useQuery(undefined, { enabled: isDemoMode });
+  const { data: demoTradesData, refetch: refetchDemoTrades } = trpc.demo.getMyTrades.useQuery(undefined, { enabled: isDemoMode });
+  const { data: demoPortfolioSeries, refetch: refetchDemoSeries } = trpc.demo.getMyPortfolioSeries.useQuery(undefined, { enabled: isDemoMode });
+  const syncDemo = trpc.demo.syncMySignals.useMutation({
+    onSuccess: (r) => {
+      toast.success(`${r.tradesCreated} trade${r.tradesCreated !== 1 ? "s" : ""} synced`);
+      refetchDemoTrades();
+      refetchDemoSeries();
+    },
+    onError: (e) => toast.error(`Sync failed: ${e.message}`),
+  });
+
+  // ── Derived demo state ──
+  const demoAccount = myDemoData?.account;
+  const demoStartingCapital = demoAccount ? parseFloat(demoAccount.startingCapital) : 10000;
+  const demoCurrentBalance = demoAccount ? parseFloat(demoAccount.currentBalance) : demoStartingCapital;
+  const demoTotalPnl = demoCurrentBalance - demoStartingCapital;
+  const demoPnlPercent = demoStartingCapital > 0 ? ((demoTotalPnl / demoStartingCapital) * 100).toFixed(2) : "0.00";
+
+  const closedTrades = useMemo(() => {
+    if (!demoTradesData) return [];
+    return demoTradesData.filter((t) => t.status === "closed");
+  }, [demoTradesData]);
+
+  const wins = closedTrades.filter((t) => parseFloat(String(t.pnl ?? "0")) > 0);
+  const losses = closedTrades.filter((t) => parseFloat(String(t.pnl ?? "0")) <= 0);
+  const winRate = closedTrades.length > 0 ? (wins.length / closedTrades.length) * 100 : 0;
+  const avgProfit = wins.length > 0 ? wins.reduce((s, t) => s + parseFloat(String(t.pnl ?? "0")), 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + parseFloat(String(t.pnl ?? "0")), 0) / losses.length : 0;
+  const profitFactor = avgLoss < 0 ? Math.abs(avgProfit / avgLoss) : 0;
+  const bestTrade = closedTrades.length > 0
+    ? closedTrades.reduce((best, t) => parseFloat(String(t.pnlPct ?? "0")) > parseFloat(String(best.pnlPct ?? "0")) ? t : best, closedTrades[0])
+    : null;
+
+  // ── Portfolio data (demo or live) ──
   const portfolioData: { day: string; value: number }[] = [];
   const startBalance = 0;
   const currentBalance = 0;
@@ -162,7 +241,7 @@ export default function Dashboard() {
   const rankMedals = ["🥇", "🥈", "🥉"];
 
   return (
-    <div className="min-h-screen bg-background">
+    <><div className="min-h-screen bg-background">
       {/* Top nav */}
       <div className="border-b px-6 py-4 sticky top-0 z-40" style={{ borderColor: "oklch(0.60 0.22 220 / 0.12)", background: "oklch(0.07 0.015 255 / 0.85)", backdropFilter: "blur(24px)" }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -173,6 +252,21 @@ export default function Dashboard() {
             </div>
           </Link>
           <div className="flex items-center gap-2">
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg border" style={{ borderColor: "oklch(0.60 0.22 220 / 0.15)", background: "oklch(0.08 0.012 260 / 0.5)" }}>
+              <button
+                onClick={() => { if (currentMode !== "live") setDisplayMode.mutate({ mode: "live" }); }}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${currentMode === "live" ? "bg-primary/20 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Live
+              </button>
+              <button
+                onClick={() => { if (currentMode !== "demo") setDisplayMode.mutate({ mode: "demo" }); }}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${isDemoMode ? "bg-primary/20 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Demo
+              </button>
+            </div>
             <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium ${statusColor}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
               {statusLabel}
@@ -219,43 +313,97 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Onboarding banner */}
-        {!anyConnected && (
+        {/* Inline Aster Activation */}
+        {!asterConnected && (
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
             {asterPending ? (
               <div className="p-5 rounded-2xl border bg-amber-400/5 border-amber-400/20">
                 <div className="flex items-start gap-3">
                   <Clock className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
                   <div>
-                    <h3 className="text-sm font-semibold text-foreground mb-1">Aster approvals pending</h3>
-                    <p className="text-xs text-muted-foreground">Approve the Agent signer and Builder fee cap on Aster, then activate the connection.</p>
+                    <h3 className="text-sm font-semibold text-foreground mb-1">Activation in progress</h3>
+                    <p className="text-xs text-muted-foreground">Setting up your execution environment...</p>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="p-5 rounded-2xl border bg-primary/5 border-primary/20">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex items-start gap-3">
-                    <Key className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground mb-1">Connect Aster to Start Copy-Trading</h3>
-                      <p className="text-xs text-muted-foreground max-w-lg">
-                        Approve an Aster Agent signer for DEX execution. Your funds stay in your Aster account and Anavitrade never receives withdrawal permission.
-                      </p>
-                    </div>
+              <div className="p-6 rounded-2xl border relative overflow-hidden" style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.88), oklch(0.09 0.018 255 / 0.94))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}>
+                <div className="absolute top-0 right-0 w-48 h-48 rounded-full blur-[80px] pointer-events-none" style={{ background: "oklch(0.60 0.22 220 / 0.08)" }} />
+                <div className="relative z-10 flex flex-col sm:flex-row items-start gap-5">
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.60 0.22 220 / 0.05))", border: "1px solid oklch(0.60 0.22 220 / 0.25)" }}>
+                    <Zap className="w-6 h-6 text-primary" />
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                    <button
-                      onClick={() => document.querySelector<HTMLButtonElement>('[data-wallet-connect-btn]')?.click()}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-foreground text-sm font-medium hover:bg-card transition-all"
-                    >
-                      <HardDrive className="w-3.5 h-3.5" /> Ledger / Web3
-                    </button>
-                    <Link href="/onboarding/aster">
-                      <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all">
-                        <Wifi className="w-3.5 h-3.5" /> Aster Setup
-                      </button>
-                    </Link>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-heading font-semibold text-foreground mb-1">Activate DEX Execution</h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed max-w-lg mb-4">
+                      Connect your wallet and activate Aster execution in one click. Your funds stay in your account — we never get withdrawal access.
+                    </p>
+
+                    {/* Status */}
+                    {showActivationPanel ? (
+                      <div className="space-y-3">
+                        {activate.isPending ? (
+                          <div className="flex items-center gap-3 p-4 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.06)", border: "1px solid oklch(0.60 0.22 220 / 0.12)" }}>
+                            <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                            <div>
+                              <p className="text-sm font-medium text-foreground">Activating...</p>
+                              <p className="text-xs text-muted-foreground">Generating Agent signer & recording approvals</p>
+                            </div>
+                          </div>
+                        ) : web3Session?.walletAddress ? (
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 p-3 rounded-xl" style={{ background: "oklch(0.74 0.18 145 / 0.08)", border: "1px solid oklch(0.74 0.18 145 / 0.2)" }}>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-green-400" />
+                                <span className="text-sm text-foreground">Wallet connected</span>
+                                <span className="text-xs font-mono text-muted-foreground">{web3Session.walletAddress.slice(0, 6)}...{web3Session.walletAddress.slice(-4)}</span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => activate.mutate({ walletAddress: web3Session.walletAddress! })}
+                              disabled={activate.isPending}
+                              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+                              style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}
+                            >
+                              <Zap className="w-3.5 h-3.5" /> Activate Now
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setShowWalletModal(true)}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold transition-all hover:bg-primary/90"
+                            >
+                              <Wallet className="w-3.5 h-3.5" /> Connect Wallet
+                            </button>
+                            <button
+                              onClick={() => setShowActivationPanel(false)}
+                              className="px-4 py-2.5 rounded-xl border text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                              style={{ borderColor: "oklch(0.60 0.22 220 / 0.2)" }}
+                            >
+                              Skip for now
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setShowActivationPanel(true)}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all"
+                          style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}
+                        >
+                          <Zap className="w-3.5 h-3.5" /> Activate Now
+                        </button>
+                        <button
+                          onClick={() => setShowWizard(true)}
+                          className="flex items-center gap-2 px-5 py-2.5 rounded-xl border text-xs font-medium text-foreground transition-all hover:bg-card"
+                          style={{ borderColor: "oklch(0.60 0.22 220 / 0.2)" }}
+                        >
+                          <Sparkles className="w-3.5 h-3.5" /> Quick Start
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -269,22 +417,26 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
             {
-              label: "Portfolio Balance",
-              value: `$${currentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              label: isDemoMode ? "Demo Balance" : "Portfolio Balance",
+              value: isDemoMode
+                ? `$${demoCurrentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : `$${currentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
               icon: <DollarSign className="w-4 h-4" />,
-              sub: anyConnected ? "Live account value" : "Connect wallet to track",
+              sub: isDemoMode ? "Simulated paper balance" : (anyConnected ? "Live account value" : "Connect wallet to track"),
               azure: true,
-              gold: false,
+              gold: isDemoMode,
             },
             {
               label: "Total P&L",
-              value: anyConnected
-                ? `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : "—",
-              icon: totalPnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />,
-              sub: anyConnected ? `${pnlPct}% all time` : "No live data yet",
+              value: isDemoMode
+                ? `${demoTotalPnl >= 0 ? "+" : ""}$${demoTotalPnl.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : (anyConnected
+                  ? `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : "—"),
+              icon: (isDemoMode ? demoTotalPnl : totalPnl) >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />,
+              sub: isDemoMode ? `${demoPnlPercent}% all time` : (anyConnected ? `${pnlPct}% all time` : "No live data yet"),
               azure: false,
-              gold: anyConnected && totalPnl > 0,
+              gold: isDemoMode || (anyConnected && totalPnl > 0),
             },
             {
               label: "Open Positions",
@@ -344,19 +496,61 @@ export default function Dashboard() {
           <div className="lg:col-span-2 p-6 rounded-2xl border relative overflow-hidden" style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))", borderColor: "oklch(0.60 0.22 220 / 0.18)", backdropFilter: "blur(16px)" }}>
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Portfolio Growth</h3>
+                <h3 className="text-sm font-semibold text-foreground">{isDemoMode ? "Demo Portfolio Growth" : "Portfolio Growth"}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {anyConnected ? "Live account equity curve" : "Connect a wallet to see your real equity curve"}
+                  {isDemoMode ? "Simulated equity curve from signal history" : (anyConnected ? "Live account equity curve" : "Connect a wallet to see your real equity curve")}
                 </p>
               </div>
-              {anyConnected && (
+              {isDemoMode && (
+                <button
+                  onClick={() => syncDemo.mutate()}
+                  disabled={syncDemo.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all disabled:opacity-50"
+                  style={{ borderColor: "oklch(0.60 0.22 220 / 0.25)" }}
+                >
+                  <RefreshCw className={`w-3 h-3 ${syncDemo.isPending ? "animate-spin" : ""}`} />
+                  {syncDemo.isPending ? "Syncing..." : "Sync Signals"}
+                </button>
+              )}
+              {!isDemoMode && anyConnected && (
                 <div className={`flex items-center gap-1.5 text-sm font-semibold ${totalPnl >= 0 ? "text-primary" : "text-red-400"}`}>
                   {totalPnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                   {totalPnl >= 0 ? "+" : ""}{pnlPct}%
                 </div>
               )}
             </div>
-            {anyConnected && portfolioData.length > 0 ? (
+            {isDemoMode && demoPortfolioSeries && demoPortfolioSeries.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={demoPortfolioSeries}>
+                  <defs>
+                    <linearGradient id="demoGradChart" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="oklch(0.82 0.16 85)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="oklch(0.82 0.16 85)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" opacity={0.4} />
+                  <XAxis dataKey="label" tick={{ fill: "oklch(0.50 0.015 260)", fontSize: 10 }} tickLine={false} axisLine={false} interval={6} />
+                  <YAxis domain={["dataMin", "dataMax"]} tick={{ fill: "oklch(0.50 0.015 260)", fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip
+                    contentStyle={{ background: "oklch(0.10 0.018 250 / 0.96)", border: "1px solid oklch(0.60 0.22 220 / 0.25)", borderRadius: "12px", fontSize: "12px" }}
+                    labelStyle={{ color: "oklch(0.62 0.020 240)" }}
+                    formatter={(v: number) => [`$${v.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, "Balance"]}
+                  />
+                  <ReferenceLine y={demoStartingCapital} stroke="oklch(1 0 0 / 0.15)" strokeDasharray="3 3" />
+                  <Area type="monotone" dataKey="value" stroke="oklch(0.82 0.16 85)" strokeWidth={2.5} fill="url(#demoGradChart)" dot={false} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : isDemoMode && syncDemo.isPending ? (
+              <div className="flex items-center justify-center h-[200px] gap-2 text-muted-foreground">
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                <span className="text-sm">Syncing demo signals...</span>
+              </div>
+            ) : isDemoMode ? (
+              <div className="flex flex-col items-center justify-center h-[200px] gap-3 text-center">
+                <BarChart3 className="w-8 h-8 text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">No demo trades yet. Click "Sync Signals" above to get started.</p>
+              </div>
+            ) : anyConnected && portfolioData.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={portfolioData}>
                   <defs>
@@ -476,6 +670,113 @@ export default function Dashboard() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ── Demo Trade History (only in demo mode) ── */}
+        {isDemoMode && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 rounded-2xl border overflow-hidden"
+            style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}
+          >
+            {/* Header */}
+            <div className="px-6 py-5 border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.10)" }}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Demo Trade History</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {closedTrades.length} closed trades · {wins.length} wins · {losses.length} losses
+                  </p>
+                </div>
+              </div>
+              {/* Summary stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
+                <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+                  <p className="text-[10px] text-muted-foreground mb-0.5">Win Rate</p>
+                  <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.74 0.18 145)" }}>{winRate.toFixed(1)}%</p>
+                </div>
+                <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+                  <p className="text-[10px] text-muted-foreground mb-0.5">Avg Win</p>
+                  <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.74 0.18 145)" }}>+${avgProfit.toFixed(2)}</p>
+                </div>
+                <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+                  <p className="text-[10px] text-muted-foreground mb-0.5">Avg Loss</p>
+                  <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.65 0.22 25)" }}>-${Math.abs(avgLoss).toFixed(2)}</p>
+                </div>
+                <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+                  <p className="text-[10px] text-muted-foreground mb-0.5">Profit Factor</p>
+                  <p className="text-sm font-heading font-bold text-foreground">{profitFactor.toFixed(2)}</p>
+                </div>
+                <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+                  <p className="text-[10px] text-muted-foreground mb-0.5">Best Trade</p>
+                  <p className="text-sm font-heading font-bold gold-shimmer-text">
+                    {bestTrade ? `+${parseFloat(String(bestTrade.pnlPct ?? "0")).toFixed(1)}%` : "—"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Trades table */}
+            {closedTrades.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.08)" }}>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 px-4 whitespace-nowrap">Pair</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Tier</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Indicator</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Period</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">P&L</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Return</th>
+                      <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closedTrades.slice(0, 20).map((trade) => {
+                      const pnl = parseFloat(String(trade.pnl ?? "0"));
+                      const pnlPctVal = parseFloat(String(trade.pnlPct ?? "0"));
+                      const isWin = pnl > 0;
+                      return (
+                        <tr key={trade.id} className="border-b last:border-0" style={{ borderColor: "oklch(0.60 0.22 220 / 0.05)" }}>
+                          <td className="py-3 px-4">
+                            <span className="font-mono text-xs font-bold text-foreground">{trade.pair.replace("USDT", "/USDT")}</span>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                              trade.qualityTier === "A" ? "bg-amber-500/15 text-amber-400" : trade.qualityTier === "B" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                            }`}>
+                              {trade.qualityTier ?? "C"}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-4 text-xs text-muted-foreground">{trade.indicatorName ?? "—"}</td>
+                          <td className="py-3 pr-4 text-xs font-mono text-muted-foreground">{trade.period ?? "—"}</td>
+                          <td className="py-3 pr-4">
+                            <span className={`text-xs font-semibold font-mono ${isWin ? "text-green-400" : "text-red-400"}`}>
+                              {isWin ? "+" : ""}${pnl.toFixed(2)}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <span className={`text-xs font-semibold font-mono ${isWin ? "text-green-400" : "text-red-400"}`}>
+                              {pnlPctVal >= 0 ? "+" : ""}{pnlPctVal.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td className="py-3 pr-4 text-xs text-muted-foreground">
+                            {trade.closedAt ? new Date(trade.closedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                <BarChart3 className="w-8 h-8 text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">No demo trades yet. Click "Sync Signals" above to simulate trades.</p>
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {/* ── Live Signal Feed ── */}
         <div className="rounded-2xl bg-card border border-border/50 overflow-hidden">
@@ -766,14 +1067,113 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* First-run wizard overlay */}
+    <AnimatePresence>
+      {showWizard && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "oklch(0.07 0.015 255 / 0.85)", backdropFilter: "blur(8px)" }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
+            className="relative w-full max-w-md rounded-2xl p-8 border"
+            style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.95), oklch(0.09 0.018 255 / 0.98))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}
+          >
+            <button
+              onClick={() => setShowWizard(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
 
-    </div>
-  );
-}
+            {/* Step indicator */}
+            <div className="flex gap-2 mb-6">
+              {wizardSteps.map((_, i) => (
+                <div
+                  key={i}
+                  className="h-1 flex-1 rounded-full transition-all duration-500"
+                  style={{ background: i <= wizardStep ? "oklch(0.60 0.22 220 / 0.6)" : "oklch(1 0 0 / 0.08)" }}
+                />
+              ))}
+            </div>
+
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={wizardStep}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5" style={{ background: "oklch(0.60 0.22 220 / 0.12)", color: "oklch(0.68 0.22 220)" }}>
+                  {wizardSteps[wizardStep].icon}
+                </div>
+                <h2 className="text-xl font-heading font-bold text-foreground mb-2">{wizardSteps[wizardStep].title}</h2>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-8">{wizardSteps[wizardStep].desc}</p>
+              </motion.div>
+            </AnimatePresence>
+
+            <div className="flex items-center gap-3">
+              {wizardStep > 0 && (
+                <button
+                  onClick={() => setWizardStep((s) => s - 1)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border text-sm font-medium text-foreground transition-colors hover:bg-card"
+                  style={{ borderColor: "oklch(0.60 0.22 220 / 0.2)" }}
+                >
+                  Back
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (wizardStep < wizardSteps.length - 1) {
+                    setWizardStep((s) => s + 1);
+                  } else {
+                    setShowWizard(false);
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
+                style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}
+              >
+                {wizardStep < wizardSteps.length - 1 ? "Next" : "Get Started"}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Floating quick-launch for wizard (visible when dismissed but not connected) */}
+    {!showWizard && !asterConnected && !showActivationPanel && (
+      <motion.button
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border transition-all hover:scale-105"
+        style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.95), oklch(0.09 0.018 255 / 0.98))", borderColor: "oklch(0.60 0.22 220 / 0.25)" }}
+        onClick={() => setShowWizard(true)}
+      >
+        <Sparkles className="w-4 h-4 text-primary" />
+        <span className="text-xs font-semibold text-foreground">Quick Start</span>
+      </motion.button>
+    )}
+
+    {/* Wallet connect modal for inline activation */}
+    <WalletConnectModal
+      isOpen={showWalletModal}
+      onClose={() => setShowWalletModal(false)}
+      onConnected={() => {
+        refetchWeb3();
+      }}
+    />
+  </>
 
 function AsterExecutionPanel() {
   const utils = trpc.useUtils();
-  const { data: config } = trpc.aster.getConfig.useQuery();
   const { data: status, isLoading } = trpc.aster.getStatus.useQuery();
   const { data: liveData } = trpc.liveAccount.get.useQuery();
   const toggleKill = trpc.liveAccount.toggleKillSwitch.useMutation({
@@ -786,34 +1186,25 @@ function AsterExecutionPanel() {
 
   const active = status?.status === "active";
   const pending = status?.status === "pending_approval";
-  const configured = config?.configured ?? false;
   const killActive = liveData?.account?.killSwitchActive ?? false;
-  const rows = [
-    { label: "Builder", value: configured ? config?.builderAddress : "Not configured" },
-    { label: "Agent", value: status?.signerAddress ?? "Not prepared" },
-    { label: "Agent Approval", value: status?.agentStatus ?? "missing" },
-    { label: "Builder Approval", value: status?.builderStatus ?? "missing" },
-    { label: "Fee Cap", value: status?.maxFeeRate ?? config?.defaultFeeRate ?? "0" },
-    { label: "Order Submission", value: "Gated until signing worker verification" },
-  ];
 
   const statusIcon = active
     ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
     : pending
       ? <Clock className="w-4 h-4 text-amber-400" />
       : <AlertTriangle className="w-4 h-4 text-muted-foreground" />;
-  const statusLabel = active ? "Aster Agent Active" : pending ? "Approvals Pending" : "Aster Not Connected";
+  const statusLabel = active ? "Aster Agent Active" : pending ? "Approvals Pending" : "Not Connected";
 
   return (
     <div>
       <div className="px-6 py-5 border-b flex items-center justify-between gap-4 flex-wrap" style={{ borderColor: "oklch(0.60 0.22 220 / 0.12)" }}>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.45 0.18 240 / 0.15))" }}>
-            <Bot className="w-4.5 h-4.5" style={{ color: "oklch(0.68 0.22 220)" }} />
+            <Zap className="w-4.5 h-4.5" style={{ color: "oklch(0.68 0.22 220)" }} />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-foreground">Aster DEX Execution</h3>
-            <p className="text-xs text-muted-foreground">Agent signer + Builder fee cap · Aster liquidity</p>
+            <p className="text-xs text-muted-foreground">One-click activation · Zero-custody</p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -823,7 +1214,7 @@ function AsterExecutionPanel() {
           </div>
           <Link href="/onboarding/aster">
             <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all">
-              <Key className="w-3.5 h-3.5" /> {active ? "Manage Aster" : "Connect Aster"}
+              <Zap className="w-3.5 h-3.5" /> {active ? "Manage" : "Activate"}
             </button>
           </Link>
           {active && (
@@ -843,31 +1234,46 @@ function AsterExecutionPanel() {
         </div>
       </div>
 
-      <div className="px-6 py-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.08)" }}>
-        {rows.map((row) => (
-          <div key={row.label} className="p-3 rounded-xl bg-background/35 border border-border/40">
-            <div className="text-xs text-muted-foreground mb-1">{row.label}</div>
-            <div className="text-xs font-mono text-foreground break-all">{isLoading ? "Loading..." : row.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="px-6 py-4">
-        <div className="grid md:grid-cols-3 gap-3">
-          <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
-            <div className="text-xs font-semibold text-foreground mb-1">Trading Authority</div>
-            <p className="text-xs text-muted-foreground">Aster Agent should be perps-only with withdrawal disabled.</p>
-          </div>
-          <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
-            <div className="text-xs font-semibold text-foreground mb-1">Fee Accounting</div>
-            <p className="text-xs text-muted-foreground">2% and 20% are tracked in Anavitrade's fee ledger, not as per-order Builder fees.</p>
-          </div>
-          <div className="p-4 rounded-xl bg-card border border-border/50">
-            <div className="text-xs font-semibold text-foreground mb-1">Live Orders</div>
-            <p className="text-xs text-muted-foreground">Order submission remains off until Aster signing and fill sync are verified end to end.</p>
+      {!active && !pending && (
+        <div className="px-6 py-5">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.08)" }}>
+              <Zap className="w-5 h-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-semibold text-foreground mb-1">One click to activate</h4>
+              <p className="text-xs text-muted-foreground max-w-md mb-4">
+                Connect your wallet and approve the Agent signer in one step. No copy-pasting, no navigating to Aster, no multi-step forms.
+              </p>
+              <Link href="/onboarding/aster">
+                <button className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all"
+                  style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}>
+                  Activate Now <Zap className="w-3.5 h-3.5" />
+                </button>
+              </Link>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {active && (
+        <div className="px-6 py-4">
+          <div className="grid md:grid-cols-3 gap-3">
+            <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
+              <div className="text-xs font-semibold text-foreground mb-1">Trading Authority</div>
+              <p className="text-xs text-muted-foreground">Perps-only Agent with withdrawal disabled. Zero-custody.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
+              <div className="text-xs font-semibold text-foreground mb-1">Fee Accounting</div>
+              <p className="text-xs text-muted-foreground">2% and 20% tracked in Anavitrade's fee ledger, not per-order.</p>
+            </div>
+            <div className="p-4 rounded-xl bg-card border border-border/50">
+              <div className="text-xs font-semibold text-foreground mb-1">Live Orders</div>
+              <p className="text-xs text-muted-foreground">Ready. Pause execution anytime from this panel.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

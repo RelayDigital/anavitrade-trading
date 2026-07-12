@@ -14,6 +14,8 @@ import { detectBbawe } from "./bbawe";
 import { detectMarketCipher } from "./market-cipher";
 import { detectWolfpack } from "./wolfpack";
 import { detectMSS, detectOrderBlocks, detectLiquidity, detectFVG, detectKillzone } from "./luxalgo-ict";
+import { detectSwingSniper } from "./swing-sniper";
+import { evaluateZoom } from "./zoom-matrix";
 import { scoreSignal } from "../coinlegs-scraper";
 import { validateStructure, structuralConfidenceMultiplier } from "../smc/validator";
 import { getDb } from "../db";
@@ -297,6 +299,49 @@ export async function generateSignals(): Promise<GeneratorResult> {
               price: candles[candles.length-1].close, lastPrice: candles[candles.length-1].close,
               signalTime: candles[candles.length-1].time,
               metadata: { lux_type: fvg.type, lux_conf: fvg.confidence, fvg_bars: fvg.metadata.bars_back },
+            });
+            signalsDetected++;
+          }
+        }
+
+        // ── Swing Sniper: ICT order-block entry for 3%+ moves ──
+        // Replaces generic indicator firing with precision swing-low/high entries.
+        // When sniper fires, the order carries its own structural stop-loss level:
+        //   - stopPrice: swept swing low × 0.995
+        //   - takeProfit: 5× stop distance on 4h, 4× on 1h
+        //   - confidence: based on confluence (CCI + Stoch + OB cluster)
+        const sniperSignals = detectSwingSniper(closes, highs, lows, symbol, tf);
+        for (const sniper of sniperSignals) {
+          if (sniper.type === "sniper_long" && sniper.confluence >= 1) {
+            signals.push({
+              indicator: "trend_reversal", signal: 1, marketName: symbol, period: tf,
+              price: sniper.price, lastPrice: sniper.price,
+              signalTime: candles[candles.length-1].time,
+              metadata: {
+                sniper_conf: sniper.confidence, sniper_confluence: sniper.confluence,
+                sniper_swing_low: sniper.swingLow, sniper_sl: sniper.stopLoss,
+                sniper_tp: sniper.takeProfit,
+              },
+            });
+            signalsDetected++;
+          }
+        }
+
+        // ── Zoom Matrix: HTF→15m precision entry ──
+        // Only run zoom when at least 1 standard indicator found something
+        // (avoid fetching 15m klines for every pair — too expensive).
+        if (signals.length > 0 && (tf === "4h" || tf === "2h" || tf === "1h")) {
+          const zoom = await evaluateZoom(symbol, tf as "4h" | "2h" | "1h");
+          if (zoom && zoom.composite >= 65) {
+            signals.push({
+              indicator: "macd", signal: 1, marketName: symbol, period: tf,
+              price: zoom.ltfEntry, lastPrice: zoom.ltfEntry,
+              signalTime: candles[candles.length-1].time,
+              metadata: {
+                zoom_active: 1, zoom_composite: zoom.composite,
+                zoom_htf_score: zoom.htfScore, zoom_ltf_conf: zoom.ltfConfirmation,
+                zoom_ltf_entry: zoom.ltfEntry, zoom_ltf_sl: zoom.ltfStop, zoom_ltf_tp: zoom.ltfTP,
+              },
             });
             signalsDetected++;
           }

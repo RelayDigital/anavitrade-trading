@@ -469,15 +469,32 @@ export default {
 
     const results: Record<string, unknown> = {};
 
-    // Coinlegs scraper (every trigger)
-    const scraperResult = await runCoinlegsScraper();
-    console.log("[coinlegs-cron]", JSON.stringify({
-      status: scraperResult.status,
-      fetched: scraperResult.signalsFetched,
-      inserted: scraperResult.signalsInserted,
-      intents: scraperResult.intentIds?.length ?? 0,
-    }));
-    results.scraper = scraperResult;
+    // Coinlegs scraper (every trigger — secondary)
+    try {
+      const scraperResult = await runCoinlegsScraper();
+      console.log("[coinlegs-cron]", JSON.stringify({
+        status: scraperResult.status,
+        inserted: scraperResult.signalsInserted,
+        intents: scraperResult.intentIds?.length ?? 0,
+      }));
+      results.scraper = scraperResult;
+    } catch (e: any) {
+      console.warn("[coinlegs-cron] error:", e?.message);
+      // Non-fatal — native generator will handle this cycle
+    }
+
+    // Native signal generator (every trigger — primary)
+    try {
+      const nativeResult = await generateSignals();
+      console.log("[native-cron]", JSON.stringify({
+        pairs: nativeResult.pairs, signals: nativeResult.signalsDetected,
+        tierA: nativeResult.tierA, intents: nativeResult.intentsCreated,
+      }));
+      results.native = nativeResult;
+    } catch (e: any) {
+      console.warn("[native-cron] error:", e?.message);
+      results.native = { error: e?.message };
+    }
 
     // Fee crystallization (daily trigger — cronExpression "0 0 * * *" or explicit check)
     const cronParam = (_event as any)?.cron ?? "";

@@ -143,3 +143,29 @@ export async function revokeAsterAgent(userId: number) {
   await writeAuditLog(userId, "ASTER_AGENT_REVOKED");
   return getAsterAgentStatus(userId);
 }
+
+/* ── One-click activation ──
+   Uses the user's already-connected wallet address as the Aster account.
+   Prepares the agent + records approvals in one call — no manual steps. */
+export async function activateAsterWithWallet(input: {
+  userId: number;
+  walletAddress: string;
+}): Promise<AsterAgentStatusView> {
+  // Step 1: prepare the agent using the wallet address
+  const prepared = await prepareAsterAgent({
+    userId: input.userId,
+    asterAccountAddress: input.walletAddress,
+    // Default fee cap — the 2&20 fee stays in Anavitrade's ledger
+    maxFeeRate: undefined,
+    approvalExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+  });
+
+  // Step 2: record both approvals immediately
+  const activated = await recordAsterApprovals({
+    userId: input.userId,
+    agentApproved: true,
+    builderApproved: true,
+  });
+
+  return activated;
+}

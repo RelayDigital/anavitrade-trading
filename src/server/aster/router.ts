@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getAsterConfig } from "./config";
-import { getAsterAgentStatus, prepareAsterAgent, recordAsterApprovals, revokeAsterAgent } from "./store";
+import { getAsterAgentStatus, prepareAsterAgent, recordAsterApprovals, revokeAsterAgent, activateAsterWithWallet } from "./store";
 
 export const asterRouter = router({
   getConfig: protectedProcedure.query(() => {
@@ -53,4 +53,20 @@ export const asterRouter = router({
     }),
 
   revokeAgent: protectedProcedure.mutation(async ({ ctx }) => revokeAsterAgent(ctx.user.id)),
+
+  /* ── One-click activation ── */
+  activateWithWallet: protectedProcedure
+    .input(z.object({
+      walletAddress: z.string().min(10).max(100),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await activateAsterWithWallet({ userId: ctx.user.id, walletAddress: input.walletAddress });
+      } catch (e: any) {
+        if (e?.message === "ASTER_BUILDER_ADDRESS_NOT_CONFIGURED") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster builder address is not configured." });
+        }
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to activate Aster." });
+      }
+    }),
 });

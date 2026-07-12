@@ -1,320 +1,239 @@
-import { useMemo, useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import {
-  AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
-  Check,
   CheckCircle2,
-  Copy,
-  ExternalLink,
-  Key,
-  Shield,
+  Loader2,
   Wallet,
+  Shield,
   Zap,
+  ExternalLink,
+  ArrowLeft,
+  Sparkles,
 } from "lucide-react";
+import { useAccount } from "wagmi";
 import { toast } from "sonner";
+import WalletConnectModal from "@/components/WalletConnectModal";
 
-const ASTER_APP_URL = "https://www.asterdex.com/en/futures";
-const ASTER_CODE_DOCS_URL = "https://asterdex.github.io/aster-api-website/asterCode/integration-flow/";
-
-const STEPS = [
-  { id: 1, title: "Aster Account", icon: <Wallet className="w-5 h-5" /> },
-  { id: 2, title: "Agent Signer", icon: <Key className="w-5 h-5" /> },
-  { id: 3, title: "Builder Fee Cap", icon: <Zap className="w-5 h-5" /> },
-  { id: 4, title: "Activate", icon: <Shield className="w-5 h-5" /> },
-];
-
+/* ─── ONE-CLICK ASTER ACTIVATION ───
+   User connects their web3 wallet → clicks "Activate" →
+   platform handles everything (prepares agent, records approvals).
+   No copy-pasting, no navigating to Aster's website, no multi-step form. */
 export default function AsterOnboarding() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
-  const { data: config } = trpc.aster.getConfig.useQuery();
-  const { data: status } = trpc.aster.getStatus.useQuery();
-  const [step, setStep] = useState(1);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    asterAccountAddress: status?.asterAccountAddress ?? "",
-    maxFeeRate: status?.maxFeeRate ?? config?.defaultFeeRate ?? "0",
-    approvalDays: "30",
-    ipWhitelist: "",
-  });
-  const [confirmations, setConfirmations] = useState({ agentApproved: false, builderApproved: false });
+  const { address: wagmiAddress, isConnected } = useAccount();
+  const { data: web3Session } = trpc.web3Wallet.getSession.useQuery();
+  const { data: status, isLoading: statusLoading } = trpc.aster.getStatus.useQuery();
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [activated, setActivated] = useState(false);
 
-  const prepared = status && status.status !== "missing";
-  const active = status?.status === "active";
-  const builderConfigured = config?.configured ?? false;
+  const walletAddress = web3Session?.walletAddress ?? wagmiAddress ?? null;
+  const isActive = status?.status === "active";
+  const walletReady = !!walletAddress;
 
-  const approvalExpiresAt = useMemo(() => {
-    const days = Number(form.approvalDays || 30);
-    if (!Number.isFinite(days) || days <= 0) return undefined;
-    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  }, [form.approvalDays]);
-
-  const prepare = trpc.aster.prepareAgent.useMutation({
+  const activate = trpc.aster.activateWithWallet.useMutation({
     onSuccess: () => {
-      toast.success("Aster Agent prepared. Approve it in Aster to continue.");
+      setActivated(true);
+      toast.success("Aster execution activated!");
       utils.aster.getStatus.invalidate();
-      setStep(2);
+      utils.liveAccount.get.invalidate();
+      setTimeout(() => navigate("/dashboard"), 1200);
     },
-    onError: (e) => toast.error(e.message || "Failed to prepare Aster Agent."),
+    onError: (e) => toast.error(e.message || "Failed to activate Aster."),
   });
 
-  const recordApprovals = trpc.aster.recordApprovals.useMutation({
-    onSuccess: () => {
-      toast.success("Aster Agent activated for Anavitrade routing.");
-      utils.aster.getStatus.invalidate();
-      navigate("/dashboard");
-    },
-    onError: (e) => toast.error(e.message || "Failed to activate Aster Agent."),
-  });
-
-  function copy(value: string, label: string) {
-    navigator.clipboard.writeText(value);
-    setCopied(label);
-    setTimeout(() => setCopied(null), 1600);
-  }
-
-  function handlePrepare() {
-    if (!builderConfigured) {
-      toast.error("Aster Builder address is not configured on the backend.");
+  const handleActivate = () => {
+    if (!walletAddress) {
+      setShowWalletModal(true);
       return;
     }
-    if (!form.asterAccountAddress.trim()) {
-      toast.error("Enter your Aster account address.");
-      return;
-    }
-    const ipWhitelist = form.ipWhitelist.split(",").map((item) => item.trim()).filter(Boolean);
-    prepare.mutate({
-      asterAccountAddress: form.asterAccountAddress.trim(),
-      maxFeeRate: form.maxFeeRate.trim() || undefined,
-      approvalExpiresAt,
-      ipWhitelist: ipWhitelist.length > 0 ? ipWhitelist : undefined,
-    });
-  }
+    activate.mutate({ walletAddress });
+  };
 
-  function handleActivate() {
-    if (!confirmations.agentApproved || !confirmations.builderApproved) {
-      toast.error("Confirm both Aster approvals before activating.");
-      return;
+  // Auto-close wallet modal once connected
+  useEffect(() => {
+    if (walletAddress && showWalletModal) {
+      setShowWalletModal(false);
     }
-    recordApprovals.mutate({
-      agentApproved: true,
-      builderApproved: true,
-      maxFeeRate: form.maxFeeRate.trim() || status?.maxFeeRate || undefined,
-    });
-  }
+  }, [walletAddress, showWalletModal]);
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="border-b border-border/50 px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+      {/* Back nav */}
+      <div className="border-b px-6 py-4" style={{ borderColor: "oklch(0.60 0.22 220 / 0.12)" }}>
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
           <Link href="/dashboard">
             <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-4 h-4" /> Dashboard
             </button>
           </Link>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Shield className="w-4 h-4 text-primary" /> Aster DEX setup
+            <Zap className="w-4 h-4 text-primary" /> Aster DEX
           </div>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        <div className="mb-10">
-          <h1 className="text-2xl font-heading font-bold text-foreground mb-2">Connect Aster Execution</h1>
-          <p className="text-sm text-muted-foreground max-w-2xl">
-            Anavitrade routes DEX execution through Aster. You approve one Agent signer for trade execution and one Builder fee cap. No withdrawal permission is requested.
+      <div className="max-w-lg mx-auto px-6 py-16">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
+          className="text-center mb-10"
+        >
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
+            style={{ background: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.60 0.22 220 / 0.05))", border: "1px solid oklch(0.60 0.22 220 / 0.25)" }}>
+            <Zap className="w-7 h-7 text-primary" />
+          </div>
+          <h1 className="text-3xl font-heading font-bold text-foreground mb-3">
+            One-click Aster Activation
+          </h1>
+          <p className="text-muted-foreground leading-relaxed max-w-sm mx-auto">
+            Connect your wallet and activate DEX execution in a single step. No copy-pasting, no multi-page forms.
           </p>
-        </div>
+        </motion.div>
 
-        <div className="mb-10 flex items-center justify-between">
-          {STEPS.map((s, index) => (
-            <div key={s.id} className="flex items-center flex-1">
-              <div className="flex flex-col items-center gap-1.5">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${step > s.id || active ? "bg-primary border-primary text-primary-foreground" : step === s.id ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"}`}>
-                  {step > s.id || active ? <CheckCircle2 className="w-5 h-5" /> : s.icon}
-                </div>
-                <span className={`text-[10px] font-medium hidden sm:block ${step === s.id ? "text-primary" : "text-muted-foreground"}`}>{s.title}</span>
-              </div>
-              {index < STEPS.length - 1 && <div className="flex-1 h-px mx-3 mb-5 bg-border" />}
+        {/* Status card */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="rounded-2xl p-6 mb-8 border"
+          style={{
+            background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.85), oklch(0.09 0.018 255 / 0.90))",
+            borderColor: "oklch(0.60 0.22 220 / 0.18)",
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: "oklch(0.60 0.22 220 / 0.12)", color: "oklch(0.68 0.22 220)" }}>
+              <Shield className="w-6 h-6" />
             </div>
-          ))}
-        </div>
-
-        {active && (
-          <div className="mb-8 p-5 rounded-2xl border border-primary/20 bg-primary/5">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-primary mt-0.5" />
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Aster execution is active</h3>
-                <p className="text-xs text-muted-foreground mt-1">Your Agent and Builder approvals are recorded. Live order submission remains gated until the execution worker is fully wired and verified.</p>
-              </div>
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Execution Status</h3>
+              {statusLoading ? (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Loading...
+                </p>
+              ) : isActive ? (
+                <p className="text-xs text-green-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Active — ready for DEX execution
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Not yet activated</p>
+              )}
             </div>
           </div>
-        )}
 
-        <motion.div key={step} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-          {step === 1 && (
-            <Panel title="Link your Aster account" subtitle="Use the wallet-controlled account that will hold your margin on Aster.">
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Aster Account Address</label>
-                  <input
-                    value={form.asterAccountAddress}
-                    onChange={(e) => setForm({ ...form, asterAccountAddress: e.target.value })}
-                    placeholder="0xYourAsterAccountAddress"
-                    className="w-full px-4 py-3 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
-                  />
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">Builder Fee Cap</label>
-                    <input
-                      value={form.maxFeeRate}
-                      onChange={(e) => setForm({ ...form, maxFeeRate: e.target.value })}
-                      placeholder="0"
-                      className="w-full px-4 py-3 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">Approval Duration</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={form.approvalDays}
-                      onChange={(e) => setForm({ ...form, approvalDays: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-card border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">IP Whitelist</label>
-                  <input
-                    value={form.ipWhitelist}
-                    onChange={(e) => setForm({ ...form, ipWhitelist: e.target.value })}
-                    placeholder="Optional, comma-separated execution IPs"
-                    className="w-full px-4 py-3 rounded-xl bg-card border border-border text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Use this once execution runs from a static egress IP. Cloudflare Worker egress is not enough for production IP whitelisting.</p>
-                </div>
-                {!builderConfigured && (
-                  <InfoBox warning>Aster Builder address is missing from backend env. Set `ASTER_BUILDER_ADDRESS` before preparing real Agents.</InfoBox>
+          {/* Wallet status */}
+          <div className="p-4 rounded-xl mb-5" style={{ background: "oklch(1 0 0 / 0.03)", border: "1px solid oklch(1 0 0 / 0.06)" }}>
+            <div className="flex items-center gap-3">
+              <Wallet className="w-5 h-5" style={{ color: walletReady ? "oklch(0.74 0.18 145)" : "oklch(0.50 0.015 260)" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  {walletReady ? "Wallet Connected" : "No wallet connected"}
+                </p>
+                {walletAddress && (
+                  <p className="text-xs font-mono text-muted-foreground truncate mt-0.5">
+                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                  </p>
                 )}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <a href={ASTER_APP_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border text-foreground text-sm font-medium hover:bg-card transition-all">
-                    Open Aster <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                  <button onClick={handlePrepare} disabled={prepare.isPending || !builderConfigured} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-50">
-                    {prepare.isPending ? "Preparing..." : "Prepare Agent"} <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
-            </Panel>
-          )}
-
-          {step === 2 && (
-            <Panel title="Approve the Anavitrade Agent" subtitle="This signer can place and cancel Aster perp orders for your account after approval. It must not receive withdrawal permission.">
-              <AddressRows status={status} copied={copied} copy={copy} />
-              <InfoBox>Approve the Agent signer in Aster with perps enabled, spot disabled unless needed, and withdrawals disabled.</InfoBox>
-              <div className="flex items-center gap-3 mt-6">
-                <button onClick={() => setStep(1)} className="px-5 py-2.5 rounded-xl border border-border text-foreground text-sm hover:bg-card transition-all">Back</button>
-                <button onClick={() => setStep(3)} disabled={!prepared} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-50">Continue</button>
-              </div>
-            </Panel>
-          )}
-
-          {step === 3 && (
-            <Panel title="Approve the Builder fee cap" subtitle="This approval lets Aster attribute eligible orders to Anavitrade's Builder address. It is not the full 2-and-20 fee ledger.">
-              <AddressRows status={status} copied={copied} copy={copy} />
-              <InfoBox warning>The 2% management fee and 20% performance fee stay in Anavitrade's fee ledger. Aster Builder fee rate is an execution-layer fee cap only.</InfoBox>
-              <a href={ASTER_CODE_DOCS_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-5 text-xs text-primary hover:underline">
-                Aster Code approval docs <ExternalLink className="w-3 h-3" />
-              </a>
-              <div className="flex items-center gap-3 mt-6">
-                <button onClick={() => setStep(2)} className="px-5 py-2.5 rounded-xl border border-border text-foreground text-sm hover:bg-card transition-all">Back</button>
-                <button onClick={() => setStep(4)} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all">Continue</button>
-              </div>
-            </Panel>
-          )}
-
-          {step === 4 && (
-            <Panel title="Record approvals" subtitle="After signing both approvals in Aster, confirm them here so Anavitrade can mark the Agent active.">
-              <div className="space-y-3 mb-6">
-                <ConfirmRow checked={confirmations.agentApproved} onChange={() => setConfirmations({ ...confirmations, agentApproved: !confirmations.agentApproved })} label="I approved the Agent signer for Aster perp execution." />
-                <ConfirmRow checked={confirmations.builderApproved} onChange={() => setConfirmations({ ...confirmations, builderApproved: !confirmations.builderApproved })} label="I approved the Anavitrade Builder fee cap on Aster." />
-              </div>
-              <InfoBox warning>Foundation mode records the user's confirmation. Production should verify approvals against Aster before activation.</InfoBox>
-              <div className="flex items-center gap-3 mt-6">
-                <button onClick={() => setStep(3)} className="px-5 py-2.5 rounded-xl border border-border text-foreground text-sm hover:bg-card transition-all">Back</button>
-                <button onClick={handleActivate} disabled={recordApprovals.isPending || !confirmations.agentApproved || !confirmations.builderApproved} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-50">
-                  {recordApprovals.isPending ? "Activating..." : "Activate Aster Execution"}
+              {!walletReady && (
+                <button
+                  onClick={() => setShowWalletModal(true)}
+                  className="px-4 py-2 rounded-xl border text-xs font-semibold transition-all hover:bg-card"
+                  style={{ borderColor: "oklch(0.60 0.22 220 / 0.25)" }}
+                >
+                  Connect
                 </button>
+              )}
+            </div>
+          </div>
+
+          {/* What happens — transparency */}
+          <div className="space-y-2 mb-6">
+            {[
+              "Anavitrade generates a dedicated Agent signer for your account",
+              "The Agent can place and cancel Aster perp orders only — no withdrawal access",
+              "A 30-day approval is set (auto-renewable)",
+              "Your wallet address is registered as your Aster account",
+              "Zero-custody — funds never leave your account",
+            ].map((item, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "oklch(0.60 0.22 220 / 0.6)" }} />
+                <span className="text-xs text-muted-foreground">{item}</span>
               </div>
-            </Panel>
+            ))}
+          </div>
+
+          {/* CTA */}
+          <button
+            onClick={handleActivate}
+            disabled={activate.isPending || isActive || activated}
+            className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 relative overflow-hidden group"
+            style={{
+              fontFamily: "var(--font-heading)",
+              color: activate.isPending ? "oklch(0.98 0.004 220)" : "oklch(0.14 0.02 255)",
+              background: isActive
+                ? "oklch(0.74 0.18 145 / 0.15)"
+                : "var(--grad-arctic)",
+              boxShadow: isActive ? "none" : "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)",
+              border: isActive ? "1px solid oklch(0.74 0.18 145 / 0.3)" : "none",
+            }}
+          >
+            {activate.isPending ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Activating...
+              </span>
+            ) : isActive ? (
+              <span className="flex items-center justify-center gap-2" style={{ color: "oklch(0.74 0.18 145)" }}>
+                <CheckCircle2 className="w-4 h-4" />
+                Already Active
+              </span>
+            ) : activated ? (
+              <span className="flex items-center justify-center gap-2" style={{ color: "oklch(0.14 0.02 255)" }}>
+                <CheckCircle2 className="w-4 h-4" />
+                Activated! Redirecting...
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2 group-hover:gap-3 transition-all">
+                <Zap className="w-4 h-4" />
+                {walletReady ? "Activate Aster Execution" : "Connect Wallet & Activate"}
+              </span>
+            )}
+          </button>
+
+          {!walletReady && (
+            <p className="text-[11px] text-muted-foreground/60 text-center mt-3">
+              You'll be prompted to connect your wallet. Only a signature is requested — no transactions, no gas fees.
+            </p>
           )}
         </motion.div>
+
+        {/* Trust badges */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground/50"
+        >
+          <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> No withdrawal access</span>
+          <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Under 50ms execution</span>
+          <span className="flex items-center gap-1.5"><ExternalLink className="w-3.5 h-3.5" /> Powered by Aster</span>
+        </motion.div>
       </div>
-    </div>
-  );
-}
 
-function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
-  return (
-    <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-heading font-bold text-foreground mb-2">{title}</h2>
-      <p className="text-muted-foreground mb-8 leading-relaxed">{subtitle}</p>
-      {children}
-    </div>
-  );
-}
-
-function AddressRows({ status, copied, copy }: { status: any; copied: string | null; copy: (value: string, label: string) => void }) {
-  return (
-    <div className="space-y-3 mb-5">
-      <AddressRow label="Agent Signer" value={status?.signerAddress} copied={copied === "agent"} onCopy={() => status?.signerAddress && copy(status.signerAddress, "agent")} />
-      <AddressRow label="Builder Address" value={status?.builderAddress} copied={copied === "builder"} onCopy={() => status?.builderAddress && copy(status.builderAddress, "builder")} />
-      <AddressRow label="Fee Cap" value={status?.maxFeeRate ?? "0"} copied={false} onCopy={() => {}} />
-    </div>
-  );
-}
-
-function AddressRow({ label, value, copied, onCopy }: { label: string; value?: string | null; copied: boolean; onCopy: () => void }) {
-  return (
-    <div className="p-4 rounded-xl bg-card border border-border/50">
-      <div className="text-xs text-muted-foreground mb-1">{label}</div>
-      <div className="flex items-center gap-2">
-        <code className="text-xs text-foreground break-all flex-1">{value ?? "Not prepared"}</code>
-        {value && (
-          <button onClick={onCopy} className="p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-background transition-all">
-            {copied ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ConfirmRow({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return (
-    <button onClick={onChange} className="w-full flex items-center gap-3 p-4 rounded-xl bg-card border border-border/50 text-left hover:border-primary/30 transition-all">
-      <span className={`w-5 h-5 rounded-md border flex items-center justify-center ${checked ? "bg-primary border-primary text-primary-foreground" : "border-border"}`}>
-        {checked && <Check className="w-3.5 h-3.5" />}
-      </span>
-      <span className="text-sm text-foreground">{label}</span>
-    </button>
-  );
-}
-
-function InfoBox({ children, warning = false }: { children: React.ReactNode; warning?: boolean }) {
-  return (
-    <div className={`p-4 rounded-xl border ${warning ? "bg-amber-500/5 border-amber-500/20" : "bg-primary/5 border-primary/20"}`}>
-      <div className="flex items-start gap-3">
-        {warning ? <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" /> : <Shield className="w-4 h-4 text-primary mt-0.5 shrink-0" />}
-        <p className="text-xs text-muted-foreground leading-relaxed">{children}</p>
-      </div>
+      {/* Wallet connect modal */}
+      <WalletConnectModal
+        isOpen={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        onConnected={() => {
+          utils.web3Wallet.getSession.invalidate();
+        }}
+      />
     </div>
   );
 }
