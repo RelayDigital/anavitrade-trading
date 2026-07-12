@@ -171,11 +171,7 @@ export default function Dashboard() {
           onShowPanel={() => setShowActivationPanel(true)}
           onHidePanel={() => setShowActivationPanel(false)}
           onConnectWallet={() => setShowWalletModal(true)}
-          onActivate={() => {
-            if (web3Session?.walletAddress) {
-              activate.mutate();
-            }
-          }}
+          onActivate={() => activate.mutate()}
           onShowWizard={() => setShowWizard(true)}
         />
 

@@ -129,6 +129,11 @@ export async function recordAsterApprovals(input: {
   if (active) {
     await db.update(liveAccounts).set({ status: "active" } as any).where(eq(liveAccounts.userId, input.userId));
     await writeAuditLog(input.userId, "ASTER_AGENT_APPROVED", `signer:${account.signerAddress}`);
+    // When Aster activates, sync the live_accounts balance cache (includes CEX if any)
+    try {
+      const { syncUnifiedBalance } = await import("../cex/store");
+      await syncUnifiedBalance(input.userId);
+    } catch { /* cex/store may not be loaded in worker context */ }
   }
 
   return getAsterAgentStatus(input.userId);

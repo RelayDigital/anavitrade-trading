@@ -177,6 +177,9 @@ export async function validateCexConnection(userId: number, exchange: string) {
   await db.update(liveAccounts).set({ status: "active" } as any).where(eq(liveAccounts.userId, userId));
   await writeAuditLog(userId, "CEX_CONNECTION_ACTIVATED", `exchange:${exchange}; equity:${balance.equityUsd.toFixed(2)}`);
 
+  // Sync full unified balance into live_accounts cache
+  try { await syncUnifiedBalance(userId); } catch { /* best-effort */ }
+
   return { balance, permission: perm };
 }
 
@@ -190,6 +193,8 @@ export async function revokeCexConnection(userId: number, exchange: string) {
       eq(cexConnections.status, "active"),
     ));
   await writeAuditLog(userId, "CEX_CONNECTION_REVOKED", `exchange:${exchange}`);
+  // Refresh unified balance cache
+  try { await syncUnifiedBalance(userId); } catch { /* best-effort */ }
   return listCexConnections(userId);
 }
 
@@ -282,4 +287,28 @@ export function getUnifiedSummary(balances: CexBalanceSnapshot[]): UnifiedBalanc
     exchangeCount: balances.length,
     activeCount: active.length,
   };
+}
+
+/**
+ * Sync ALL exchange balances into the live_accounts cache.
+ * Call this after connect/validate/revoke to keep the user's unified balance fresh.
+ * Also returns the snapshot for immediate use.
+ */
+export async function syncUnifiedBalance(userId: number) {
+  const db = getDb();
+  const balances = await getAllCexBalances(userId);
+  const summary = getUnifiedSummary(balances);
+
+  await db.update(liveAccounts)
+    .set({
+      lastTotalEquityUsd: summary.totalEquityUsd.toFixed(2),
+      lastAvailableUsd: summary.totalAvailableUsd.toFixed(2),
+      linkedExchangesJson: JSON.stringify(balances.map(b => ({
+        exchange: b.exchange, label: b.label, error: b.error,
+      }))),
+      updatedAt: new Date(),
+    } as any)
+    .where(eq(liveAccounts.userId, userId));
+
+  return { balances, summary };
 }
