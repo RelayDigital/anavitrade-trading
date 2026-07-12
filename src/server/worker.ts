@@ -460,12 +460,28 @@ app.post("/api/fee/crystallize", async (c) => {
   }
 });
 
+/* ── Cron throttle counter ────────────────────────────────────────────
+ * Prevents expensive jobs from running on every 60-second fire.
+ * Reset at 2880 (~48h worth of fires) to avoid integer overflow. */
+let _cronCount = 0;
+
 export default {
   fetch: app.fetch,
-  /** Cron trigger — fires every 5 min, scrapes coinlegs → dispatches to CEX connections.
-   *  Also crystallizes fees when a daily cron flag is present. */
+  /**
+   * Cron trigger — fires every ~60 seconds.
+   *
+   * Job             | Interval    | Why
+   * ----------------|-------------|----------------------
+   * Coinlegs scrape | every fire  | ~300ms API call
+   * Native generator| every fire  | ~500ms local detection
+   * Demo sync       | every 5th   | DB batch (signals to demo accounts)
+   * Analysis engine | every 5th   | ICR scoring + enrichment
+   * Outcome val     | every 15th  | ~1s Binance kline API
+   * Fee crystallize | once/day    | quarterly DB, 2&20 model
+   */
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     setDbEnv(env);
+    _cronCount++;
 
     const results: Record<string, unknown> = {};
 
@@ -496,35 +512,53 @@ export default {
       results.native = { error: e?.message };
     }
 
-    // Fee crystallization (daily trigger — cronExpression "0 0 * * *" or explicit check)
-    const cronParam = (_event as any)?.cron ?? "";
-    if (cronParam.includes("0 0 * * *") || cronParam === "" || cronParam.includes("daily")) {
+    // Demo sync -- signals to demo accounts every 5th fire (~5 min)
+    if (_cronCount % 5 === 0) {
+      try {
+        const { syncSignalsToDemoAccounts } = await import("./db");
+        const demoResult = await syncSignalsToDemoAccounts();
+        console.log("[demo-cron]", JSON.stringify(demoResult));
+        results.demo = demoResult;
+      } catch (e: any) {
+        console.warn("[demo-cron] error:", e?.message);
+      }
+    }
+
+    // Fee crystallization -- once per ~1440 fires (~24h at 60s interval)
+    if (_cronCount % 1440 === 0) {
       const feeResult = await crystallizeFees();
       console.log("[fee-cron]", JSON.stringify(feeResult));
       results.fee = feeResult;
     }
 
-    // Outcome validation (runs every 15 min alongside scraper)
-    try {
-      const outcomeResult = await validateSignalOutcomes();
-      console.log("[outcome-cron]", JSON.stringify({
-        validated: outcomeResult.signalsValidated,
-        accuracy: outcomeResult.accuracyPct,
-        warnings: outcomeResult.warnings,
-      }));
-      results.outcome = outcomeResult;
-    } catch (e: any) {
-      console.warn("[outcome-cron] error:", e?.message);
+    // Outcome validation -- every 15th fire (~15 min at 60s interval)
+    if (_cronCount % 15 === 0) {
+      try {
+        const outcomeResult = await validateSignalOutcomes();
+        console.log("[outcome-cron]", JSON.stringify({
+          validated: outcomeResult.signalsValidated,
+          accuracy: outcomeResult.accuracyPct,
+          warnings: outcomeResult.warnings,
+        }));
+        results.outcome = outcomeResult;
+      } catch (e: any) {
+        console.warn("[outcome-cron] error:", e?.message);
+      }
     }
 
-    // Unified analysis engine (runs every cycle alongside the scraper)
-    try {
-      const analysisResult = await runAnalysisEngine();
-      console.log("[analysis-cron]", JSON.stringify(analysisResult));
-      results.analysis = analysisResult;
-    } catch (e: any) {
-      console.warn("[analysis-cron] error:", e?.message);
+    // Analysis engine (ICR scoring) -- every 5th fire (~5 min at 60s interval)
+    if (_cronCount % 5 === 0) {
+      try {
+        const analysisResult = await runAnalysisEngine();
+        console.log("[analysis-cron]", JSON.stringify(analysisResult));
+        results.analysis = analysisResult;
+      } catch (e: any) {
+        console.warn("[analysis-cron] error:", e?.message);
+      }
     }
+
+    // Prevent unbounded growth of the throttle counter
+    if (_cronCount >= 2880) _cronCount = 1;
 
     console.log("[anavitrade-cron]", JSON.stringify(results));
   },

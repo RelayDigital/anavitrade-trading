@@ -141,7 +141,7 @@ async function dispatchSignal(sig: IndicatorSignal, confluenceCount: number): Pr
     const stopPrice = sig.price > 0 ? (sig.price * (1 - stopPct / 100)).toFixed(8) : null;
     const tpPrice = sig.price > 0 ? (sig.price * (1 + (stopPct * rr) / 100)).toFixed(8) : null;
 
-    await db.insert(tradeIntents).values({
+    const intent = await db.insert(tradeIntents).values({
       source: "anavitrade-native",
       externalSignalId: `${sig.marketName}_${sig.period}_${sig.indicator}_${sig.signalTime}`,
       symbol: sig.marketName.replace("USDT", ""),
@@ -154,9 +154,8 @@ async function dispatchSignal(sig: IndicatorSignal, confluenceCount: number): Pr
       status: "created",
       createdBy: "native-generator",
       requestedNotionalUsd: confidence < 1 ? String(Math.round(confidence * 100)) : null,
-    } as any);
+    } as any).returning().then(r => r[0]);
 
-    const [intent] = await db.select().from(tradeIntents).orderBy(desc(tradeIntents.id)).limit(1);
     if (intent) {
       const result = await createExecutionJobsForIntent(intent.id);
       return result.jobs.length;

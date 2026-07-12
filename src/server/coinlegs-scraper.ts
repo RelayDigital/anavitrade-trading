@@ -484,7 +484,7 @@ export async function runCoinlegsScraper() {
 
         const confidence = structuralConfidenceMultiplier(structuralRecheck.score) * positionFactor * convictionMultiplier * mtfFactor;
 
-        await db!.insert(tradeIntents).values({
+        const intent = await db!.insert(tradeIntents).values({
           source: "coinlegs", externalSignalId: String(sig.signalId),
           symbol: sig.marketName.replace("/", ""), side: "buy", orderType: "market",
           targetLeverage: sig.leverage,
@@ -493,8 +493,8 @@ export async function runCoinlegsScraper() {
           takeProfitPrice: tpPrice,
           status: "created", createdBy: "scraper",
           requestedNotionalUsd: confidence < 1 ? String(Math.round(confidence * 100)) : null,
-        } as any);
-        const [intent] = await db!.select().from(tradeIntents).orderBy(desc(tradeIntents.id)).limit(1);
+        } as any).returning().then(r => r[0]);
+
         if (intent) {
           const r = await createExecutionJobsForIntent(intent.id);
           intentIds.push(intent.id);

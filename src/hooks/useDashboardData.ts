@@ -67,11 +67,15 @@ export function useDashboardData() {
   const setDisplayMode = trpc.liveAccount.setDisplayMode.useMutation({
     onSuccess: (d) => {
       refetchDisplayMode();
-      import("sonner").then(({ toast }) => {
-        toast.success(d.mode === "demo" ? "Switched to Demo mode — data is simulated paper trades." : "Switched to Live mode.");
-      });
+      toast.success(d.mode === "demo" ? "Switched to Demo mode — data is simulated paper trades." : "Switched to Live mode.");
     },
-    onError: () => import("sonner").then(({ toast }) => toast.error("Failed to switch display mode.")),
+    onError: () => toast.error("Failed to switch display mode."),
+  });
+
+  // Unified balance: aggregated across all connected CEX exchanges + cached on live_accounts
+  const { data: unifiedBalance } = trpc.cex.getUnifiedBalance.useQuery(undefined, {
+    enabled: anyConnected, // only fetch when user has at least one connection
+    refetchInterval: 60_000, // refresh every minute
   });
 
   const killActive = web3Connected
@@ -104,6 +108,9 @@ export function useDashboardData() {
     currentMode,
     isDemoMode,
     setDisplayMode,
+
+    // Unified balance
+    unifiedBalance,
 
     // Mutations
     toggleWeb3Kill,
