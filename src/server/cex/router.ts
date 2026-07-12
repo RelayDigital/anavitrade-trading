@@ -6,8 +6,13 @@ import {
   listCexConnections, prepareCexConnection, validateCexConnection,
   revokeCexConnection, toggleCexKillSwitch, getCexBalance,
 } from "./store";
+import { getAllCexBalances, getUnifiedSummary } from "./store";
 
 const exchangeInput = z.object({ exchange: z.string().min(2).max(20) });
+
+const EXCHANGE_ERROR_PREFIXES = [
+  "BINANCE_", "BITUNIX_", "BYBIT_", "OKX_", "KRAKEN_", "KUCOIN_", "GATEIO_", "COINBASE_",
+];
 
 export const cexRouter = router({
   /** Consumer dropdown source of truth. */
@@ -29,7 +34,6 @@ export const cexRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         await prepareCexConnection({ userId: ctx.user.id, ...input });
-        // Validate immediately so the user gets a real pass/fail.
         const result = await validateCexConnection(ctx.user.id, input.exchange);
         return { success: true, ...result };
       } catch (e: any) {
@@ -38,7 +42,9 @@ export const cexRouter = router({
         if (msg.includes("PASSPHRASE_REQUIRED")) throw new TRPCError({ code: "BAD_REQUEST", message: "This exchange requires an API passphrase." });
         if (msg.includes("KEY_HAS_WITHDRAWAL_PERMISSION")) throw new TRPCError({ code: "BAD_REQUEST", message: "This API key has withdrawal permission enabled. Create a trade-only key (withdrawals OFF) and try again." });
         if (msg.includes("ATTESTATION_REQUIRED")) throw new TRPCError({ code: "BAD_REQUEST", message: "Please confirm withdrawals are disabled on this key." });
-        if (msg.startsWith("BINANCE_") || msg.startsWith("BITUNIX_")) throw new TRPCError({ code: "BAD_REQUEST", message: "The exchange rejected these keys. Double-check the key, secret, and that Futures is enabled." });
+        if (EXCHANGE_ERROR_PREFIXES.some(p => msg.startsWith(p))) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The exchange rejected these keys. Double-check the key, secret, and that Futures trading is enabled." });
+        }
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Could not connect exchange." });
       }
     }),
@@ -61,4 +67,11 @@ export const cexRouter = router({
 
   getBalance: protectedProcedure.input(exchangeInput).query(async ({ input, ctx }) =>
     getCexBalance(ctx.user.id, input.exchange)),
+
+  /** Unified balance: all active CEX connections' balances + aggregated total. */
+  getUnifiedBalance: protectedProcedure.query(async ({ ctx }) => {
+    const balances = await getAllCexBalances(ctx.user.id);
+    const summary = getUnifiedSummary(balances);
+    return { balances, summary };
+  }),
 });

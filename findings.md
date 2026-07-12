@@ -1,95 +1,28 @@
-# Findings & Decisions
-<!-- 
-  WHAT: Your knowledge base for the task. Stores everything you discover and decide.
-  WHY: Context windows are limited. This file is your "external memory" - persistent and unlimited.
-  WHEN: Update after ANY discovery, especially after 2 view/browser/search operations (2-Action Rule).
--->
+# Findings & Decisions — Project Audit 2026-07-12
 
-## Requirements
-<!-- 
-  WHAT: What the user asked for, broken down into specific requirements.
-  WHY: Keeps requirements visible so you don't forget what you're building.
-  WHEN: Fill this in during Phase 1 (Requirements & Discovery).
-  EXAMPLE:
-    - Command-line interface
-    - Add tasks
-    - List all tasks
-    - Delete tasks
-    - Python implementation
--->
-<!-- Captured from user request -->
--
+## Backtest Scripts — Critical Methodological Issues
 
-## Research Findings
-<!-- 
-  WHAT: Key discoveries from web searches, documentation reading, or exploration.
-  WHY: Multimodal content (images, browser results) doesn't persist. Write it down immediately.
-  WHEN: After EVERY 2 view/browser/search operations, update this section (2-Action Rule).
-  EXAMPLE:
-    - Python's argparse module supports subcommands for clean CLI design
-    - JSON module handles file persistence easily
-    - Standard pattern: python script.py <command> [args]
--->
-<!-- Key discoveries during exploration -->
--
+### 1. Lookahead Bias in ML Scripts
+| Script | Issue | Severity |
+|--------|-------|----------|
+| `zoom-ml-backtest.mjs` | Uses `trade.win` directly in `computeLTFConf()` — scores CCI/Stoch weight as `isWinner ? 1.2 : 0.7` | **CRITICAL** — result is worthless |
+| `mdp-zoom-train.mjs` | Reward function uses `trade.pnlPct`; `classifyState()` uses `ddPct` + `pnlPct` for regime | **HIGH** — RL agent learns from future |
+| `mtf-matrix-backtest.mjs` | Uses `ddPct` (post-trade drawdown) as sweep-depth proxy in 12 of 22 layers | **MEDIUM** — grey-area bias |
 
-## Technical Decisions
-<!-- 
-  WHAT: Architecture and implementation choices you've made, with reasoning.
-  WHY: You'll forget why you chose a technology or approach. This table preserves that knowledge.
-  WHEN: Update whenever you make a significant technical choice.
-  EXAMPLE:
-    | Use JSON for storage | Simple, human-readable, built-in Python support |
-    | argparse with subcommands | Clean CLI: python todo.py add "task" |
--->
-<!-- Decisions made with rationale -->
-| Decision | Rationale |
-|----------|-----------|
-|          |           |
+### 2. Suspicious Perfect Results
+`zoom-ml-backtest.mjs` top 20 configs all show **100% WR on exactly 27 trades** — statistically impossible without data leakage.
 
-## Issues Encountered
-<!-- 
-  WHAT: Problems you ran into and how you solved them.
-  WHY: Similar to errors in task_plan.md, but focused on broader issues (not just code errors).
-  WHEN: Document when you encounter blockers or unexpected challenges.
-  EXAMPLE:
-    | Empty file causes JSONDecodeError | Added explicit empty file check before json.load() |
--->
-<!-- Errors and how they were resolved -->
-| Issue | Resolution |
-|-------|------------|
-|       |            |
+### 3. Inflated Portfolio Returns
+Unified backtest shows returns of 75B%+ for some strategies. Caused by full reinvestment with no slippage/fees/liquidity caps. Results should be read as **relative strategy rankings**, not absolute return predictions.
 
-## Resources
-<!-- 
-  WHAT: URLs, file paths, API references, documentation links you've found useful.
-  WHY: Easy reference for later. Don't lose important links in context.
-  WHEN: Add as you discover useful resources.
-  EXAMPLE:
-    - Python argparse docs: https://docs.python.org/3/library/argparse.html
-    - Project structure: src/main.py, src/utils.py
--->
-<!-- URLs, file paths, API references -->
--
+### 4. Doc-Script Disconnect
+`docs/analysis/EMPIRICAL_FINDINGS.md` describes a production ICR engine with 655 outcomes across 30 symbols over 6 months. **None of the backtest scripts reproduce or verify these findings.** The scripts use Coinlegs API data and a static 1,265-trade JSON corpus — completely separate data sources.
 
-## Visual/Browser Findings
-<!-- 
-  WHAT: Information you learned from viewing images, PDFs, or browser results.
-  WHY: CRITICAL - Visual/multimodal content doesn't persist in context. Must be captured as text.
-  WHEN: IMMEDIATELY after viewing images or browser results. Don't wait!
-  EXAMPLE:
-    - Screenshot shows login form has email and password fields
-    - Browser shows API returns JSON with "status" and "data" keys
--->
-<!-- CRITICAL: Update after every 2 view/browser operations -->
-<!-- Multimodal content must be captured as text immediately -->
--
+## Verifiably Valid Results (forward-only scoring)
+| Strategy | Trades | WR | Sharpe | Walk-Forward |
+|----------|--------|----|--------|-------------|
+| ICT Sniper (Rule) | 694 | 68.0% | 7.00 | PASS |
+| Anavitrade Native | 897 | 64.3% | 5.85 | PASS |
+| Zoom ML + Sniper | 704 | 63.2% | 5.85 | PASS |
 
----
-<!-- 
-  REMINDER: The 2-Action Rule
-  After every 2 view/browser/search operations, you MUST update this file.
-  This prevents visual information from being lost when context resets.
--->
-*Update this file after every 2 view/browser/search operations*
-*This prevents visual information from being lost*
+**Waiting for agents 2 (analysis/signals), 3 (execution/CEX/Aster), 4 (frontend) to report.**

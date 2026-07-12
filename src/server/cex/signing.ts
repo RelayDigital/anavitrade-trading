@@ -26,6 +26,19 @@ export async function hmacSha256Hex(secret: string, data: string): Promise<strin
   return toHex(sig);
 }
 
+/** HMAC-SHA512(secret, data) → lowercase hex. Used by Gate.io. */
+export async function hmacSha512Hex(secret: string, data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-512" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  return toHex(sig);
+}
+
 /** SHA-256(input) → lowercase hex. */
 export async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));

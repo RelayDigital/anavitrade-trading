@@ -221,3 +221,65 @@ export async function getCexBalance(userId: number, exchange: string) {
 }
 
 export { isLiveExchange };
+
+/* ── Unified Balance (all active CEX connections) ────────────────────── */
+
+export type CexBalanceSnapshot = {
+  exchange: string;
+  label: string | null;
+  killSwitchActive: boolean;
+  equityUsd: number;
+  availableUsd: number;
+  error?: boolean;
+};
+
+export type UnifiedBalanceSummary = {
+  totalEquityUsd: number;
+  totalAvailableUsd: number;
+  exchangeCount: number;
+  activeCount: number;
+};
+
+/** Read live balance for EVERY active CEX connection. */
+export async function getAllCexBalances(userId: number): Promise<CexBalanceSnapshot[]> {
+  const db = getDb();
+  const rows = await db.select().from(cexConnections)
+    .where(and(eq(cexConnections.userId, userId), eq(cexConnections.status, "active")));
+
+  const results = await Promise.allSettled(
+    rows.map(async (row) => {
+      try {
+        const creds = await decryptCexCredentials(row);
+        const client = createCexClient(row.exchange, creds);
+        const balance = await client.validateAndReadBalance();
+        return {
+          exchange: row.exchange, label: row.label,
+          killSwitchActive: row.killSwitchActive,
+          equityUsd: balance.equityUsd, availableUsd: balance.availableUsd,
+        };
+      } catch {
+        return {
+          exchange: row.exchange, label: row.label,
+          killSwitchActive: row.killSwitchActive,
+          equityUsd: 0, availableUsd: 0, error: true,
+        };
+      }
+    }),
+  );
+
+  return results.map((r) => {
+    if (r.status === "fulfilled") return r.value;
+    return { exchange: "unknown", label: null, killSwitchActive: false, equityUsd: 0, availableUsd: 0, error: true };
+  });
+}
+
+/** Aggregate per-exchange snapshots into a unified view. */
+export function getUnifiedSummary(balances: CexBalanceSnapshot[]): UnifiedBalanceSummary {
+  const active = balances.filter((b) => !b.error);
+  return {
+    totalEquityUsd: active.reduce((s, b) => s + b.equityUsd, 0),
+    totalAvailableUsd: active.reduce((s, b) => s + b.availableUsd, 0),
+    exchangeCount: balances.length,
+    activeCount: active.length,
+  };
+}

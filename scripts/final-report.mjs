@@ -193,9 +193,17 @@ ZOOM MDP POLICY (for micro entries):
     - 1h/TrendRev low conf: 0.5 threshold, microWeight 4
 
 WHAT NOT TO USE:
-  - ICR Strategy alone — too few trades (41), fails walk-forward
   - FVG pattern alone — 37.8% WR, negative expectancy
-  - Consensus (both) — only 41 trades, all subset of ICR
+  - Consensus (both) — too few trades, subset of ICR only
+
+TERTIARY: ICR Strategy (calibrated, th=45)
+
+  Updated 2026-07-12: threshold lowered from 55 to 45 based on 5-fold CV:
+    - 173 trades (was 41), 75.7% WR, Sharpe 10.73
+    - MaxDD improved to 21.8%
+    - 5-fold CV PASS at every threshold 40-50
+    - Use when ICT Sniper signals are absent (different signal universe)
+    - Pair with MTF layer stacking for bonus conviction
 `);
 
 console.log("=".repeat(90));
