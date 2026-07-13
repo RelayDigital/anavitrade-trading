@@ -1,57 +1,47 @@
-# Task Plan: Full Project Review & Audit
+# Task Plan: Production Pipeline Fix
 
-**Goal:** Map the entire Anavitrade trading platform — architecture, all algorithm signals, backtest scripts, data flow, subsystem relationships, and gaps.
+## Goal
+Fix the blocking D1 Date serialization bug so the scraper can insert signals, then re-enable all pipeline stages (analysis engine, outcome validation, fee crystallization, SMC dispatch).
 
-**Status:** COMPLETE ✓ — All 4 phases done. See findings.md for the full project topology map, gap report, and recommendations.
-
-## Current Phase
-Phase 4 — Synthesis (complete)
+## Current Status
+- **Phase 1 (D1 Fix):** PARTIAL — schema fixed, D1 raw binding works, but confluence SELECT still passes `new Date()` → ISO string error
+- **Phase 2 (Pipeline):** PENDING — bridge disabled, SMC dispatch disabled, analysis engine never fired (0 runs)
+- **Phase 3 (Seeding):** PENDING — need to trigger engines after fix
 
 ## Phases
 
-### Phase 1: Discover & Map Subsystems
-- [x] Map src/ file tree with sizes and purposes
-- [x] Map all scripts/*.mjs — what each does, corpus used, results
-- [x] Map src/server/analysis/ — engine, ICR, mirror, exits, derivatives
-- [x] Map src/server/signals/ — MTF matrix, swing sniper, zoom, BBAWE, Market Cipher, Wolfpack, LuxAlgo
-- [x] Map src/server/ — execution, CEX, Aster, fee, outcome, SMC
-- [x] Map frontend — pages, components, hooks, contexts
-- [x] Map data layer — db schema, drizzle, trpc
-- [x] **Status:** complete
+### Phase 1: Fix Remaining Date Object
+- [ ] `grep -rn "new Date(" src/server/coinlegs-scraper.ts | grep -v "toISOString\|\.getTime"`
+- [ ] Fix confluence SELECT on line 238: replace `new Date(...)` with `Date.now()`
+- [ ] Deploy and test: `curl -X POST /api/scraper/run` → expect `signalsInserted > 0`
 
-### Phase 2: Cross-Reference & Tie Together
-- [x] Signal flow discovered — TWO parallel pipelines (A: analysis/engine.ts, B: signals/generator.ts)
-- [x] Backtest scripts mapped — 10 scripts covering 5+ strategy families
-- [x] Config duplication identified — thresholds live in brain/config, ICR config, signals config, AND scraper
-- [x] Doc-script disconnect — EMPIRICAL_FINDINGS.md describes production ICR engine never tested by scripts
-- [x] **Status:** complete
+### Phase 2: Re-enable Bridge & Dispatch
+- [ ] Fix `analysis_signals` schema: change `createdAt`, `updatedAt` to `number` mode
+- [ ] Re-enable `bridgeCoinlegsSignals` call in scraper
+- [ ] Re-enable SMC structural validation + dispatch in scraper
+- [ ] Deploy and confirm end-to-end: signals → analysis_signals → TradeIntent → executionJobs
 
-### Phase 3: Gap & Inconsistency Report
-- [x] Dead code — bonferroniAdjust, unused tier constants, dead alpha weights, dead HA exits
-- [x] No test coverage for any backtest script
-- [x] Duplicated logic — sma() in 5+ files, SL/TP computed in 3 places, LiveSignalFeed in 3 places
-- [x] Security gaps — ErrorBoundary stack traces, ENCRYPTION_KEY==JWT_SECRET, Bitunix no withdrawal check
-- [x] Backend-frontend mismatches — Web3 dispatchSignal is stub, live portfolio stub, Aster orders scaffold
-- [x] **Status:** complete
+### Phase 3: Prime All Engines
+- [ ] Trigger `POST /api/analysis/run` → confirm `analysis_runs` populated
+- [ ] Trigger `POST /api/signals/generate` → confirm native generator creates intents
+- [ ] Trigger `POST /api/outcome/validate` → confirm `outcomeValidated` increments
+- [ ] Trigger `POST /api/fee/crystallize` → confirm `fee_payments` created
 
-### Phase 4: Synthesis — Visual Map & Recommendations
-- [x] Dependency diagram — see findings.md "Project Topology"
-- [x] All scripts tied together — see findings.md "Algorithm Script Reference Map"
-- [x] Prioritized fix list — see findings.md "Prioritized Fix Recommendations"
-- [x] **Status:** complete
+### Phase 4: Production Hardening (if needed)
+- [ ] Set real `ENCRYPTION_KEY` and `JWT_SECRET` via `npx wrangler secret put`
+- [ ] Upgrade wrangler: `npm install --save-dev wrangler@4`
+- [ ] Verify `GET /api/signals` returns populated signals
 
-## Key Questions — Answered
+## Key Commands for Next Agent
+```bash
+# Deploy latest
+pnpm check && pnpm build && npx wrangler deploy
 
-| Question | Answer |
-|----------|--------|
-| Are all signal generators wired into the engine? | **NO** — Two parallel pipelines exist (analysis/engine.ts and signals/generator.ts). They share only the SMC validator. |
-| Is the ICR engine being used or just documented? | **Partially used** — Pipeline A uses ICR for 30 4h symbols. Pipeline B ignores it entirely. Docs/analysis/EMPIRICAL_FINDINGS.md describes a different ICR dataset. |
-| Which backtest results are valid vs stale? | ICT Sniper (Rule) and Anavitrade Native are valid (forward-only, WF pass). zoom-ml and mdp-zoom have lookahead bias — **discard**. |
-| Are config constants duplicated? | **Yes** — brain/config.ts, ICR config, signals/config, and scraper/scoreSignal all have their own thresholds. |
+# Test scraper
+curl -s -H "x-admin-api-key: dev-secret-key-anavitrade-2026" -X POST \
+  "https://anavitrade-trading.erhazeariel.workers.dev/api/scraper/run"
 
-## Decisions Made
-| Decision | Rationale |
-|----------|-----------|
-| Parallel agent fan-out | 6 subsystems explored simultaneously |
-| Start from scripts + analysis core | The "algorithmic brain" — most complex part |
-| Cross-ref with docs/analysis/ | Docs were stale; code is source of truth |
+# Check DB state
+npx wrangler d1 execute anavitrade-db --remote \
+  --command "SELECT COUNT(*) FROM coinlegs_signals; SELECT COUNT(*) FROM analysis_signals;"
+```
