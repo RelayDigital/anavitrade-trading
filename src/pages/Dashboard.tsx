@@ -124,9 +124,7 @@ export default function Dashboard() {
       headerActions={
         <div className="flex items-center gap-2">
           {/* Mode Toggle */}
-          <div className="flex items-center gap-0.5 p-0.5 rounded-lg border"
-            style={{ borderColor: "oklch(0.60 0.22 220 / 0.15)", background: "oklch(0.08 0.012 260 / 0.5)" }}
-          >
+          <div className="flex items-center gap-0.5 p-0.5 rounded-lg border border-primary/15 bg-background/50">
             <button
               onClick={() => { if (currentMode !== "live") setDisplayMode.mutate({ mode: "live" }); }}
               className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${currentMode === "live" ? "bg-primary/20 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}

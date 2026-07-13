@@ -32,7 +32,8 @@ function StatCard({ icon, label, value, sub, color, highlight }: {
   sub?: string; color?: string; highlight?: boolean;
 }) {
   return (
-    <div className={`glass-card p-4 rounded-xl border transition-all ${highlight ? "border-primary/40 shadow-[0_0_16px_oklch(0.65_0.2_255/0.12)]" : "border-border"}`}>
+    <div className={`glass-card p-4 rounded-xl border transition-all ${highlight ? "border-primary/40" : "border-border"}`}
+      style={highlight ? { boxShadow: "0 0 16px oklch(0.65 0.2 255 / 0.12)" } : undefined}>
       <div className="flex items-center gap-2 mb-2 text-muted-foreground">{icon}<span className="text-xs font-medium uppercase tracking-wide">{label}</span></div>
       <div className={`text-xl font-bold font-mono ${color ?? "text-foreground"}`}>{value}</div>
       {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
@@ -712,12 +713,12 @@ export default function PublicDemo() {
           {/* Subtle decorative orbit ring */}
           <div className="absolute -bottom-48 -right-48 w-[500px] h-[500px] rounded-full border pointer-events-none opacity-[0.06]"
             style={{
-              borderColor: "oklch(0.60 0.22 220 / 0.3)",
+              borderColor: "color-mix(in srgb, var(--color-primary) 30%, transparent)",
               animation: "spinRight 80s linear infinite",
             }} />
           <div className="absolute -bottom-56 -right-56 w-[650px] h-[650px] rounded-full border pointer-events-none opacity-[0.04]"
             style={{
-              borderColor: "oklch(0.60 0.22 220 / 0.2)",
+              borderColor: "color-mix(in srgb, var(--color-primary) 20%, transparent)",
               animation: "spinLeft 100s linear infinite",
             }} />
           <div className="flex items-start justify-between mb-4">
@@ -753,31 +754,31 @@ export default function PublicDemo() {
               <AreaChart data={growthData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="pubGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="oklch(0.65 0.2 255)" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="oklch(0.65 0.2 255)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.04)" />
-                <XAxis dataKey="label" tick={{ fill: "oklch(0.7 0 0)", fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                <YAxis domain={[chartMin, chartMax]} tick={{ fill: "oklch(0.7 0 0)", fontSize: 11 }} tickLine={false} axisLine={false}
+                <XAxis dataKey="label" tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                <YAxis domain={[chartMin, chartMax]} tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} tickLine={false} axisLine={false}
                   tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(0)}`} width={56} />
                 <Tooltip
-                  contentStyle={{ background: "oklch(0.12 0.015 255)", border: "1px solid oklch(0.65 0.2 255 / 0.2)", borderRadius: "8px", color: "white", fontSize: "12px" }}
+                  contentStyle={{ background: "var(--color-popover)", border: "1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)", borderRadius: "8px", color: "white", fontSize: "12px" }}
                   formatter={(v: number) => [`$${v.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, "Balance"]}
                   labelFormatter={(l) => `📅 ${l}`}
                 />
-                <ReferenceLine y={startingCapital} stroke="oklch(0.65 0.2 255 / 0.3)" strokeDasharray="4 4"
-                  label={{ value: "Start $10k", fill: "oklch(0.65 0.2 255)", fontSize: 10, position: "insideTopLeft" }} />
+                <ReferenceLine y={startingCapital} stroke="color-mix(in srgb, var(--color-primary) 30%, transparent)" strokeDasharray="4 4"
+                  label={{ value: "Start $10k", fill: "var(--color-primary)", fontSize: 10, position: "insideTopLeft" }} />
                 {/* Strategy launch annotation — vertical line at Jul 1 */}
                 {growthData.length > 0 && (() => {
                   const jul1Label = growthData.find(d => d.label === "Jul 1")?.label;
                   return jul1Label ? (
-                    <ReferenceLine x={jul1Label} stroke="oklch(0.75 0.18 145 / 0.6)" strokeDasharray="3 3"
-                      label={{ value: "Strategy launched", fill: "oklch(0.75 0.18 145)", fontSize: 9, position: "insideTopRight" }} />
+                    <ReferenceLine x={jul1Label} stroke="color-mix(in srgb, var(--color-profit-green) 60%, transparent)" strokeDasharray="3 3"
+                      label={{ value: "Strategy launched", fill: "var(--color-profit-green)", fontSize: 9, position: "insideTopRight" }} />
                   ) : null;
                 })()}
-                <Area type="monotone" dataKey="value" stroke="oklch(0.65 0.2 255)" strokeWidth={2.5}
-                  fill="url(#pubGradient)" dot={false} activeDot={{ r: 4, fill: "oklch(0.65 0.2 255)" }}
+                <Area type="monotone" dataKey="value" stroke="var(--color-primary)" strokeWidth={2.5}
+                  fill="url(#pubGradient)" dot={false} activeDot={{ r: 4, fill: "var(--color-primary)" }}
                   isAnimationActive animationDuration={600} animationEasing="ease-out" />
               </AreaChart>
             </ResponsiveContainer>

@@ -1,0 +1,209 @@
+/* ─────────────────────────────────────────────────────
+   UTILITY CLASSES — glass, glow, gradients
+───────────────────────────────────────────────────── */
+
+@utility glass {
+  background: oklch(1 1 1 / 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@utility glass-strong {
+  background: oklch(1 1 1 / 0.07);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+@utility glass-panel {
+  background: linear-gradient(180deg, oklch(1 1 1 / 0.06), oklch(1 1 1 / 0.02));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid oklch(1 1 1 / 0.08);
+}
+
+@utility glass-card {
+  background: linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(0.60 0.22 220 / 0.18);
+  box-shadow: 0 0 0 1px oklch(0.60 0.22 220 / 0.08) inset, 0 0 30px oklch(0.60 0.22 220 / 0.06);
+}
+
+@utility glow-azure {
+  box-shadow: 0 0 20px oklch(0.60 0.22 220 / 0.30);
+}
+
+@utility glow-azure-strong {
+  box-shadow: 0 0 30px oklch(0.60 0.22 220 / 0.50), 0 0 60px oklch(0.60 0.22 220 / 0.20);
+}
+
+@utility glow-cyan {
+  box-shadow: 0 0 20px oklch(0.72 0.20 195 / 0.30);
+}
+
+@utility glow-primary {
+  box-shadow: 0 0 20px oklch(0.60 0.22 220 / 0.35);
+}
+
+@utility glow-gold {
+  box-shadow: 0 0 20px oklch(0.82 0.16 85 / 0.30);
+}
+
+@utility glow-border {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, oklch(0.60 0.22 220 / 1), oklch(0.72 0.20 195 / 0.5), transparent 60%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+/* Gradient text */
+@utility gradient-text {
+  background: linear-gradient(135deg, oklch(0.72 0.20 195), oklch(0.60 0.22 220));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: shimmer 6s ease-in-out infinite;
+  }
+}
+
+@utility gradient-text-gold {
+  background: linear-gradient(135deg, oklch(0.90 0.19 85), oklch(0.82 0.16 85), oklch(0.90 0.19 85));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: gold-shimmer 6s ease-in-out infinite;
+  }
+}
+
+/* Decorative orbs */
+@utility orb-azure {
+  width: 500px; height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, oklch(0.60 0.22 220 / 0.12) 0%, oklch(0.60 0.22 220 / 0.04) 40%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+@utility orb-cyan {
+  width: 400px; height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, oklch(0.72 0.20 195 / 0.10) 0%, oklch(0.72 0.20 195 / 0.03) 40%, transparent 70%);
+  filter: blur(50px);
+  pointer-events: none;
+}
+
+/* Mesh grid overlay */
+@utility mesh-grid {
+  background-image:
+    linear-gradient(oklch(1 1 1 / 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 1 1 / 0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 10%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 10%, transparent 70%);
+}
+
+@utility noise-overlay {
+  &::after {
+    content: "";
+    position: absolute; inset: 0;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+@utility section-divider {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 50%; max-width: 400px; height: 1px;
+    background: linear-gradient(to right, transparent, oklch(0.60 0.22 220 / 0.25), transparent);
+  }
+}
+
+@utility radial-glow {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, oklch(0.60 0.22 220 / 0.06) 0%, transparent 60%);
+}
+
+/* Shadow */
+@utility shadow-float {
+  box-shadow: var(--shadow-float);
+}
+
+/* Data display helpers */
+@utility data-surface {
+  background: oklch(1 1 1 / 0.025);
+  border: 1px solid oklch(1 1 1 / 0.06);
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility hairline-divide {
+  & > * + * {
+    border-top: var(--hairline) solid oklch(1 1 1 / 0.06);
+  }
+}
+
+@utility text-display {
+  font-weight: 350;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+/* Pipeline track */
+@utility pipeline-track {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    left: 50%; top: 0;
+    transform: translateX(-50%);
+    width: 2px; height: 100%;
+    background: linear-gradient(to bottom, oklch(0.60 0.22 220 / 0.25), oklch(0.72 0.20 195 / 0.25), transparent);
+  }
+}
+
+/* Gold winner system */
+@utility winner-row {
+  position: relative;
+  background: linear-gradient(135deg, oklch(0.82 0.16 85 / 0.06), oklch(0.82 0.16 85 / 0.01));
+  border-left: 2px solid oklch(0.82 0.16 85 / 0.40);
+}
+
+@utility gold-shimmer-text {
+  background: linear-gradient(135deg, oklch(0.82 0.16 85), oklch(0.90 0.19 85), oklch(0.82 0.16 85));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: gold-shimmer 3s ease-in-out infinite;
+  }
+}
+
+@utility trophy-pulse {
+  animation: trophy-pulse-kf 2s ease-in-out infinite;
+  display: inline-block;
+}

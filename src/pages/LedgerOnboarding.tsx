@@ -108,8 +108,7 @@ export default function LedgerOnboarding() {
                   <span className="hidden sm:block text-xs text-white/50">{s.title}</span>
                 </div>
                 {i < steps.length - 1 && (
-                  <div className="w-8 sm:w-16 h-px mx-2 sm:mx-3 transition-all"
-                    style={{ background: currentStep > s.id ? "oklch(0.60 0.22 220 /  0.5)" : "rgba(255,255,255,0.08)" }} />
+                  <div className={`w-8 sm:w-16 h-px mx-2 sm:mx-3 transition-all ${currentStep > s.id ? "bg-primary/50" : "bg-white/8"}`} />
                 )}
               </div>
             ))}
@@ -159,7 +158,7 @@ export default function LedgerOnboarding() {
               </div>
 
               {/* Key point */}
-              <div className="rounded-xl p-5" style={{ background: "oklch(0.60 0.22 220 /  0.05)", border: "1px solid oklch(0.60 0.22 220 /  0.12)" }}>
+              <div className="rounded-xl p-5 border border-primary/12 bg-primary/5">
                 <div className="flex items-start gap-3">
                   <Shield className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                   <div>
@@ -201,7 +200,7 @@ export default function LedgerOnboarding() {
                 </div>
 
                 {/* Can do */}
-                <div className="rounded-xl p-5" style={{ background: "oklch(0.60 0.22 220 /  0.04)", border: "1px solid oklch(0.60 0.22 220 /  0.1)" }}>
+                <div className="rounded-xl p-5 border border-primary/10 bg-primary/4">
                   <div className="flex items-center gap-2 mb-4">
                     <CheckCircle2 className="w-4 h-4 text-primary" />
                     <p className="text-primary font-semibold text-sm uppercase tracking-wider">Anavitrade CAN</p>
@@ -218,7 +217,7 @@ export default function LedgerOnboarding() {
               </div>
 
               {/* Ledger hardware guarantee */}
-              <div className="rounded-xl p-5" style={{ background: "oklch(1 1 1 / 0.03)", border: "1px solid oklch(1 1 1 / 0.07)" }}>
+              <div className="rounded-xl p-5 bg-white/3 border border-white/[0.07]">
                 <div className="flex items-start gap-3">
                   <HardDrive className="w-5 h-5 text-white/60 mt-0.5 flex-shrink-0" />
                   <div>
@@ -244,7 +243,7 @@ export default function LedgerOnboarding() {
 
               <div className="space-y-6 mb-8">
                 {/* Max position size */}
-                <div className="rounded-xl p-5" style={{ background: "oklch(1 1 1 / 0.03)", border: "1px solid oklch(1 1 1 / 0.07)" }}>
+                <div className="rounded-xl p-5 bg-white/3 border border-white/[0.07]">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <p className="text-white font-semibold text-sm">Max Position Size</p>
@@ -264,7 +263,7 @@ export default function LedgerOnboarding() {
                 </div>
 
                 {/* Max daily loss */}
-                <div className="rounded-xl p-5" style={{ background: "oklch(1 1 1 / 0.03)", border: "1px solid oklch(1 1 1 / 0.07)" }}>
+                <div className="rounded-xl p-5 bg-white/3 border border-white/[0.07]">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <p className="text-white font-semibold text-sm">Max Daily Loss</p>
@@ -295,7 +294,7 @@ export default function LedgerOnboarding() {
                 </div>
 
                 {/* Revocation */}
-                <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: "oklch(1 1 1 / 0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div className="rounded-xl p-4 flex items-start gap-3 bg-white/3 border border-white/5">
                   <RefreshCw className="w-4 h-4 text-white/40 mt-0.5 flex-shrink-0" />
                   <div>
                     <p className="text-white/70 font-semibold text-sm mb-1">Instant Revocation</p>
@@ -320,17 +319,15 @@ export default function LedgerOnboarding() {
 
               {connectedAddress ? (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-8">
-                  <div className="w-20 h-20 rounded-full mx-auto mb-5 flex items-center justify-center"
-                    style={{ background: "oklch(0.60 0.22 220 /  0.15)", border: "2px solid oklch(0.60 0.22 220 /  0.3)" }}>
+                  <div className="w-20 h-20 rounded-full mx-auto mb-5 flex items-center justify-center bg-primary/15 border-2 border-primary/30">
                     <CheckCircle2 className="w-10 h-10 text-primary" />
                   </div>
                   <h3 className="text-white font-bold text-xl mb-2">Wallet Connected!</h3>
                   <p className="text-white/40 text-sm mb-4">Your Ledger is now registered for copytrade signal routing.</p>
-                  <div className="inline-block px-4 py-2 rounded-xl font-mono text-sm text-white/60 mb-8"
-                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div className="inline-block px-4 py-2 rounded-xl font-mono text-sm text-white/60 mb-8 bg-white/5 border border-white/8">
                     {connectedAddress.slice(0, 8)}...{connectedAddress.slice(-6)}
                   </div>
-                  <div className="space-y-3 text-left rounded-xl p-5 mb-6" style={{ background: "oklch(0.60 0.22 220 /  0.04)", border: "1px solid oklch(0.60 0.22 220 /  0.1)" }}>
+                  <div className="space-y-3 text-left rounded-xl p-5 mb-6 border border-primary/10 bg-primary/[0.04]">
                     <p className="text-primary font-semibold text-xs uppercase tracking-wider mb-3">Your settings are saved</p>
                     <div className="flex justify-between text-sm">
                       <span className="text-white/40">Max position size</span>
@@ -390,13 +387,8 @@ export default function LedgerOnboarding() {
                         primary: false,
                       },
                     ].map((w, i) => (
-                      <div key={i} className="flex items-center gap-4 p-4 rounded-xl"
-                        style={{
-                          background: w.primary ? "oklch(0.60 0.22 220 /  0.05)" : "oklch(1 1 1 / 0.03)",
-                          border: w.primary ? "1px solid oklch(0.60 0.22 220 /  0.15)" : "1px solid rgba(255,255,255,0.06)",
-                        }}>
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${w.primary ? "text-primary" : "text-white/40"}`}
-                          style={{ background: w.primary ? "oklch(0.60 0.22 220 /  0.1)" : "rgba(255,255,255,0.05)" }}>
+                      <div key={i} className={`flex items-center gap-4 p-4 rounded-xl ${w.primary ? "bg-primary/5 border border-primary/15" : "bg-white/3 border border-white/5"}`}>
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${w.primary ? "text-primary" : "text-white/40"} ${w.primary ? "bg-primary/10" : "bg-white/5"}`}>
                           {w.icon}
                         </div>
                         <div className="flex-1">
@@ -413,7 +405,7 @@ export default function LedgerOnboarding() {
                   </div>
 
                   {/* Final reassurance */}
-                  <div className="rounded-xl p-4 mb-6 flex items-start gap-3" style={{ background: "oklch(0.60 0.22 220 /  0.04)", border: "1px solid oklch(0.60 0.22 220 /  0.08)" }}>
+                  <div className="rounded-xl p-4 mb-6 flex items-start gap-3 bg-primary/[0.04] border-primary/8">
                     <Shield className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                     <p className="text-white/50 text-xs leading-relaxed">
                       Connecting your wallet grants Anavitrade read-only access to your public address. <strong className="text-white/70">No funds can move without your physical confirmation on your Ledger device.</strong> You can revoke this connection at any time from Account Settings.
@@ -444,7 +436,7 @@ export default function LedgerOnboarding() {
               onClick={handleBack}
               disabled={currentStep === 1}
               className="flex items-center gap-2 px-5 py-3 rounded-xl text-white/50 text-sm font-medium transition-all hover:text-white disabled:opacity-20 disabled:cursor-not-allowed"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid oklch(1 1 1 / 0.07)" }}
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}
             >
               <ChevronLeft className="w-4 h-4" />
               Back

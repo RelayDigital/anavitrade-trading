@@ -33,10 +33,10 @@ export default function DemoTradeHistory({
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-6 rounded-2xl border overflow-hidden"
-        style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}
+        className="mb-6 rounded-2xl border border-primary/20 overflow-hidden"
+        style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))" }}
       >
-        <div className="px-6 py-5 border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.10)" }}>
+        <div className="px-6 py-5 border-b border-primary/10">
           <h3 className="text-sm font-semibold text-foreground">Demo Trade History</h3>
         </div>
         <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
@@ -51,11 +51,11 @@ export default function DemoTradeHistory({
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-6 rounded-2xl border overflow-hidden"
-      style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}
+      className="mb-6 rounded-2xl border border-primary/20 overflow-hidden"
+      style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.90), oklch(0.09 0.018 255 / 0.95))" }}
     >
       {/* Header */}
-      <div className="px-6 py-5 border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.10)" }}>
+      <div className="px-6 py-5 border-b border-primary/10">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-foreground">Demo Trade History</h3>
@@ -66,23 +66,23 @@ export default function DemoTradeHistory({
         </div>
         {/* Summary stats */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
-          <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+          <div className="p-3 rounded-xl bg-primary/[0.04] border border-primary/[0.08]">
             <p className="text-[10px] text-muted-foreground mb-0.5">Win Rate</p>
-            <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.74 0.18 145)" }}>{winRate.toFixed(1)}%</p>
+            <p className="text-sm font-heading font-bold text-green-500">{winRate.toFixed(1)}%</p>
           </div>
-          <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+          <div className="p-3 rounded-xl bg-primary/[0.04] border border-primary/[0.08]">
             <p className="text-[10px] text-muted-foreground mb-0.5">Avg Win</p>
-            <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.74 0.18 145)" }}>+${avgProfit.toFixed(2)}</p>
+            <p className="text-sm font-heading font-bold text-green-500">+${avgProfit.toFixed(2)}</p>
           </div>
-          <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+          <div className="p-3 rounded-xl bg-primary/[0.04] border border-primary/[0.08]">
             <p className="text-[10px] text-muted-foreground mb-0.5">Avg Loss</p>
-            <p className="text-sm font-heading font-bold" style={{ color: "oklch(0.65 0.22 25)" }}>-${Math.abs(avgLoss).toFixed(2)}</p>
+            <p className="text-sm font-heading font-bold text-red-400">-${Math.abs(avgLoss).toFixed(2)}</p>
           </div>
-          <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+          <div className="p-3 rounded-xl bg-primary/[0.04] border border-primary/[0.08]">
             <p className="text-[10px] text-muted-foreground mb-0.5">Profit Factor</p>
             <p className="text-sm font-heading font-bold text-foreground">{profitFactor.toFixed(2)}</p>
           </div>
-          <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.10)" }}>
+          <div className="p-3 rounded-xl bg-primary/[0.04] border border-primary/[0.08]">
             <p className="text-[10px] text-muted-foreground mb-0.5">Best Trade</p>
             <p className="text-sm font-heading font-bold gold-shimmer-text">
               {bestTrade ? `+${parseFloat(String(bestTrade.pnlPct ?? "0")).toFixed(1)}%` : "—"}
@@ -95,7 +95,7 @@ export default function DemoTradeHistory({
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b" style={{ borderColor: "oklch(0.60 0.22 220 / 0.08)" }}>
+            <tr className="border-b border-primary/[0.07]">
               <th className="text-left text-xs text-muted-foreground font-medium py-3 px-4 whitespace-nowrap">Pair</th>
               <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Tier</th>
               <th className="text-left text-xs text-muted-foreground font-medium py-3 pr-4 whitespace-nowrap">Indicator</th>
@@ -113,7 +113,7 @@ export default function DemoTradeHistory({
               const pair = (trade.pair ?? "").replace("USDT", "/USDT");
               const tier = trade.qualityTier ?? "C";
               return (
-                <tr key={trade.id ?? idx} className="border-b last:border-0" style={{ borderColor: "oklch(0.60 0.22 220 / 0.05)" }}>
+                <tr key={trade.id ?? idx} className="border-b border-primary/[0.04] last:border-0">
                   <td className="py-3 px-4">
                     <span className="font-mono text-xs font-bold text-foreground">{pair || "—"}</span>
                   </td>

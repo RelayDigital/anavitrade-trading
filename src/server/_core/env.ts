@@ -1,11 +1,8 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type D1Database = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type R2Bucket = any;
 
 export type Env = {
   DB: D1Database;
-  KLINES_BUCKET: R2Bucket;
   JWT_SECRET: string;
   ENCRYPTION_KEY: string;
   VITE_APP_ID: string;

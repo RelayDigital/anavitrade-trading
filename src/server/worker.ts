@@ -7,6 +7,7 @@ import type { Env } from "./_core/env";
 import { runCoinlegsScraper } from "./coinlegs-scraper";
 import { generateSignals } from "./signals/generator";
 import { validateSignalOutcomes, getOutcomeStats } from "./outcome/validator";
+import { validateAllSignalOutcomes } from "./analysis/outcome/analyze-outcome";
 import { crystallizeFees } from "./fee/engine";
 import { setDbEnv } from "./db";
 import { runAnalysisEngine } from "./analysis/engine";
@@ -533,6 +534,7 @@ export default {
     }
 
     // Coinlegs scraper (every trigger — secondary)
+    // If coinlegs fails, fall back to the mirror engine for local detection + dispatch
     try {
       const scraperResult = await runCoinlegsScraper();
       console.log("[coinlegs-cron]", JSON.stringify({
@@ -543,7 +545,20 @@ export default {
       results.scraper = scraperResult;
     } catch (e: any) {
       console.warn("[coinlegs-cron] error:", e?.message);
-      // Non-fatal — native generator already ran
+      console.log("[coinlegs-cron] coinlegs failed — falling back to mirror engine");
+      try {
+        const { runMirror, dispatchMirrorDetections } = await import("./analysis/mirror/engine");
+        const mirrorResult = await runMirror();
+        const dispatchResult = await dispatchMirrorDetections(mirrorResult);
+        console.log("[mirror-fallback]", JSON.stringify({
+          symbols: mirrorResult.length,
+          dispatched: dispatchResult.dispatched,
+          errors: dispatchResult.errors,
+        }));
+        results.mirror = { symbols: mirrorResult.length, ...dispatchResult };
+      } catch (mErr: any) {
+        console.warn("[mirror-fallback] mirror also failed:", mErr?.message);
+      }
     }
 
     // Demo sync -- signals to demo accounts every 5th fire (~5 min)
@@ -565,7 +580,7 @@ export default {
       results.fee = feeResult;
     }
 
-    // Outcome validation -- every 15th fire (~15 min at 60s interval)
+    // Coinlegs outcome validation (tracks claimed maxProfit vs actual) -- every 15th fire
     if (_cronCount % 15 === 0) {
       try {
         const outcomeResult = await validateSignalOutcomes();
@@ -577,6 +592,24 @@ export default {
         results.outcome = outcomeResult;
       } catch (e: any) {
         console.warn("[outcome-cron] error:", e?.message);
+      }
+    }
+
+    // Analysis outcome validation (tracks every dispatched signal's SL/TP hit) -- every 15th fire
+    if (_cronCount % 15 === 0) {
+      try {
+        const analysisOutcome = await validateAllSignalOutcomes(50, 48);
+        if (analysisOutcome.validated > 0) {
+          console.log("[analysis-outcome-cron]", JSON.stringify({
+            validated: analysisOutcome.validated,
+            winRate: analysisOutcome.winRate,
+            avgR: analysisOutcome.avgR,
+            bySource: analysisOutcome.bySource,
+          }));
+        }
+        results.analysisOutcome = analysisOutcome;
+      } catch (e: any) {
+        console.warn("[analysis-outcome-cron] error:", e?.message);
       }
     }
 

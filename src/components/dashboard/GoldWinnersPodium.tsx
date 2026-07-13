@@ -30,12 +30,9 @@ export default function GoldWinnersPodium({ topWinners, fmtPrice }: GoldWinnersP
           transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
           className="mb-6"
         >
-          <div className="relative rounded-2xl border overflow-hidden"
-            style={{ background: "linear-gradient(135deg, oklch(0.14 0.013 260), oklch(0.82 0.16 85 / 0.04), oklch(0.14 0.013 260))", borderColor: "oklch(0.82 0.16 85 / 0.20)" }}
-          >
+          <div className="relative rounded-2xl border border-gold-30 overflow-hidden bg-gradient-to-r from-card via-gold-10/10 to-card">
             <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[100px] rounded-full blur-[60px]"
-                style={{ background: "oklch(0.82 0.16 85 / 0.08)" }} />
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[100px] rounded-full blur-[60px] bg-gold/10" />
             </div>
             <div className="relative z-10 p-6">
               <div className="flex items-center gap-2 mb-5">

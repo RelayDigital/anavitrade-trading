@@ -1,0 +1,166 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─────────────────────────────────────────────────────
+   DESIGN TOKENS
+───────────────────────────────────────────────────── */
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+:root {
+  --radius: 0.875rem;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Azure palette */
+  --azure-50:  oklch(0.97 0.04 220);
+  --azure-100: oklch(0.93 0.07 220);
+  --azure-200: oklch(0.86 0.12 220);
+  --azure-300: oklch(0.77 0.17 220);
+  --azure-400: oklch(0.68 0.20 220);
+  --azure-500: oklch(0.60 0.22 220);
+  --azure-600: oklch(0.52 0.22 225);
+  --azure-700: oklch(0.43 0.20 230);
+  --azure-glow: oklch(0.60 0.22 220 / 0.25);
+  --azure-glow-strong: oklch(0.60 0.22 220 / 0.45);
+
+  /* Cyan accent */
+  --cyan-400: oklch(0.80 0.18 195);
+  --cyan-500: oklch(0.72 0.20 195);
+  --cyan-glow: oklch(0.72 0.20 195 / 0.20);
+
+  /* Gold for winners */
+  --gold: oklch(0.82 0.16 85);
+  --gold-bright: oklch(0.90 0.19 85);
+  --gold-dim: oklch(0.70 0.13 85);
+  --gold-glow: oklch(0.82 0.16 85 / 0.25);
+
+  /* Semantic green / red */
+  --profit-green: oklch(0.74 0.18 145);
+  --profit-red: oklch(0.65 0.22 25);
+
+  /* Gradients */
+  --grad-arctic:   linear-gradient(94.67deg, #baecff, #b7c1ff);
+  --grad-electric: linear-gradient(94.67deg, #6ff3f3, #7384f7);
+  --grad-steel:    linear-gradient(180deg, #fff, #d5dbe6);
+  --grad-obsidian: linear-gradient(144.86deg, #1e1f23, #0f0f11);
+
+  --hairline: 1.4px;
+  --pill: 100px;
+
+  /* Realistic 7-stop shadow */
+  --shadow-float:
+    0 116px 125px rgba(0,0,0,.20),
+    0 75.19px 73.21px rgba(0,0,0,.152),
+    0 44.68px 39.81px rgba(0,0,0,.121),
+    0 23.2px 20.31px rgba(0,0,0,.10),
+    0 9.45px 10.19px rgba(0,0,0,.079),
+    0 2.15px 4.92px rgba(0,0,0,.048),
+    inset 0 1px 1px rgba(161,136,215,.15);
+}
+
+@theme inline {
+  --color-background:         oklch(0.07 0.015 255);
+  --color-foreground:         oklch(0.96 0.006 220);
+  --color-card:               oklch(0.10 0.018 250);
+  --color-card-foreground:    oklch(0.96 0.006 220);
+  --color-popover:            oklch(0.11 0.018 250);
+  --color-popover-foreground: oklch(0.96 0.006 220);
+
+  --color-primary:            oklch(0.60 0.22 220);
+  --color-primary-foreground: oklch(0.07 0.015 255);
+
+  --color-secondary:          oklch(0.14 0.022 250);
+  --color-secondary-foreground: oklch(0.96 0.006 220);
+
+  --color-muted:              oklch(0.14 0.022 250);
+  --color-muted-foreground:   oklch(0.62 0.020 240);
+
+  --color-accent:             oklch(0.72 0.20 195);
+  --color-accent-foreground:  oklch(0.07 0.015 255);
+
+  --color-destructive:        oklch(0.60 0.22 25);
+  --color-destructive-foreground: oklch(0.96 0.006 220);
+
+  --color-border:             oklch(0.20 0.015 260);
+  --color-input:              oklch(0.20 0.015 260);
+  --color-ring:               oklch(0.60 0.22 220);
+
+  --color-sidebar-background:       oklch(0.08 0.012 260);
+  --color-sidebar-foreground:       oklch(0.96 0.006 220);
+  --color-sidebar-primary:          oklch(0.60 0.22 220);
+  --color-sidebar-primary-foreground: oklch(0.07 0.015 255);
+  --color-sidebar-accent:           oklch(0.14 0.022 250);
+  --color-sidebar-accent-foreground: oklch(0.96 0.006 220);
+  --color-sidebar-border:           oklch(0.20 0.015 260);
+  --color-sidebar-ring:             oklch(0.60 0.22 220);
+
+  --color-gold:             oklch(0.82 0.16 85);
+  --color-gold-bright:      oklch(0.90 0.19 85);
+  --color-gold-dim:         oklch(0.70 0.13 85);
+  --color-profit-green:     oklch(0.74 0.18 145);
+  --color-profit-red:       oklch(0.65 0.22 25);
+
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-heading: "Satoshi", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --shadow-float: var(--shadow-float);
+  --radius: 0.875rem;
+
+  --chart-1: oklch(0.60 0.22 220);
+  --chart-2: oklch(0.72 0.20 195);
+  --chart-3: oklch(0.82 0.16 85);
+  --chart-4: oklch(0.74 0.18 145);
+  --chart-5: oklch(0.65 0.22 25);
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02","cv03","cv04","cv11";
+  }
+
+  ::selection {
+    background: oklch(0.60 0.22 220 / 0.35);
+    color: oklch(0.98 0.004 220);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring/60;
+  }
+
+  :root { color-scheme: dark; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+}
+
+/* Custom dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.30 0.020 250 / 0.6);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.40 0.025 250 / 0.8);
+}

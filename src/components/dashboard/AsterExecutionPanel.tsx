@@ -1,5 +1,4 @@
 import { Link } from "wouter";
-import { motion } from "framer-motion";
 import {
   CheckCircle2, Clock, AlertTriangle, Zap, ZapOff,
 } from "lucide-react";
@@ -31,14 +30,10 @@ export default function AsterExecutionPanel() {
 
   return (
     <div>
-      <div className="px-6 py-5 border-b flex items-center justify-between gap-4 flex-wrap"
-        style={{ borderColor: "oklch(0.60 0.22 220 / 0.12)" }}
-      >
+      <div className="px-6 py-5 border-b border-primary/15 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-            style={{ background: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.45 0.18 240 / 0.15))" }}
-          >
-            <Zap className="w-4.5 h-4.5" style={{ color: "oklch(0.68 0.22 220)" }} />
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/10">
+            <Zap className="w-4.5 h-4.5 text-primary" />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-foreground">Aster DEX Execution</h3>
@@ -75,7 +70,7 @@ export default function AsterExecutionPanel() {
       {!active && !pending && (
         <div className="px-6 py-5">
           <div className="flex items-start gap-4">
-            <div className="p-3 rounded-xl" style={{ background: "oklch(0.60 0.22 220 / 0.08)" }}>
+            <div className="p-3 rounded-xl bg-primary/10">
               <Zap className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1">
@@ -84,8 +79,7 @@ export default function AsterExecutionPanel() {
                 Connect your wallet and approve the Agent signer in one step. No copy-pasting, no navigating to Aster, no multi-step forms.
               </p>
               <Link href="/onboarding/aster">
-                <button className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all"
-                  style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}>
+                <button className="btn-azure inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold">
                   Activate Now <Zap className="w-3.5 h-3.5" />
                 </button>
               </Link>

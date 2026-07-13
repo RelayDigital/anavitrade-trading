@@ -364,8 +364,8 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "oklch(0.07 0.015 255 / 0.88)", backdropFilter: "blur(8px)" }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80"
+          style={{ backdropFilter: "blur(8px)" }}
           onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
           <motion.div
@@ -373,9 +373,8 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
-            className="relative w-full max-w-lg rounded-2xl overflow-hidden"
+            className="relative w-full max-w-lg rounded-2xl overflow-hidden bg-card"
             style={{
-              background: "linear-gradient(145deg, oklch(0.10 0.018 250) 0%, oklch(0.08 0.016 255) 100%)",
               border: "1px solid rgba(255,255,255,0.08)",
               boxShadow: "0 25px 80px rgba(0,0,0,0.8), 0 0 0 1px oklch(0.60 0.22 220 / 0.05)",
             }}
@@ -383,8 +382,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-white/5">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: "oklch(0.60 0.22 220 / 0.1)", border: "1px solid oklch(0.60 0.22 220 / 0.2)" }}>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-primary/10 border border-primary/20">
                   <Shield className="w-4 h-4 text-primary" />
                 </div>
                 <div>
@@ -449,7 +447,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                         </motion.button>
                       ))}
                     </div>
-                    <div className="rounded-xl p-4" style={{ background: "oklch(0.60 0.22 220 / 0.04)", border: "1px solid oklch(0.60 0.22 220 / 0.08)" }}>
+                    <div className="rounded-xl p-4 border border-primary/8 bg-primary/[0.04]">
                       <p className="text-primary text-xs font-semibold uppercase tracking-wider mb-3">Security Guarantees</p>
                       <div className="grid grid-cols-2 gap-2">
                         {securityGuarantees.map((g, i) => (
@@ -480,12 +478,11 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                     <div className="space-y-2 mb-5">
                       {/* USB Direct */}
                       <div
-                        className="p-4 rounded-xl cursor-pointer group transition-all"
-                        style={{ background: "oklch(0.60 0.22 220 / 0.04)", border: "1px solid oklch(0.60 0.22 220 / 0.12)" }}
+                        className="p-4 rounded-xl cursor-pointer group transition-all border border-primary/12 bg-primary/4"
                         onClick={() => connectLedgerDirect("usb")}
                       >
                         <div className="flex items-center gap-3 mb-2">
-                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "oklch(0.60 0.22 220 / 0.1)" }}>
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-primary/10">
                             <Usb className="w-4 h-4 text-primary" />
                           </div>
                           <div className="flex-1">
@@ -500,7 +497,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                         <div className="ml-11 space-y-1">
                           {["Plug your Ledger Nano X or S Plus into USB", "Unlock with your PIN", "Open the Ethereum app on your Ledger"].map((s, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-primary" style={{ background: "oklch(0.60 0.22 220 / 0.1)" }}>{i + 1}</span>
+                              <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-primary bg-primary/10">{i + 1}</span>
                               <span className="text-white/40 text-xs">{s}</span>
                             </div>
                           ))}
@@ -552,7 +549,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-xl mb-5 flex items-start gap-2" style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.1)" }}>
+                    <div className="p-3 rounded-xl mb-5 flex items-start gap-2 border border-primary/10 bg-primary/5">
                       <Shield className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
                       <p className="text-white/50 text-xs leading-relaxed">
                         <strong className="text-white/70">The Golden Rule:</strong> Anavitrade is a signal router, not a custodian. Your Ledger is the only thing that can sign and broadcast transactions. If you don't press confirm on the device, nothing happens.
@@ -574,13 +571,12 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                   <motion.div key="ledger-direct" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     className="flex flex-col items-center text-center py-6">
                     <div className="relative mb-6">
-                      <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                        style={{ background: "oklch(0.60 0.22 220 / 0.08)", border: "1px solid oklch(0.60 0.22 220 / 0.2)" }}>
+                      <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-primary/8 border border-primary/20">
                         {ledgerTransport === "bluetooth"
                           ? <Bluetooth className="w-7 h-7 text-blue-400" />
                           : <Usb className="w-7 h-7 text-primary" />}
                       </div>
-                      <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[oklch(0.08 0.016 255)] border border-white/10 flex items-center justify-center">
+                      <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-sidebar border border-white/10 flex items-center justify-center">
                         <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
                       </div>
                     </div>
@@ -590,10 +586,10 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                     <p className="text-white/50 text-sm max-w-xs leading-relaxed mb-2">
                       Your browser will request permission to access the Ledger device. Approve the prompt, then confirm the connection on your Ledger screen.
                     </p>
-                    <div className="mt-3 p-3 rounded-xl w-full text-left" style={{ background: "oklch(0.60 0.22 220 / 0.04)", border: "1px solid oklch(0.60 0.22 220 / 0.08)" }}>
+                    <div className="mt-3 p-3 rounded-xl w-full text-left border border-primary/8 bg-primary/4">
                       {["Ledger is plugged in and unlocked", "Ethereum app is open on the device", "Browser permission dialog approved"].map((s, i) => (
                         <div key={i} className="flex items-center gap-2 py-1">
-                          <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "oklch(0.60 0.22 220 / 0.1)" }}>
+                          <div className="w-4 h-4 rounded-full flex items-center justify-center bg-primary/10">
                             <span className="text-primary text-[9px] font-bold">{i + 1}</span>
                           </div>
                           <span className="text-white/50 text-xs">{s}</span>
@@ -611,11 +607,10 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                   <motion.div key="connecting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     className="flex flex-col items-center text-center py-6">
                     <div className="relative mb-6">
-                      <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                        style={{ background: "oklch(0.60 0.22 220 / 0.08)", border: "1px solid oklch(0.60 0.22 220 / 0.2)" }}>
+                      <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-primary/8 border border-primary/20">
                         {selectedWallet?.icon}
                       </div>
-                      <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[oklch(0.08 0.016 255)] border border-white/10 flex items-center justify-center">
+                      <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-sidebar border border-white/10 flex items-center justify-center">
                         <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
                       </div>
                     </div>
@@ -655,8 +650,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                       initial={{ scale: 0.5, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
                       transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                      className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-                      style={{ background: "oklch(0.60 0.22 220 / 0.12)", border: "1px solid oklch(0.60 0.22 220 / 0.3)" }}
+                      className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 bg-primary/12 border border-primary/30"
                     >
                       <CheckCircle2 className="w-8 h-8 text-primary" />
                     </motion.div>
@@ -686,8 +680,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
                         { icon: Eye, label: "Read-Only Access" },
                         { icon: Zap, label: "Instant Revoke" },
                       ].map(({ icon: Icon, label }) => (
-                        <div key={label} className="flex items-center gap-2 px-3 py-2 rounded-lg"
-                          style={{ background: "oklch(0.60 0.22 220 / 0.05)", border: "1px solid oklch(0.60 0.22 220 / 0.1)" }}>
+                        <div key={label} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
                           <Icon className="w-3.5 h-3.5 text-primary" />
                           <span className="text-white/60 text-xs">{label}</span>
                         </div>

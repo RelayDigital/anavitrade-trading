@@ -48,7 +48,7 @@ export default function ExchangeOnboarding() {
         {/* Progress */}
         <div className="flex items-center gap-2 mb-10">
           {[1, 2, 3].map((n) => (
-            <div key={n} className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "oklch(1 0 0 / 0.06)" }}>
+            <div key={n} className="flex-1 h-1 rounded-full overflow-hidden bg-white/5">
               <motion.div
                 className="h-full rounded-full"
                 initial={false}
@@ -65,7 +65,7 @@ export default function ExchangeOnboarding() {
           {step === 1 && (
             <motion.div key="s1" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.3 }}>
               <h1 className="font-heading font-medium text-3xl tracking-[-0.03em] mb-2">Connect your exchange</h1>
-              <p className="text-sm mb-8" style={{ color: "oklch(0.68 0.02 240)" }}>
+              <p className="text-sm mb-8 text-muted-foreground">
                 Pick where you trade. We mirror signals onto your own account with a trade-only key — your funds never leave the exchange.
               </p>
               <ExchangePicker
@@ -89,30 +89,28 @@ export default function ExchangeOnboarding() {
           {step === 2 && meta && (
             <motion.div key="s2" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.3 }}>
               <h1 className="font-heading font-medium text-3xl tracking-[-0.03em] mb-2">Create a trade-only key on {meta.label}</h1>
-              <p className="text-sm mb-6" style={{ color: "oklch(0.68 0.02 240)" }}>{meta.keyHint}</p>
+              <p className="text-sm mb-6 text-muted-foreground">{meta.keyHint}</p>
 
               <div className="glass-card rounded-2xl p-5 mb-6">
                 <div className="flex items-center gap-2 mb-3">
-                  <ShieldCheck className="w-4 h-4" style={{ color: "oklch(0.72 0.20 195)" }} />
+                  <ShieldCheck className="w-4 h-4 text-accent" />
                   <span className="text-sm font-medium">Enter your API credentials</span>
                 </div>
 
-                <label className="block text-xs mb-1.5 mt-3" style={{ color: "oklch(0.6 0.02 240)" }}>API Key</label>
+                <label className="block text-xs mb-1.5 mt-3 text-muted-foreground">API Key</label>
                 <input
                   value={apiKey} onChange={(e) => setApiKey(e.target.value)}
                   placeholder="Paste your API key"
-                  className="w-full rounded-xl px-3.5 py-2.5 text-sm bg-transparent outline-none font-mono"
-                  style={{ border: "1.4px solid oklch(1 0 0 / 0.1)", color: "oklch(0.95 0.006 220)" }}
+                  className="w-full rounded-xl px-3.5 py-2.5 text-sm bg-transparent outline-none font-mono border border-white/10 text-foreground"
                 />
 
-                <label className="block text-xs mb-1.5 mt-4" style={{ color: "oklch(0.6 0.02 240)" }}>API Secret</label>
+                <label className="block text-xs mb-1.5 mt-4 text-muted-foreground">API Secret</label>
                 <div className="relative">
                   <input
                     type={showSecret ? "text" : "password"}
                     value={apiSecret} onChange={(e) => setApiSecret(e.target.value)}
                     placeholder="Paste your API secret"
-                    className="w-full rounded-xl px-3.5 py-2.5 pr-10 text-sm bg-transparent outline-none font-mono"
-                    style={{ border: "1.4px solid oklch(1 0 0 / 0.1)", color: "oklch(0.95 0.006 220)" }}
+                    className="w-full rounded-xl px-3.5 py-2.5 pr-10 text-sm bg-transparent outline-none font-mono border border-white/10 text-foreground"
                   />
                   <button type="button" onClick={() => setShowSecret((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">
                     {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -121,12 +119,11 @@ export default function ExchangeOnboarding() {
 
                 {meta.needsPassphrase && (
                   <>
-                    <label className="block text-xs mb-1.5 mt-4" style={{ color: "oklch(0.6 0.02 240)" }}>API Passphrase</label>
+                    <label className="block text-xs mb-1.5 mt-4 text-muted-foreground">API Passphrase</label>
                     <input
                       type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)}
                       placeholder="Your API passphrase"
-                      className="w-full rounded-xl px-3.5 py-2.5 text-sm bg-transparent outline-none font-mono"
-                      style={{ border: "1.4px solid oklch(1 0 0 / 0.1)", color: "oklch(0.95 0.006 220)" }}
+                      className="w-full rounded-xl px-3.5 py-2.5 text-sm bg-transparent outline-none font-mono border border-white/10 text-foreground"
                     />
                   </>
                 )}
@@ -136,14 +133,14 @@ export default function ExchangeOnboarding() {
               <button
                 type="button"
                 onClick={() => setAttest((a) => !a)}
-                className="w-full flex items-start gap-3 rounded-2xl p-4 text-left transition-colors"
-                style={{ border: `1.4px solid ${attest ? "oklch(0.72 0.20 195 / 0.5)" : "oklch(1 0 0 / 0.1)"}`, background: attest ? "oklch(0.72 0.20 195 / 0.06)" : "transparent" }}
+                className={`w-full flex items-start gap-3 rounded-2xl p-4 text-left transition-colors ${attest ? "border-accent/50 bg-accent/5" : "border-white/10 bg-transparent"}`}
+                style={{ borderWidth: "1.4px" }}
               >
-                <span className="mt-0.5 w-5 h-5 rounded-md inline-flex items-center justify-center flex-shrink-0"
-                  style={{ background: attest ? "oklch(0.72 0.20 195)" : "transparent", border: attest ? "none" : "1.4px solid oklch(1 0 0 / 0.2)" }}>
-                  {attest && <CheckCircle2 className="w-4 h-4" style={{ color: "oklch(0.1 0.02 255)" }} />}
+                <span className={`mt-0.5 w-5 h-5 rounded-md inline-flex items-center justify-center flex-shrink-0 ${attest ? "bg-accent" : "bg-transparent border border-white/20"}`}
+                  style={{ borderWidth: attest ? "0" : "1.4px" }}>
+                  {attest && <CheckCircle2 className="w-4 h-4 text-primary-foreground" />}
                 </span>
-                <span className="text-xs leading-relaxed" style={{ color: "oklch(0.72 0.02 240)" }}>
+                <span className="text-xs leading-relaxed text-muted-foreground/90">
                   I confirm this key has <span className="text-foreground font-medium">withdrawals disabled</span> and only permits trading.
                   {meta.canVerifyPermissions ? " We'll also verify this automatically." : " We can't verify this on " + meta.label + " — your confirmation is required."}
                 </span>
@@ -162,8 +159,8 @@ export default function ExchangeOnboarding() {
                       passphrase: passphrase.trim() || undefined, attestTradeOnly: attest,
                     });
                   }}
-                  className="h-12 px-7 rounded-[100px] text-[0.9rem] font-medium inline-flex items-center gap-2 transition-transform active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)" }}
+                  className="h-12 px-7 rounded-[100px] text-[0.9rem] font-heading font-medium inline-flex items-center gap-2 transition-transform active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-background"
+                  style={{ background: "var(--grad-arctic)" }}
                 >
                   Connect & Verify <ArrowRight className="w-4 h-4" />
                 </button>
@@ -176,15 +173,15 @@ export default function ExchangeOnboarding() {
             <motion.div key="s3" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.3 }} className="text-center py-10">
               {connect.isPending ? (
                 <>
-                  <div className="w-14 h-14 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-6" style={{ borderColor: "oklch(0.72 0.20 195)", borderTopColor: "transparent" }} />
+                  <div className="w-14 h-14 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-6 border-accent" />
                   <h2 className="font-heading font-medium text-2xl tracking-[-0.03em] mb-2">Verifying with {meta?.label}…</h2>
-                  <p className="text-sm" style={{ color: "oklch(0.6 0.02 240)" }}>Reading your balance and checking the key is trade-only.</p>
+                  <p className="text-sm text-muted-foreground">Reading your balance and checking the key is trade-only.</p>
                 </>
               ) : connect.isError ? (
                 <>
-                  <KeyRound className="w-12 h-12 mx-auto mb-5" style={{ color: "oklch(0.65 0.22 25)" }} />
+                  <KeyRound className="w-12 h-12 mx-auto mb-5 text-destructive" />
                   <h2 className="font-heading font-medium text-2xl tracking-[-0.03em] mb-2">Couldn't connect</h2>
-                  <p className="text-sm mb-6 max-w-sm mx-auto" style={{ color: "oklch(0.68 0.02 240)" }}>{connect.error?.message}</p>
+                  <p className="text-sm mb-6 max-w-sm mx-auto text-muted-foreground">{connect.error?.message}</p>
                   <button onClick={() => setStep(2)} className="btn-hairline h-12 px-7 text-[0.9rem]">Try again</button>
                 </>
               ) : null}
@@ -193,7 +190,7 @@ export default function ExchangeOnboarding() {
         </AnimatePresence>
 
         <div className="mt-10 text-center">
-          <Link href="/dashboard" className="text-xs hover:underline" style={{ color: "oklch(0.5 0.02 240)" }}>Skip for now</Link>
+          <Link href="/dashboard" className="text-xs hover:underline text-muted-foreground/60">Skip for now</Link>
         </div>
       </div>
     </DashboardLayout>

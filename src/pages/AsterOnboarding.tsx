@@ -68,8 +68,7 @@ export default function AsterOnboarding() {
           transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
           className="text-center mb-10"
         >
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
-            style={{ background: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.60 0.22 220 / 0.05))", border: "1px solid oklch(0.60 0.22 220 / 0.25)" }}>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 bg-primary/10 border border-primary/25">
             <Zap className="w-7 h-7 text-primary" />
           </div>
           <h1 className="text-3xl font-heading font-bold text-foreground mb-3">
@@ -85,15 +84,10 @@ export default function AsterOnboarding() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="rounded-2xl p-6 mb-8 border"
-          style={{
-            background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.85), oklch(0.09 0.018 255 / 0.90))",
-            borderColor: "oklch(0.60 0.22 220 / 0.18)",
-            backdropFilter: "blur(16px)",
-          }}
+          className="glass-card rounded-2xl p-6 mb-8 border border-primary/18"
         >
           <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: "oklch(0.60 0.22 220 / 0.12)", color: "oklch(0.68 0.22 220)" }}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-primary/10 text-primary/70">
               <Shield className="w-6 h-6" />
             </div>
             <div>
@@ -113,9 +107,9 @@ export default function AsterOnboarding() {
           </div>
 
           {/* Wallet status */}
-          <div className="p-4 rounded-xl mb-5" style={{ background: "oklch(1 0 0 / 0.03)", border: "1px solid oklch(1 0 0 / 0.06)" }}>
+          <div className="p-4 rounded-xl mb-5 bg-white/3 border border-white/5">
             <div className="flex items-center gap-3">
-              <Wallet className="w-5 h-5" style={{ color: walletReady ? "oklch(0.74 0.18 145)" : "oklch(0.50 0.015 260)" }} />
+              <Wallet className="w-5 h-5 text-muted-foreground" style={{ color: walletReady ? "var(--profit-green)" : undefined }} />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground">
                   {walletReady ? "Wallet Connected" : "No wallet connected"}
@@ -129,8 +123,7 @@ export default function AsterOnboarding() {
               {!walletReady && (
                 <button
                   onClick={() => setShowWalletModal(true)}
-                  className="px-4 py-2 rounded-xl border text-xs font-semibold transition-all hover:bg-card"
-                  style={{ borderColor: "oklch(0.60 0.22 220 / 0.25)" }}
+                  className="px-4 py-2 rounded-xl border text-xs font-semibold transition-all hover:bg-card border-primary/25"
                 >
                   Connect
                 </button>
@@ -148,7 +141,7 @@ export default function AsterOnboarding() {
               "Zero-custody — funds never leave your account",
             ].map((item, i) => (
               <div key={i} className="flex items-start gap-2.5">
-                <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "oklch(0.60 0.22 220 / 0.6)" }} />
+                <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
                 <span className="text-xs text-muted-foreground">{item}</span>
               </div>
             ))}
@@ -158,10 +151,9 @@ export default function AsterOnboarding() {
           <button
             onClick={handleActivate}
             disabled={activate.isPending || isActive || activated}
-            className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 relative overflow-hidden group"
+            className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 relative overflow-hidden group font-heading"
             style={{
-              fontFamily: "var(--font-heading)",
-              color: activate.isPending ? "oklch(0.98 0.004 220)" : "oklch(0.14 0.02 255)",
+              color: activate.isPending ? "var(--color-foreground)" : "var(--color-background)",
               background: isActive
                 ? "oklch(0.74 0.18 145 / 0.15)"
                 : "var(--grad-arctic)",
@@ -175,12 +167,12 @@ export default function AsterOnboarding() {
                 Activating...
               </span>
             ) : isActive ? (
-              <span className="flex items-center justify-center gap-2" style={{ color: "oklch(0.74 0.18 145)" }}>
+              <span className="flex items-center justify-center gap-2" style={{ color: "var(--profit-green)" }}>
                 <CheckCircle2 className="w-4 h-4" />
                 Already Active
               </span>
             ) : activated ? (
-              <span className="flex items-center justify-center gap-2" style={{ color: "oklch(0.14 0.02 255)" }}>
+              <span className="flex items-center justify-center gap-2 text-background">
                 <CheckCircle2 className="w-4 h-4" />
                 Activated! Redirecting...
               </span>

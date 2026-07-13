@@ -50,9 +50,9 @@ export default function LiveSignalFeed({
   onSetTierFilter, onSetSignalPeriod, onSetSignalPage, onToggleSort, onRefresh,
 }: LiveSignalFeedProps) {
   return (
-    <div className="rounded-2xl bg-card border border-border/50 overflow-hidden">
+    <div className="glass-card rounded-2xl overflow-hidden border-border/50">
       {/* Header */}
-      <div className="p-6 border-b border-border/40">
+      <div className="p-6 border-b border-border/30">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-semibold text-foreground">Live Signal Feed</h3>
@@ -63,14 +63,11 @@ export default function LiveSignalFeed({
           <div className="flex items-center gap-2">
             <button
               onClick={onToggleSort}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border"
-              style={sortBy === "quality" ? {
-                background: "oklch(0.82 0.16 85 / 0.08)",
-                borderColor: "oklch(0.82 0.16 85 / 0.40)",
-                color: "oklch(0.82 0.16 85)",
-                boxShadow: "0 0 12px oklch(0.82 0.16 85 / 0.15)",
-              } : {}}
-            >
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                sortBy === "quality"
+                  ? "bg-gold-10/20 border-gold-30 text-gold shadow-[0_0_12px_oklch(0.82_0.16_85/0.15)]"
+                  : "bg-background border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+              }`}>
               <Trophy className={`w-3 h-3 ${sortBy === "quality" ? "trophy-pulse" : ""}`} />
               {sortBy === "quality" ? "Best First" : "Latest First"}
             </button>
@@ -93,15 +90,11 @@ export default function LiveSignalFeed({
                 onClick={() => { onSetTierFilter(t); onSetSignalPage(0); }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                   tierFilter === t
-                    ? t === "A" ? "shadow-sm text-black font-bold"
+                    ? t === "A" ? "bg-gold text-black font-bold shadow-sm"
                       : t === "B" ? "bg-primary/20 text-primary shadow-sm"
                       : "bg-muted text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
-                style={tierFilter === t && t === "A" ? {
-                  background: "oklch(0.82 0.16 85)",
-                  color: "oklch(0.15 0.014 260)",
-                } : {}}
               >
                 {t === "all" ? "All" : `Tier ${t}`}
               </button>

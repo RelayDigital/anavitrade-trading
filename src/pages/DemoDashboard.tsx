@@ -430,21 +430,21 @@ export default function DemoDashboard() {
                 <AreaChart data={growthData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={totalPnl >= 0 ? "oklch(0.60 0.22 220)" : "oklch(0.6 0.2 25)"} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={totalPnl >= 0 ? "oklch(0.60 0.22 220)" : "oklch(0.6 0.2 25)"} stopOpacity={0} />
+                      <stop offset="0%" stopColor={totalPnl >= 0 ? "var(--color-primary)" : "var(--color-profit-red)"} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={totalPnl >= 0 ? "var(--color-primary)" : "var(--color-profit-red)"} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.20 0.02 260)" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
                   <XAxis
                     dataKey="label"
-                    tick={{ fill: "oklch(0.50 0.02 260)", fontSize: 10 }}
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
                     interval="preserveStartEnd"
                   />
                   <YAxis
                     domain={[chartMin, chartMax]}
-                    tick={{ fill: "oklch(0.50 0.02 260)", fontSize: 10 }}
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
                     tickFormatter={(v) =>
@@ -458,8 +458,8 @@ export default function DemoDashboard() {
                   />
                   <Tooltip
                     contentStyle={{
-                      background: "oklch(0.12 0.015 260)",
-                      border: "1px solid oklch(0.25 0.02 260)",
+                      background: "var(--color-popover)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: "10px",
                       color: "white",
                       fontSize: "12px",
@@ -474,15 +474,15 @@ export default function DemoDashboard() {
                   {/* Dashed reference line at starting capital */}
                   <ReferenceLine
                     y={startingCapital}
-                    stroke="oklch(0.45 0.02 260)"
+                    stroke="var(--color-muted-foreground)"
                     strokeDasharray="4 4"
                     strokeWidth={1}
-                    label={{ value: "Start", fill: "oklch(0.45 0.02 260)", fontSize: 9, position: "insideTopLeft" }}
+                    label={{ value: "Start", fill: "var(--color-muted-foreground)", fontSize: 9, position: "insideTopLeft" }}
                   />
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke={totalPnl >= 0 ? "oklch(0.60 0.22 220)" : "oklch(0.6 0.2 25)"}
+                    stroke={totalPnl >= 0 ? "var(--color-primary)" : "var(--color-profit-red)"}
                     strokeWidth={2.5}
                     fill="url(#equityGradient)"
                     dot={false}
@@ -670,8 +670,9 @@ function StatCard({
 }) {
   return (
     <div className={`bg-card border rounded-xl p-5 transition-all duration-500 ${
-      highlight ? "border-primary/40 shadow-[0_0_20px_oklch(0.65_0.2_255/0.12)]" : "border-border"
-    }`}>
+      highlight ? "border-primary/40" : "border-border"
+    }`}
+      style={highlight ? { boxShadow: "0 0 20px oklch(0.65 0.2 255 / 0.12)" } : undefined}>
       <div className="flex items-center gap-2 mb-2">
         <div className="text-muted-foreground">{icon}</div>
         <span className="text-xs text-muted-foreground">{label}</span>

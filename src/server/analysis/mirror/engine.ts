@@ -12,6 +12,8 @@
 import { getDb } from "../../db";
 import { coinlegsSignals, analysisSignals } from "../../../drizzle/schema";
 import { gte, and, lte, eq, sql } from "drizzle-orm";
+import type { UnifiedSignal } from "../types";
+import { dispatchSignal } from "../dispatcher";
 import { KlineFetcher } from "../kline-fetcher";
 import { getKlines } from "../kline-repository";
 import { detectCoinlegsSignals } from "./detector";
@@ -562,4 +564,60 @@ export async function compareWithCoinlegs(
     coinlegsOnly,
     matched,
   };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * FALLBACK DISPATCH — mirrors signals to the shared dispatcher when
+ * Coinlegs is unreachable. Builds UnifiedSignals from mirror detections
+ * and routes them through the same dispatchSignal() the native generator
+ * and ICR engine use.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+export async function dispatchMirrorDetections(
+  results: MirrorRunResult[],
+): Promise<{ dispatched: number; errors: number }> {
+  let dispatched = 0;
+  let errors = 0;
+
+  for (const result of results) {
+    for (const detection of result.scoredDetections) {
+      if (detection.score.tier !== "A") continue;
+
+      const signal: UnifiedSignal = {
+        source: "mirror_fallback",
+        symbol: detection.symbol,
+        timeframe: detection.timeframe,
+        direction: "long",
+        entry: detection.price,
+        stopLoss: detection.price * 0.98,
+        takeProfit: detection.price * 1.04,
+        score: detection.score.score,
+        tier: detection.score.tier,
+        thesis: `Mirror fallback: ${detection.indicatorName || detection.typeId} on ${detection.symbol} ${detection.timeframe}`,
+        components: {},
+        structuralScore: 50,
+        confidence: 0.5,
+        timestamp: detection.candleTimestamp,
+        metadata: {
+          mirrorTypeId: detection.typeId,
+          mirrorConfidence: detection.confidence,
+          mirrorThesis: detection.thesis,
+          fallback: true,
+        },
+      };
+
+      try {
+        const dispatchResult = await dispatchSignal(signal);
+        if (dispatchResult.intentId !== null) {
+          dispatched++;
+          console.log(`[mirror-fallback] dispatched ${detection.symbol} ${detection.timeframe} (score=${detection.score.score})`);
+        }
+      } catch (e: any) {
+        errors++;
+        console.warn(`[mirror-fallback] error dispatching ${detection.symbol}:`, e?.message);
+      }
+    }
+  }
+
+  return { dispatched, errors };
 }

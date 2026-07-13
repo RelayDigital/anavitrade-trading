@@ -23,16 +23,15 @@ export default function FirstRunWizard({ showWizard, wizardStep, onClose, onBack
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "oklch(0.07 0.015 255 / 0.85)", backdropFilter: "blur(8px)" }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/85 backdrop-blur"
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
-            className="relative w-full max-w-md rounded-2xl p-8 border"
-            style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.95), oklch(0.09 0.018 255 / 0.98))", borderColor: "oklch(0.60 0.22 220 / 0.18)" }}
+            className="relative w-full max-w-md rounded-2xl p-8 border border-primary/20"
+            style={{ background: "linear-gradient(145deg, oklch(0.12 0.022 250 / 0.95), oklch(0.09 0.018 255 / 0.98))" }}
           >
             <button
               onClick={onClose}
@@ -46,8 +45,9 @@ export default function FirstRunWizard({ showWizard, wizardStep, onClose, onBack
               {wizardSteps.map((_, i) => (
                 <div
                   key={i}
-                  className="h-1 flex-1 rounded-full transition-all duration-500"
-                  style={{ background: i <= wizardStep ? "oklch(0.60 0.22 220 / 0.6)" : "oklch(1 0 0 / 0.08)" }}
+                  className={`h-1 flex-1 rounded-full transition-all duration-500 ${
+                    i <= wizardStep ? "bg-primary/60" : "bg-white/[0.08]"
+                  }`}
                 />
               ))}
             </div>
@@ -60,8 +60,7 @@ export default function FirstRunWizard({ showWizard, wizardStep, onClose, onBack
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5"
-                  style={{ background: "oklch(0.60 0.22 220 / 0.12)", color: "oklch(0.68 0.22 220)" }}>
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5 bg-primary/10 text-primary">
                   {wizardSteps[wizardStep].icon}
                 </div>
                 <h2 className="text-xl font-heading font-bold text-foreground mb-2">{wizardSteps[wizardStep].title}</h2>
@@ -73,16 +72,15 @@ export default function FirstRunWizard({ showWizard, wizardStep, onClose, onBack
               {wizardStep > 0 && (
                 <button
                   onClick={onBack}
-                  className="flex-1 px-4 py-2.5 rounded-xl border text-sm font-medium text-foreground transition-colors hover:bg-card"
-                  style={{ borderColor: "oklch(0.60 0.22 220 / 0.2)" }}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-primary/20 text-sm font-medium text-foreground transition-colors hover:bg-card"
                 >
                   Back
                 </button>
               )}
               <button
                 onClick={onNext}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
-                style={{ fontFamily: "var(--font-heading)", color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-heading font-semibold transition-all"
+                style={{ color: "oklch(0.14 0.02 255)", background: "var(--grad-arctic)", boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)" }}
               >
                 {wizardStep < wizardSteps.length - 1 ? "Next" : "Get Started"}
               </button>

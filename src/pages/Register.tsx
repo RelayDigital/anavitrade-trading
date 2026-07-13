@@ -253,13 +253,7 @@ export default function Register() {
                   <button
                     type="submit"
                     disabled={register.isPending}
-                    className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      color: "oklch(0.14 0.02 255)",
-                      background: "var(--grad-arctic)",
-                      boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)",
-                    }}
+                    className="btn-azure w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
                   >
                     {register.isPending ? "Creating account..." : (wantDemo ? "Create Account & Set Up Demo" : "Create Account")}
                   </button>
@@ -303,13 +297,7 @@ export default function Register() {
                 <button
                   onClick={() => createDemo.mutate({ startingCapital: demoCapital })}
                   disabled={createDemo.isPending}
-                  className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
-                  style={{
-                    fontFamily: "var(--font-heading)",
-                    color: "oklch(0.14 0.02 255)",
-                    background: "var(--grad-arctic)",
-                    boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22)",
-                  }}
+                  className="btn-azure w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
                 >
                   {createDemo.isPending ? "Setting up demo..." : `Start with ${CAPITAL_OPTIONS.find((o) => o.value === demoCapital)?.label}`}
                 </button>

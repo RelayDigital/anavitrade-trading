@@ -1,0 +1,232 @@
+/* ─────────────────────────────────────────────────────
+   COMPONENT-SPECIFIC STYLES — buttons, badges, cards
+───────────────────────────────────────────────────── */
+
+/* ── Button System ── */
+
+@utility btn-azure {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  color: oklch(0.14 0.02 255);
+  background: var(--grad-arctic);
+  border-radius: var(--pill);
+  padding: 0.5rem 1.5rem;
+  transition: transform 0.15s var(--ease-out);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.4), 0 4px 24px oklch(0.72 0.20 195 / 0.22);
+  &:active { transform: scale(0.97); }
+}
+
+@utility btn-ghost-azure {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  color: oklch(0.60 0.22 220);
+  background: transparent;
+  border: var(--hairline) solid oklch(0.60 0.22 220 / 0.35);
+  border-radius: var(--pill);
+  padding: 0.5rem 1.5rem;
+  transition: background 0.2s, transform 0.15s var(--ease-out);
+  &:hover { background: oklch(0.60 0.22 220 / 0.08); }
+  &:active { transform: scale(0.97); }
+}
+
+@utility btn-premium {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  background: linear-gradient(94.67deg, #baecff, #b7c1ff);
+  border-radius: 100px;
+  padding: 0.625rem 1.75rem;
+  transition: transform 0.2s var(--ease-out), box-shadow 0.2s;
+  box-shadow: 0 4px 24px oklch(0.72 0.20 195 / 0.22);
+  &:hover { transform: scale(1.02); }
+}
+
+@utility btn-hairline {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  color: oklch(0.96 0.006 220);
+  background: transparent;
+  border: var(--hairline) solid oklch(1 0 0 / 0.15);
+  border-radius: var(--pill);
+  padding: 0.5rem 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  transition: all 0.2s;
+  &:hover { border-color: oklch(1 0 0 / 0.30); }
+}
+
+@utility btn-obsidian {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  color: oklch(0.6 0.02 240);
+  background: transparent;
+  border: var(--hairline) solid oklch(1 0 0 / 0.08);
+  border-radius: var(--pill);
+  padding: 0.5rem 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  transition: all 0.2s;
+  &:hover { border-color: oklch(1 0 0 / 0.2); }
+}
+
+@utility btn-border-wrap {
+  --border-angle: 0deg;
+  position: relative;
+  border-radius: 100px;
+  background: linear-gradient(135deg, oklch(0.12 0.022 250), oklch(0.09 0.018 255));
+  z-index: 0;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: -1.5px;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--border-angle),
+      oklch(0.60 0.22 220),
+      oklch(0.72 0.20 195),
+      oklch(0.60 0.22 220),
+      transparent 60%
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: borderRotate 4s linear infinite;
+    pointer-events: none;
+    z-index: -1;
+  }
+}
+
+@utility btn-fill-left {
+  position: relative;
+  overflow: hidden;
+  z-index: 0;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--grad-arctic);
+    transform: translateX(-100%);
+    transition: transform 0.4s var(--ease-out);
+    z-index: -1;
+  }
+  &:hover::after { transform: translateX(0); }
+  &:hover { color: oklch(0.14 0.02 255); }
+}
+
+@utility btn-fill-right {
+  position: relative;
+  overflow: hidden;
+  z-index: 0;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--grad-arctic);
+    transform: translateX(100%);
+    transition: transform 0.4s var(--ease-out);
+    z-index: -1;
+  }
+  &:hover::after { transform: translateX(0); }
+  &:hover { color: oklch(0.14 0.02 255); }
+}
+
+/* Gradient text helpers */
+@utility text-arctic {
+  background: linear-gradient(135deg, oklch(0.72 0.20 195), oklch(0.60 0.22 220));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@utility text-electric {
+  background: linear-gradient(135deg, #6ff3f3, #7384f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Signal badges */
+@utility badge-buy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: oklch(0.60 0.22 220 / 0.12);
+  color: oklch(0.60 0.22 220);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@utility badge-sell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: oklch(0.65 0.22 25 / 0.12);
+  color: oklch(0.65 0.22 25);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@utility badge-period {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: oklch(0.60 0.02 240);
+  background: oklch(1 1 1 / 0.04);
+  border: 1px solid oklch(1 1 1 / 0.06);
+}
+
+/* Gold color tokens */
+@utility text-gold { color: oklch(0.82 0.16 85); }
+@utility text-gold-bright { color: oklch(0.90 0.19 85); }
+@utility bg-gold-10 { background: oklch(0.82 0.16 85 / 0.10); }
+@utility bg-gold-15 { background: oklch(0.82 0.16 85 / 0.15); }
+@utility bg-gold-20 { background: oklch(0.82 0.16 85 / 0.20); }
+@utility border-gold-30 { border-color: oklch(0.82 0.16 85 / 0.30); }
+@utility border-gold-50 { border-color: oklch(0.82 0.16 85 / 0.50); }
+
+/* iPhone mockup for HeroWidget */
+.iphone-frame {
+  position: relative;
+  border-radius: 40px;
+  padding: 8px;
+  background: linear-gradient(135deg, oklch(0.45 0.18 240 / 0.5), oklch(0.24 0.025 260 / 0.5));
+  border: 1px solid oklch(0.60 0.22 220 / 0.15);
+  box-shadow: 0 0 60px oklch(0.60 0.22 220 / 0.08);
+  max-width: 280px;
+  margin: 0 auto;
+  @media (max-width: 639px) { max-width: 240px; border-radius: 32px; }
+}
+
+.iphone-screen {
+  border-radius: 32px;
+  overflow: hidden;
+  background: oklch(0.08 0.015 260);
+  padding: 16px;
+  @media (max-width: 639px) { border-radius: 24px; padding: 12px; }
+}
+
+/* iPhone notch */
+.iphone-notch {
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 100px; height: 24px;
+  background: oklch(0.07 0.015 255);
+  border-radius: 0 0 16px 16px;
+  z-index: 10;
+  @media (max-width: 639px) { width: 80px; height: 20px; border-radius: 0 0 12px 12px; }
+}
