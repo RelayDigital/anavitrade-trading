@@ -7,17 +7,19 @@ const INTERVAL_MAP: Record<string, string> = {
 };
 const MAX_PER_CALL = 500;
 
+// 38 pairs — stays under Cloudflare's 50-subrequest-per-invocation limit
+// (1 exchangeInfo + 38 kline fetches + 10 DB reads < 50)
 const FALLBACK_WATCHLIST = [
   "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT",
   "DOTUSDT","LINKUSDT","MATICUSDT","UNIUSDT","SHIBUSDT","LTCUSDT","ATOMUSDT","ETCUSDT",
   "XLMUSDT","BCHUSDT","ALGOUSDT","TRXUSDT","NEARUSDT","FILUSDT","APTUSDT","ARBUSDT",
   "OPUSDT","SUIUSDT","PEPEUSDT","INJUSDT","TIAUSDT","SEIUSDT","RUNEUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","CRVUSDT","FXSUSDT","GMXUSDT","PENDLEUSDT","STXUSDT",
-  "FETUSDT","AGIXUSDT","OCEANUSDT","RNDRUSDT","ICPUSDT","EGLDUSDT","FLOWUSDT",
-  "SANDUSDT","MANAUSDT","APEUSDT","AXSUSDT","YGGUSDT","GALAUSDT","IMXUSDT","BLURUSDT",
+  "MKRUSDT","COMPUSDT","CRVUSDT","FXSUSDT","GMXUSDT","PENDLEUSDT",
 ];
 
 async function fetchTopUsdtPairs(limit?: number): Promise<string[]> {
+  // Respect Cloudflare 50-subrequest cap: max 40 pairs
+  const capped = Math.min(limit ?? 38, 38);
   try {
     const fres = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo");
     if (fres.ok) {
@@ -26,12 +28,12 @@ async function fetchTopUsdtPairs(limit?: number): Promise<string[]> {
       const filtered = symbols
         .filter((s: any) => s.symbol?.endsWith("USDT") && s.status === "TRADING" && s.contractType === "PERPETUAL")
         .sort((a: any, b: any) => (parseFloat(b.volume24h || "0") - parseFloat(a.volume24h || "0")))
-        .slice(0, limit ?? 150)
+        .slice(0, capped)
         .map((s: any) => s.symbol);
       if (filtered.length > 0) return filtered;
     }
   } catch { /* fall through */ }
-  return FALLBACK_WATCHLIST.slice(0, limit ?? undefined);
+  return FALLBACK_WATCHLIST.slice(0, capped);
 }
 
 export class KlineFetcher {
@@ -39,8 +41,9 @@ export class KlineFetcher {
   private watchlistSize: number | undefined;
   private minDelayMs: number;
 
-  constructor(watchlistSize?: number, minDelayMs = 200) {
-    this.watchlistSize = watchlistSize;
+  /** Default watchlist size capped at 38 to stay under Cloudflare's 50-subrequest limit */
+  constructor(watchlistSize: number = 38, minDelayMs = 200) {
+    this.watchlistSize = Math.min(watchlistSize, 38);
     this.minDelayMs = minDelayMs;
   }
 
@@ -70,6 +73,24 @@ export class KlineFetcher {
     }));
   }
 
+  async updateTimeframe(interval: string): Promise<number> {
+    if (!this.watchlist) this.watchlist = await fetchTopUsdtPairs(this.watchlistSize);
+    let total = 0;
+    for (const symbol of this.watchlist) {
+      total += await this.updateSymbol(symbol, interval);
+      await this.delay();
+    }
+    return total;
+  }
+
+  async updateSymbol(symbol: string, interval: string): Promise<number> {
+    const latestTs = await getLatestTimestamp(symbol, interval);
+    const newCandles = await this.fetchKlines(symbol, interval, MAX_PER_CALL, latestTs ?? undefined);
+    const fresh = latestTs ? newCandles.filter((c) => c.timestamp > latestTs) : newCandles;
+    if (fresh.length > 0) await upsertKlines(fresh);
+    return fresh.length;
+  }
+
   async backfill(symbol: string, interval: string, lookbackBars: number = 500): Promise<Kline[]> {
     const allCandles: Kline[] = [];
     let remaining = lookbackBars;
@@ -85,21 +106,6 @@ export class KlineFetcher {
     }
     if (allCandles.length > 0) await upsertKlines(allCandles);
     return allCandles;
-  }
-
-  async updateSymbol(symbol: string, interval: string): Promise<number> {
-    const latestTs = await getLatestTimestamp(symbol, interval);
-    const newCandles = await this.fetchKlines(symbol, interval, MAX_PER_CALL, latestTs ?? undefined);
-    const fresh = latestTs ? newCandles.filter((c) => c.timestamp > latestTs) : newCandles;
-    if (fresh.length > 0) await upsertKlines(fresh);
-    return fresh.length;
-  }
-
-  async updateTimeframe(interval: string): Promise<number> {
-    if (!this.watchlist) this.watchlist = await fetchTopUsdtPairs(this.watchlistSize);
-    let total = 0;
-    for (const symbol of this.watchlist) { total += await this.updateSymbol(symbol, interval); await this.delay(); }
-    return total;
   }
 
   async updateAll(): Promise<Record<string, number>> {

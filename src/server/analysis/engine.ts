@@ -185,11 +185,10 @@ export async function runAnalysisEngine(
   const db = getDb();
 
   try {
-    const fetcher = new KlineFetcher();
-    const watchlist = await fetcher.getWatchlist();
+    const watchlist = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","LINKUSDT","MATICUSDT","UNIUSDT","SHIBUSDT","LTCUSDT","ATOMUSDT","ETCUSDT","XLMUSDT","BCHUSDT","ALGOUSDT","TRXUSDT","NEARUSDT","FILUSDT","APTUSDT"];
 
     // 1. Fetch latest klines for all symbols
-    const klineUpdates = await fetcher.updateTimeframe(timeframe);
+    const klineUpdates = 0; // DB-only, no live Binance fetch
     console.log(
       `[analysis-engine] kline updates: ${klineUpdates} new candles across ${watchlist.length} symbols`,
     );
@@ -258,7 +257,12 @@ export async function runAnalysisEngine(
 
     // 4. Fetch derivatives snapshots
     const derivFetcher = new DerivativesFetcher();
-    const derivSnapshots = await derivFetcher.snapshotAll();
+    const derivSnapshots: DerivativesSnapshot[] = [];
+    const derivSymbols = [...new Set(icrSignals.map(s => s.symbol))].slice(0, 15);
+    for (const sym of derivSymbols) {
+      try { derivSnapshots.push(await derivFetcher.snapshotSymbol(sym)); }
+      catch {}
+    }
 
     // 5. Compute alpha scores for each symbol with a previous snapshot
     //    so OI change velocity (demand velocity + leverage penalty) is
@@ -526,7 +530,7 @@ export async function runAnalysisEngine(
 export async function backfillMarketData(
   lookbackBars?: number,
 ): Promise<void> {
-  const fetcher = new KlineFetcher();
+  const fetcher = new KlineFetcher(25);
   const results = await fetcher.backfillAll(lookbackBars);
   console.log(
     "[analysis-engine] backfill complete:",
