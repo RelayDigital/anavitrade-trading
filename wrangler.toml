@@ -7,11 +7,6 @@ binding = "DB"
 database_name = "anavitrade-db"
 database_id = "2f30b46a-e457-4691-a309-a3c8e27bbac7"
 
-[[r2_buckets]]
-binding = "KLINES_BUCKET"
-bucket_name = "anavitrade-klines"
-preview_bucket_name = "anavitrade-klines-dev"
-
 # Local/dev vars. In production these are set as Worker secrets, not here.
 [vars]
 JWT_SECRET = "dev-secret-key-anavitrade-2026"

@@ -5,7 +5,7 @@
  * Called by the scraper after successful signal insertion + intent dispatch,
  * and also available for one-shot historical backfill.
  */
-import { getDb } from "../db";
+import { getDb, getRawD1 } from "../db";
 import { analysisSignals, coinlegsSignals } from "../../drizzle/schema";
 import { eq, inArray, and, desc } from "drizzle-orm";
 import type { UnifiedSignal, SignalSource } from "./types";
@@ -201,7 +201,14 @@ export async function bridgeCoinlegsSignals(
       });
 
       try {
-        await db.insert(analysisSignals).values(values as any);
+        // Use raw D1 to bypass Drizzle Date serialization
+        const rawD1 = getRawD1();
+        for (const row of values) {
+          const r = row as Record<string, unknown>;
+          const cols2 = Object.keys(r);
+          const ph = cols2.map(() => "?").join(",");
+          await rawD1.prepare(`INSERT OR IGNORE INTO analysis_signals ("${cols2.join('","')}") VALUES (${ph})`).bind(...cols2.map(c => r[c])).run();
+        }
         bridged += batch.length;
       } catch (e: any) {
         console.warn("[bridge] batch insert error:", e?.message);
@@ -297,7 +304,14 @@ export async function backfillCoinlegsToAnalysisSignals(): Promise<{
         };
       });
 
-      await db.insert(analysisSignals).values(values as any);
+      const rawD2 = getRawD1();
+      for (const row of values) {
+        const r = row as Record<string, unknown>;
+        const cols2 = Object.keys(r);
+        const ph = cols2.map(() => "?").join(",");
+        const qcols = cols2.map(c => `"${c}"`).join(",");
+        await rawD2.prepare(`INSERT OR IGNORE INTO analysis_signals (${qcols}) VALUES (${ph})`).bind(...cols2.map(c => r[c])).run();
+      }
       inserted += batch.length;
     }
 

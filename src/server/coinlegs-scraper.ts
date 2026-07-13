@@ -309,8 +309,16 @@ export async function runCoinlegsScraper() {
     }
 
     // Bridge newly inserted signals to unified analysis_signals table (non-blocking)
-    // SKIP bridge for now — analysis_signals table uses timestamp_ms which has Drizzle Date serialization issues
-    // To be fixed separately
+    const insertedSignalIds = insertRows.map((r) => r.lookupId);
+    if (insertedSignalIds.length > 0) {
+      try {
+        const { bridgeCoinlegsSignals } = await import("./analysis/bridge");
+        const bridgeResult = await bridgeCoinlegsSignals(insertedSignalIds);
+        console.log(`[CoinlegsScraper] bridge: ${bridgeResult.bridged} bridged, ${bridgeResult.skipped} skipped, ${bridgeResult.errors} errors`);
+      } catch (e: any) {
+        console.warn("[CoinlegsScraper] bridge error (non-blocking):", e?.message);
+      }
+    }
   } catch (e: any) {
     status = "error";
     errorMessage = e?.message;
