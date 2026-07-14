@@ -123,7 +123,7 @@ async function fanOutCex(
 
     await db.update(executionJobs).set({
       notionalUsd: notionalUsd.toFixed(2), quantity, leverage: decision.leverage,
-      limitPrice: intent.limitPrice ?? null, updatedAt: new Date(),
+      limitPrice: intent.limitPrice ?? null, updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
     // Submit with retry
@@ -148,9 +148,9 @@ async function fanOutCex(
 
           await db.update(executionJobs).set({
             status: receipt.status === "filled" ? "filled" : "submitted",
-            orderId: receipt.orderId, submittedAt: new Date(),
-            ...(receipt.status === "filled" ? { filledAt: new Date() } : {}),
-            updatedAt: new Date(),
+            orderId: receipt.orderId, submittedAt: Date.now(),
+            ...(receipt.status === "filled" ? { filledAt: Date.now() } : {}),
+            updatedAt: Date.now(),
           } as any).where(eq(executionJobs.id, job.id));
 
           await db.insert(orderEvents).values({
@@ -184,7 +184,7 @@ async function fanOutCex(
       }
 
       await db.update(executionJobs).set({
-        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: new Date(),
+        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: Date.now(),
       } as any).where(eq(executionJobs.id, job.id));
       await db.insert(orderEvents).values({
         executionJobId: job.id, provider: "cex", eventType: "rejected",

@@ -60,3 +60,10 @@
 3. Confirm submitted/filled/rejected order lifecycle rows populate `execution_jobs`, `order_events`, and audit logs correctly.
 4. Confirm NAV snapshots reconcile with live Aster fills before fee crystallization consumes them.
 5. Re-run `pnpm check && npx vite build` before any push or deployment touching this path.
+
+## Session: 2026-07-14 (Aster/CEX Timestamp Follow-Up)
+
+### Done This Session
+- [x] Re-checked the merged Aster staging gate on `main` after remote docs churn.
+- [x] Found and fixed remaining CEX dispatch writes that still passed `Date` objects into numeric `execution_jobs` timestamp columns.
+- [x] Confirmed the remaining execution-folder `new Date()` write targets `global_settings`, which still uses Drizzle `timestamp_ms`.

@@ -37,6 +37,7 @@
 - Keep `ASTER_LIVE_ORDER_SUBMISSION_ENABLED=false` until Aster request signing, exact order payload fields, and fill sync are verified end-to-end.
 - Before enabling live submission, verify staged/submitted/filled/rejected transitions in `execution_jobs`, `order_events`, audit logs, and NAV snapshots.
 - Use testnet or a non-production wallet first; do not depend on fee crystallization from Aster fills until NAV reconciliation is proven.
+- 2026-07-14 follow-up: `execution_jobs`, `order_events`, and `nav_snapshots` are shared by Aster and CEX; CEX dispatch timestamp writes were audited and corrected to epoch milliseconds where they target numeric columns.
 
 ### Next Steps (When Infrastructure Upgrades)
 - Apply PRDs in `docs/plans/2026-07-14-*-prd.md`
