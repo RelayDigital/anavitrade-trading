@@ -105,4 +105,4 @@ Implemented product surfaces:
 - Settings Aster Agent management tab.
 - `.env.example` Aster configuration placeholders.
 
-Live order submission is intentionally not enabled yet. `AsterApiClient.submitOrder()` throws until Aster request signing and the exact order payload contract are wired and tested. Foundation-mode approval recording is user-confirmed; production must verify `approveAgent` and `approveBuilder` against Aster before activation.
+Live order submission is intentionally gated. Keep `ASTER_LIVE_ORDER_SUBMISSION_ENABLED=false` until Aster request signing, the exact order payload contract, and fill sync are wired and tested. Foundation-mode approval recording is user-confirmed; production must verify `approveAgent` and `approveBuilder` against Aster before activation.

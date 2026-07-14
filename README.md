@@ -59,6 +59,7 @@ ASTER_API_BASE_URL=https://fapi.asterdex.com
 ASTER_BUILDER_ADDRESS=0xYourRegisteredAsterBuilderAddress
 ASTER_DEFAULT_FEE_RATE=0
 ASTER_ENVIRONMENT=production
+ASTER_LIVE_ORDER_SUBMISSION_ENABLED=false
 ```
 
 Architecture docs live in `docs/architecture/2026-07-09-aster-dex-flow.md` and `docs/architecture/2026-07-09-claude-cex-handoff.md`.

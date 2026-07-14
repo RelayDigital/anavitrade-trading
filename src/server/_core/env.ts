@@ -12,6 +12,7 @@ export type Env = {
   ASTER_BUILDER_ADDRESS?: string;
   ASTER_DEFAULT_FEE_RATE?: string;
   ASTER_ENVIRONMENT?: "production" | "testnet" | "development";
+  ASTER_LIVE_ORDER_SUBMISSION_ENABLED?: string;
   OWNER_OPEN_ID?: string;
   ADMIN_API_KEY?: string;
 };

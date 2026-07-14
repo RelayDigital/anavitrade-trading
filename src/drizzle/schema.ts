@@ -236,12 +236,12 @@ export const asterAgentAccounts = sqliteTable("aster_agent_accounts", {
   feeRate: text(),
   permissionsJson: text(),
   ipWhitelistJson: text(),
-  approvalExpiresAt: integer({ mode: "timestamp_ms" }),
+  approvalExpiresAt: integer({ mode: "number" }),
   status: text().default("pending_approval").notNull(),
-  lastValidatedAt: integer({ mode: "timestamp_ms" }),
-  revokedAt: integer({ mode: "timestamp_ms" }),
-  createdAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
-  updatedAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+  lastValidatedAt: integer({ mode: "number" }),
+  revokedAt: integer({ mode: "number" }),
+  createdAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+  updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
 });
 
 export type AsterAgentAccount = typeof asterAgentAccounts.$inferSelect;
@@ -319,11 +319,11 @@ export const executionJobs = sqliteTable("execution_jobs", {
   idempotencyKey: text().notNull(),
   orderId: text(),
   errorMessage: text(),
-  queuedAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
-  submittedAt: integer({ mode: "timestamp_ms" }),
-  filledAt: integer({ mode: "timestamp_ms" }),
-  cancelledAt: integer({ mode: "timestamp_ms" }),
-  updatedAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+  queuedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+  submittedAt: integer({ mode: "number" }),
+  filledAt: integer({ mode: "number" }),
+  cancelledAt: integer({ mode: "number" }),
+  updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
 });
 
 export type ExecutionJob = typeof executionJobs.$inferSelect;
@@ -347,7 +347,7 @@ export const orderEvents = sqliteTable("order_events", {
   provider: text().default("aster").notNull(),
   eventType: text().notNull(),
   payloadJson: text(),
-  occurredAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+  occurredAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
 });
 
 export type OrderEvent = typeof orderEvents.$inferSelect;
@@ -363,7 +363,7 @@ export const navSnapshots = sqliteTable("nav_snapshots", {
   realizedPnlUsd: text(),
   depositsUsd: text(),
   withdrawalsUsd: text(),
-  snapshotAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+  snapshotAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
   source: text().default("provider_sync").notNull(),
 });
 

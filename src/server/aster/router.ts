@@ -11,6 +11,7 @@ export const asterRouter = router({
       builderAddress: config.builderAddress,
       defaultFeeRate: config.defaultFeeRate,
       environment: config.environment,
+      liveOrderSubmissionEnabled: config.liveOrderSubmissionEnabled,
       configured: Boolean(config.builderAddress),
     };
   }),

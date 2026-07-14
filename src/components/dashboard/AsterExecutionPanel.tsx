@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 export default function AsterExecutionPanel() {
   const utils = trpc.useUtils();
+  const { data: config } = trpc.aster.getConfig.useQuery();
   const { data: status, isLoading } = trpc.aster.getStatus.useQuery();
   const { data: liveData } = trpc.liveAccount.get.useQuery();
   const toggleKill = trpc.liveAccount.toggleKillSwitch.useMutation({
@@ -20,6 +21,7 @@ export default function AsterExecutionPanel() {
   const active = status?.status === "active";
   const pending = status?.status === "pending_approval";
   const killActive = liveData?.account?.killSwitchActive ?? false;
+  const liveSubmissionEnabled = config?.liveOrderSubmissionEnabled === true;
 
   const statusIcon = active
     ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -37,7 +39,9 @@ export default function AsterExecutionPanel() {
           </div>
           <div>
             <h3 className="text-sm font-semibold text-foreground">Aster DEX Execution</h3>
-            <p className="text-xs text-muted-foreground">One-click activation · Zero-custody</p>
+            <p className="text-xs text-muted-foreground">
+              One-click activation · Zero-custody · {liveSubmissionEnabled ? "Live submit" : "Staging mode"}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -100,8 +104,12 @@ export default function AsterExecutionPanel() {
               <p className="text-xs text-muted-foreground">2% and 20% tracked in Anavitrade's fee ledger, not per-order.</p>
             </div>
             <div className="p-4 rounded-xl bg-card border border-border/50">
-              <div className="text-xs font-semibold text-foreground mb-1">Live Orders</div>
-              <p className="text-xs text-muted-foreground">Ready. Pause execution anytime from this panel.</p>
+              <div className="text-xs font-semibold text-foreground mb-1">{liveSubmissionEnabled ? "Live Orders" : "Order Staging"}</div>
+              <p className="text-xs text-muted-foreground">
+                {liveSubmissionEnabled
+                  ? "Ready. Pause execution anytime from this panel."
+                  : "Signals are staged until Aster live order submission is explicitly enabled."}
+              </p>
             </div>
           </div>
         </div>

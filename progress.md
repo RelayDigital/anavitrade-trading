@@ -43,3 +43,13 @@
 3. Add authenticated dashboard QA with production-like session/data fixtures.
 4. Wire `MarketTickerRail` to live market/signal data or scope fallback content as non-authoritative highlights.
 5. Add TradingView fallback/timeout UI and continue bundle chunk audits for wallet/chart/provider dependencies.
+
+## Session: 2026-07-13 (Aster Execution Failed State)
+
+### Done This Session
+- [x] Traced Aster activation and dispatch failure paths through `src/server/aster/*`, `src/server/execution/*`, D1 schema, and dashboard status UI.
+- [x] Changed Aster/execution/NAV timestamp handling to epoch milliseconds to avoid D1 `Date` object serialization failures.
+- [x] Added `ASTER_LIVE_ORDER_SUBMISSION_ENABLED` gate; Aster jobs stage instead of failing while live order submission is not explicitly enabled.
+- [x] Updated Aster dashboard copy to show staging mode and documented the env flag.
+- [x] Verified `npx tsc --noEmit && npx tsc --noEmit -p src/server/tsconfig.json`.
+- [x] Verified `npx vite build` passes with existing non-blocking Rollup `ox` warnings.

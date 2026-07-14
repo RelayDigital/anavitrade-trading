@@ -9,6 +9,7 @@ import { decryptCexCredentials } from "../cex/store";
 import { createCexClient } from "../cex/factory";
 import { CexExecutionAdapter } from "../cex/adapter";
 import { AsterExecutionAdapter } from "../aster/adapter";
+import { getAsterConfig } from "../aster/config";
 import { decideExecution, prefetchUserData, sizeNotionalFromEquity, type TradeIntentInput } from "./riskEngine";
 
 /** Deterministic idempotency key per (user, intent). Prevents duplicate mirrors. */
@@ -208,6 +209,7 @@ async function fanOutAster(
   intentId: number,
 ) {
   const db = getDb();
+  const asterConfig = getAsterConfig();
   const agents = await db.select().from(asterAgentAccounts)
     .where(eq(asterAgentAccounts.status, "active"));
 
@@ -223,6 +225,7 @@ async function fanOutAster(
     }
 
     const idem = await idempotencyKey(agent.userId, intentId, "aster");
+    const queuedAt = Date.now();
 
     await db.insert(executionJobs).values({
       tradeIntentId: intentId,
@@ -234,6 +237,8 @@ async function fanOutAster(
       orderType: intent.orderType,
       status: "queued",
       idempotencyKey: idem,
+      queuedAt,
+      updatedAt: queuedAt,
     } as any).onConflictDoNothing();
 
     const [job] = await db.select().from(executionJobs)
@@ -265,8 +270,37 @@ async function fanOutAster(
 
     await db.update(executionJobs).set({
       notionalUsd: notionalUsd.toFixed(2), quantity, leverage: decision.leverage,
-      limitPrice: intent.limitPrice ?? null, updatedAt: new Date(),
+      limitPrice: intent.limitPrice ?? null, updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
+
+    if (!asterConfig.liveOrderSubmissionEnabled) {
+      const stagedAt = Date.now();
+      await db.update(executionJobs).set({
+        status: "staged",
+        errorMessage: null,
+        updatedAt: stagedAt,
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id,
+        provider: "aster",
+        eventType: "staged",
+        payloadJson: JSON.stringify({
+          reason: "live_order_submission_disabled",
+          environment: asterConfig.environment,
+        }),
+        occurredAt: stagedAt,
+      } as any);
+      await writeAuditLog(agent.userId, "EXEC_ORDER_STAGED",
+        `intent:${intentId}; aster; live_order_submission_disabled`);
+      results.push({
+        userId: agent.userId,
+        provider: "aster",
+        jobId: job.id,
+        status: "staged",
+        reason: "live_order_submission_disabled",
+      });
+      continue;
+    }
 
     // Submit via Aster adapter with retry
     await enqueue(agent.id, async () => {
@@ -289,14 +323,15 @@ async function fanOutAster(
 
           await db.update(executionJobs).set({
             status: receipt.status === "filled" ? "filled" : "submitted",
-            orderId: receipt.orderId, submittedAt: new Date(),
-            ...(receipt.status === "filled" ? { filledAt: new Date() } : {}),
-            updatedAt: new Date(),
+            orderId: receipt.orderId, submittedAt: Date.now(),
+            ...(receipt.status === "filled" ? { filledAt: Date.now() } : {}),
+            updatedAt: Date.now(),
           } as any).where(eq(executionJobs.id, job.id));
 
           await db.insert(orderEvents).values({
             executionJobId: job.id, provider: "aster", eventType: receipt.status,
             payloadJson: JSON.stringify({ raw: receipt.raw ?? {}, attempt: attempts }),
+            occurredAt: Date.now(),
           } as any);
 
           // NAV snapshot best-effort (Aster doesn't expose balance; use unified cache)
@@ -309,6 +344,7 @@ async function fanOutAster(
                 accountEquityUsd: account.lastTotalEquityUsd ?? "0",
                 availableBalanceUsd: account.lastAvailableUsd ?? "0",
                 source: "provider_sync",
+                snapshotAt: Date.now(),
               } as any);
             }
           } catch { /* best-effort */ }
@@ -327,11 +363,12 @@ async function fanOutAster(
       }
 
       await db.update(executionJobs).set({
-        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: new Date(),
+        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: Date.now(),
       } as any).where(eq(executionJobs.id, job.id));
       await db.insert(orderEvents).values({
         executionJobId: job.id, provider: "aster", eventType: "rejected",
         payloadJson: JSON.stringify({ error: String(lastError?.message).slice(0, 300), attempts }),
+        occurredAt: Date.now(),
       } as any);
       await writeAuditLog(agent.userId, "EXEC_ORDER_FAILED",
         `intent:${intentId}; aster; ${String(lastError?.message).slice(0, 120)}; attempts:${attempts}`);

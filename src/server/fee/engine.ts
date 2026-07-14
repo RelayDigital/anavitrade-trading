@@ -96,6 +96,8 @@ export async function crystallizeFees(): Promise<CrystallizeFeesResult> {
   const db = getDb();
   const todayStart = startOfToday();
   const todayEnd = endOfToday();
+  const todayStartMs = todayStart.getTime();
+  const todayEndMs = todayEnd.getTime();
 
   try {
     /* ---- collect active user ids ---- */
@@ -109,8 +111,8 @@ export async function crystallizeFees(): Promise<CrystallizeFeesResult> {
         .from(navSnapshots)
         .where(
           and(
-            gte(navSnapshots.snapshotAt, todayStart),
-            lte(navSnapshots.snapshotAt, todayEnd),
+            gte(navSnapshots.snapshotAt, todayStartMs),
+            lte(navSnapshots.snapshotAt, todayEndMs),
           ),
         ),
     ]);
@@ -179,8 +181,8 @@ export async function crystallizeFees(): Promise<CrystallizeFeesResult> {
           .where(
             and(
               eq(navSnapshots.userId, userId),
-              gte(navSnapshots.snapshotAt, todayStart),
-              lte(navSnapshots.snapshotAt, todayEnd),
+              gte(navSnapshots.snapshotAt, todayStartMs),
+              lte(navSnapshots.snapshotAt, todayEndMs),
             ),
           )
           .orderBy(desc(navSnapshots.snapshotAt));

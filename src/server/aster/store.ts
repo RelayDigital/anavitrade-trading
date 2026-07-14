@@ -25,6 +25,11 @@ function parsePermissions(raw: string | null): AsterAgentPermissions {
   }
 }
 
+function toEpochMs(value: Date | number | null | undefined): number | null {
+  if (value == null) return null;
+  return value instanceof Date ? value.getTime() : value;
+}
+
 function statusView(account: typeof asterAgentAccounts.$inferSelect): AsterAgentStatusView {
   return {
     status: account.status as AsterAgentStatusView["status"],
@@ -55,25 +60,27 @@ export async function prepareAsterAgent(input: {
   userId: number;
   asterAccountAddress: string;
   maxFeeRate?: string;
-  approvalExpiresAt?: Date;
+  approvalExpiresAt?: Date | number;
   ipWhitelist?: string[];
 }) {
   const db = getDb();
   const config = getAsterConfig();
   if (!config.builderAddress) throw new Error("ASTER_BUILDER_ADDRESS_NOT_CONFIGURED");
 
+  const now = Date.now();
+  const approvalExpiresAt = toEpochMs(input.approvalExpiresAt);
   const liveAccount = await getOrCreateLiveAccount(input.userId);
   const keypair = createAsterAgentKeypair();
   const encryptedSignerPrivateKey = await encryptKey(keypair.privateKey);
   const permissions: AsterAgentPermissions = {
     ...DEFAULT_PERMISSIONS,
     maxFeeRate: input.maxFeeRate,
-    expiresAt: input.approvalExpiresAt?.toISOString(),
+    expiresAt: approvalExpiresAt ? new Date(approvalExpiresAt).toISOString() : undefined,
     ipWhitelist: input.ipWhitelist,
   };
 
   await db.update(asterAgentAccounts)
-    .set({ status: "revoked", revokedAt: new Date(), updatedAt: new Date() } as any)
+    .set({ status: "revoked", revokedAt: now, updatedAt: now } as any)
     .where(and(eq(asterAgentAccounts.userId, input.userId), eq(asterAgentAccounts.status, "active")));
 
   await db.update(liveAccounts)
@@ -93,8 +100,10 @@ export async function prepareAsterAgent(input: {
     feeRate: config.defaultFeeRate,
     permissionsJson: JSON.stringify(permissions),
     ipWhitelistJson: input.ipWhitelist ? JSON.stringify(input.ipWhitelist) : null,
-    approvalExpiresAt: input.approvalExpiresAt ?? null,
+    approvalExpiresAt,
     status: "pending_approval",
+    createdAt: now,
+    updatedAt: now,
   } as any);
 
   await writeAuditLog(input.userId, "ASTER_AGENT_PREPARED", `signer:${keypair.signerAddress}; ref:${nanoid(10)}`);
@@ -115,14 +124,15 @@ export async function recordAsterApprovals(input: {
   if (!account) throw new Error("ASTER_AGENT_NOT_FOUND");
 
   const active = input.agentApproved && input.builderApproved;
+  const now = Date.now();
   await db.update(asterAgentAccounts)
     .set({
       agentStatus: input.agentApproved ? "approved" : account.agentStatus,
       builderStatus: input.builderApproved ? "approved" : account.builderStatus,
       maxFeeRate: input.maxFeeRate ?? account.maxFeeRate,
       status: active ? "active" : "pending_approval",
-      lastValidatedAt: active ? new Date() : account.lastValidatedAt,
-      updatedAt: new Date(),
+      lastValidatedAt: active ? now : account.lastValidatedAt,
+      updatedAt: now,
     } as any)
     .where(eq(asterAgentAccounts.id, account.id));
 
@@ -141,8 +151,9 @@ export async function recordAsterApprovals(input: {
 
 export async function revokeAsterAgent(userId: number) {
   const db = getDb();
+  const now = Date.now();
   await db.update(asterAgentAccounts)
-    .set({ status: "revoked", agentStatus: "revoked", revokedAt: new Date(), updatedAt: new Date() } as any)
+    .set({ status: "revoked", agentStatus: "revoked", revokedAt: now, updatedAt: now } as any)
     .where(and(eq(asterAgentAccounts.userId, userId), eq(asterAgentAccounts.status, "active")));
   await db.update(liveAccounts).set({ status: "pending" } as any).where(eq(liveAccounts.userId, userId));
   await writeAuditLog(userId, "ASTER_AGENT_REVOKED");
@@ -173,7 +184,7 @@ export async function activateAsterWithWallet(input: {
     userId: input.userId,
     asterAccountAddress: walletAddress,
     maxFeeRate: undefined,
-    approvalExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    approvalExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
   });
 
   // Step 2: record both approvals immediately

@@ -35,3 +35,14 @@ Key findings:
 - Authenticated dashboard QA remains a gap even though `npx tsc --noEmit`, `npx vite build`, `pnpm run check`, and public/login responsive smoke checks passed.
 - `MarketTickerRail` still includes curated fallback market items and must not be described as exchange-authoritative real-time price data until wired to a live source.
 - Root providers and third-party embeds remain production performance/resilience risks: Wagmi/wallet/chart/motion chunks need continued bundle audits, and TradingView iframes need graceful runtime fallbacks.
+
+## 2026-07-13 Aster Execution Failed State
+
+Root cause:
+- Aster activation/dispatch paths wrote `Date` objects through Drizzle into D1 integer timestamp columns, matching the known D1 serialization failure mode.
+- Aster dispatch attempted live REST order submission even though the architecture doc says live Aster order submission must remain gated until payload signing and fill sync are verified.
+
+Fix:
+- Aster account and execution/NAV timestamp fields now use epoch milliseconds.
+- Aster dispatch stages jobs with status `staged` while `ASTER_LIVE_ORDER_SUBMISSION_ENABLED` is not `"true"`, instead of retrying an unverified provider call and marking jobs `error`.
+- The dashboard Aster panel now labels the mode as "Staging mode" unless live submit is explicitly enabled.

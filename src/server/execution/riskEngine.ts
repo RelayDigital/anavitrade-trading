@@ -111,6 +111,7 @@ export async function prefetchUserData(userIds: number[]): Promise<PrefetchedUse
 
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
+  const todayStartMs = todayStart.getTime();
 
   const [accounts, todaySnapshots, openJobs, latestNavs] = await Promise.all([
     db.select().from(liveAccounts)
@@ -119,7 +120,7 @@ export async function prefetchUserData(userIds: number[]): Promise<PrefetchedUse
     db.select().from(navSnapshots)
       .where(and(
         inArray(navSnapshots.userId, userIds),
-        gte(navSnapshots.snapshotAt, todayStart),
+        gte(navSnapshots.snapshotAt, todayStartMs as any),
       ))
       .orderBy(sql`${navSnapshots.snapshotAt} ASC`)
       .all(),
@@ -215,6 +216,7 @@ export async function decideExecution(
   // ── Daily loss limit ──
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
+  const todayStartMs = todayStart.getTime();
 
   let recentSnapshots: Array<typeof navSnapshots.$inferSelect>;
   if (preloaded?.navSnapshotsToday.has(userId)) {
@@ -222,7 +224,7 @@ export async function decideExecution(
   } else {
     recentSnapshots = await db.select()
       .from(navSnapshots)
-      .where(and(eq(navSnapshots.userId, userId), gte(navSnapshots.snapshotAt, todayStart)))
+      .where(and(eq(navSnapshots.userId, userId), gte(navSnapshots.snapshotAt, todayStartMs as any)))
       .orderBy(sql`${navSnapshots.snapshotAt} ASC`)
       .limit(10)
       .all();

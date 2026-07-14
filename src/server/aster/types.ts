@@ -25,7 +25,7 @@ export type AsterAgentStatusView = {
   builderStatus?: AsterApprovalStatus;
   feeRate?: string | null;
   maxFeeRate?: string | null;
-  approvalExpiresAt?: Date | null;
+  approvalExpiresAt?: number | null;
   permissions?: AsterAgentPermissions;
 };
 
