@@ -270,7 +270,7 @@ export default function HeroWidget() {
           {/* Footer */}
           <div className="px-4 pb-3 pt-1 shrink-0">
             <p className="text-[8px] text-white/20 text-center">
-              Simulated · Real Coinlegs signals · Non-custodial
+              Simulated · Real signals · Non-custodial
             </p>
           </div>
         </div>

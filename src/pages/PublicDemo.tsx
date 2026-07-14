@@ -647,7 +647,7 @@ export default function PublicDemo() {
                 Investor Preview — Tier A Strategy · $10,000 Starting Capital
               </p>
               <p className="text-xs text-muted-foreground">
-                Real Coinlegs signals · {posSize.toFixed(1)}% capital risk · {leverage.toFixed(1)}× leverage · auto-updated every 5 minutes
+                Real signals · {posSize.toFixed(1)}% capital risk · {leverage.toFixed(1)}× leverage · auto-updated every 5 minutes
               </p>
             </div>
           </div>
@@ -955,7 +955,7 @@ export default function PublicDemo() {
             <span className="font-semibold">Risk Disclosure:</span>{" "}
             This demo uses <span className="font-semibold">{leverage.toFixed(1)}× leverage</span> and{" "}
             <span className="font-semibold">{posSize.toFixed(1)}% capital risk per trade</span>. Trading with leverage amplifies both gains and losses.
-            Results shown are simulated from real Coinlegs signals on a $10,000 starting balance.
+            Results shown are simulated from real signals on a $10,000 starting balance.
             Past performance is not indicative of future results. Capital is at risk.
           </div>
         </div>

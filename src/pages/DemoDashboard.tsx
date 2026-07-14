@@ -384,7 +384,7 @@ export default function DemoDashboard() {
               <p className="text-sm text-muted-foreground mt-0.5">
                 {growthData.length > 1
                   ? `${growthData[0].label} → ${growthData[growthData.length - 1].label} · ${closedTrades.length} signals applied · 0.5% position sizing`
-                  : "Click Sync to build your equity curve from historical Coinlegs signals"}
+                  : "Click Sync to build your equity curve from historical signals"}
               </p>
             </div>
             <div className="text-right">
@@ -506,7 +506,7 @@ export default function DemoDashboard() {
             <div>
               <h3 className="font-heading font-semibold text-foreground">Trade History</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Simulated trades from real Coinlegs Tier A + B signals · 0.5% position size per entry
+                Simulated trades from real Tier A + B signals · 0.5% position size per entry
               </p>
             </div>
             <div className="flex gap-1">
