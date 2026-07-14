@@ -86,8 +86,22 @@ export const asterRouter = router({
         if (e?.message === "ASTER_BUILDER_ADDRESS_NOT_CONFIGURED") {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster builder address is not configured." });
         }
+        if (e?.message === "WALLET_ADDRESS_MISSING") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Connected wallet is missing an address. Reconnect your wallet and try again." });
+        }
+        if (e?.message === "WALLET_KILL_SWITCH_ACTIVE") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Wallet kill switch is active. Resume trading before activating Aster." });
+        }
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to prepare Aster registration." });
       }
+    }),
+
+  activateWithWallet: protectedProcedure
+    .mutation(() => {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Aster activation now requires a wallet signature. Open Aster onboarding and use Sign & Activate Aster.",
+      });
     }),
 
   completeRegistration: protectedProcedure
@@ -101,6 +115,12 @@ export const asterRouter = router({
       } catch (e: any) {
         if (String(e?.message ?? "").startsWith("ASTER_REGISTRATION_")) {
           throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+        }
+        if (e?.message === "ASTER_AGENT_NOT_FOUND") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Aster registration was not prepared. Start activation again." });
+        }
+        if (e?.message === "ASTER_AGENT_NOT_PENDING") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster registration is not pending. Start activation again." });
         }
         if (String(e?.message ?? "").startsWith("ASTER_AGENT_REGISTRATION_REJECTED")) {
           throw new TRPCError({ code: "BAD_REQUEST", message: e.message });

@@ -1,5 +1,5 @@
 import { createConfig, http, fallback } from "wagmi";
-import { mainnet, arbitrum, base, optimism } from "wagmi/chains";
+import { mainnet, arbitrum, base, optimism, bsc } from "wagmi/chains";
 import { walletConnect, metaMask, coinbaseWallet, injected } from "wagmi/connectors";
 
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string;
@@ -38,6 +38,10 @@ const PUBLIC_RPCS: Record<number, string[]> = {
     "https://optimism.drpc.org",
     "https://rpc.ankr.com/optimism",
   ],
+  [bsc.id]: [
+    "https://bsc-dataseed.binance.org",
+    "https://rpc.ankr.com/bsc",
+  ],
 };
 
 function buildTransports() {
@@ -58,7 +62,7 @@ function buildTransports() {
 }
 
 export const wagmiConfig = createConfig({
-  chains: [mainnet, arbitrum, base, optimism],
+  chains: [mainnet, arbitrum, base, optimism, bsc],
   connectors: [
     injected({ shimDisconnect: true }),
     metaMask({
