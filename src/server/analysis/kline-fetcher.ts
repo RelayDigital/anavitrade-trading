@@ -5,7 +5,7 @@ const BINANCE_REST = "https://api.binance.com";
 const INTERVAL_MAP: Record<string, string> = {
   "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w",
 };
-const MAX_PER_CALL = 500;
+const MAX_PER_CALL = 85; // 85 rows x 10 cols = 850 vars (D1 limit: 999)
 
 // 38 pairs — stays under Cloudflare's 50-subrequest-per-invocation limit
 // (1 exchangeInfo + 38 kline fetches + 10 DB reads < 50)

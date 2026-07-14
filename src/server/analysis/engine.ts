@@ -199,7 +199,7 @@ export async function runAnalysisEngine(
     const enrichedBySymbol = new Map<string, EnrichedCandle[]>();
     for (const symbol of watchlist) {
       const klines = await getKlines(symbol, timeframe, 200);
-      if (klines.length < 100) {
+      if (klines.length < 30) {
         // Not enough data yet – skip this symbol
         continue;
       }
