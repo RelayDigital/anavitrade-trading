@@ -1,0 +1,23 @@
+{
+  "features": [
+    "rsi",
+    "stoch",
+    "bb_pos",
+    "bb_width",
+    "ao_value",
+    "macd_hist",
+    "vol_ratio",
+    "swing_dist",
+    "trend_strength",
+    "smc_count",
+    "candle_body",
+    "candle_pos",
+    "atr_pct"
+  ],
+  "n_trades": 19599,
+  "baseline_wr": 0.27725904382876676,
+  "best_test_wr": 0.4117647058823529,
+  "best_threshold": 0.7200000000000004,
+  "best_trades": 68,
+  "regime": "combined"
+}
