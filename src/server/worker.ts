@@ -18,6 +18,7 @@ import { runParameterSweep, selectOptimalParams, DEFAULT_SWEEP_CONFIG } from "./
 import { runPaperEngine, validatePaperOutcomes } from "./analysis/paper-trade";
 import { runMirror, compareWithCoinlegs } from "./analysis/mirror/engine";
 import { runAsterLiveProof } from "./aster/liveProof";
+import { verifyGlobalKill } from "./execution/riskEngine";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -532,7 +533,7 @@ app.get("/api/internal/active-connections", async (c) => {
   } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
 });
 
-/** Kill switch state. */
+/** Kill switch state — reads global kill from DB (survives Worker restarts). */
 app.get("/api/internal/kill-state", async (c) => {
   const authErr = requireInternalAuth(c, c.env);
   if (authErr) return authErr;
@@ -545,7 +546,8 @@ app.get("/api/internal/kill-state", async (c) => {
       .from(cexConnections).where(eq(cexConnections.status, "active"));
     const perConnectionKills: Record<number, boolean> = {};
     for (const c of connections) perConnectionKills[c.id] = Boolean(c.killSwitchActive);
-    return c.json({ globalKill: false, perConnectionKills });
+    const globalKill = await verifyGlobalKill();
+    return c.json({ globalKill, perConnectionKills });
   } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
 });
 

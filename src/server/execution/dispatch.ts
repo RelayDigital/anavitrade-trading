@@ -19,7 +19,18 @@ async function idempotencyKey(userId: number, intentId: number, prefix = "cex"):
   return (await sha256Hex(`${prefix}:${userId}:${intentId}`)).slice(0, 32);
 }
 
-/** Serialize execution per connection so a signer never has two in-flight orders. */
+/**
+ * Serialize execution per connection so a signer never has two in-flight orders.
+ *
+ * NOTE: This is an in-memory mutex — it does NOT survive Worker restarts or
+ * span multiple Worker instances. For full distributed-safety the VPS execution
+ * server should use a Redis or D1-backed advisory lock.  The idempotencyKey
+ * + ON CONFLICT DO NOTHING on executionJobs insertion provides DB-level
+ * deduplication for the create path; the pre-submit status check below guards
+ * against double-submission after a restart.
+ * TODO: Replace with Redis-backed distributed mutex once the VPS execution
+ * server is wired for real order submission.
+ */
 const connectionQueues = new Map<number, Promise<unknown>>();
 function enqueue<T>(connectionId: number, task: () => Promise<T>): Promise<T> {
   const prev = connectionQueues.get(connectionId) ?? Promise.resolve();
@@ -163,9 +174,11 @@ async function fanOutCex(
       } else {
         try {
           const pos = await client.getPositions(intent.symbol);
-          const ticker = pos.length > 0 ? pos[0].entryPrice : 0;
-          const fallback = ticker > 0 ? ticker : 1000;
-          if (fallback > 0) quantity = (notionalUsd / fallback).toFixed(6);
+          const entryPrice = pos.length > 0 ? pos[0].entryPrice : 0;
+          if (entryPrice > 0) quantity = (notionalUsd / entryPrice).toFixed(6);
+          // No hardcoded fallback — MARKET orders without an existing position
+          // must have limitPrice set.  A wild guess (e.g. $1000) can massively
+          // over-size orders and is never acceptable.
         } catch {
           if (intent.limitPrice) quantity = (notionalUsd / parseFloat(intent.limitPrice)).toFixed(6);
         }
@@ -187,6 +200,14 @@ async function fanOutCex(
 
     // Submit with retry
     await enqueue(conn.id, async () => {
+      // Pre-submit check: verify the job is still queued (DB-backed guard against
+      // double-submission after a Worker restart that clears the in-memory queue).
+      const [freshJob] = await db.select({ status: executionJobs.status })
+        .from(executionJobs).where(eq(executionJobs.id, job.id)).limit(1);
+      if (!freshJob || freshJob.status !== "queued") {
+        throw new Error(`JOB_ALREADY_PROCESSED:${freshJob?.status ?? "missing"}`);
+      }
+
       let attempts = 0;
       const maxAttempts = 3;
       const backoff = [1000, 2000, 4000];

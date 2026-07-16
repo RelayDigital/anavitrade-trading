@@ -123,7 +123,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
   const connectKitRef = useRef<{ getProvider: (opts: { chainId?: number }) => Promise<{ request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }> } | null>(null);
 
   // Real wagmi hooks
-  const { connectors, connect, isPending: isWagmiConnecting, error: wagmiError } = useConnect();
+  const { connectors, connectAsync, isPending: isWagmiConnecting, error: wagmiError } = useConnect();
   const { address: wagmiAddress, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const chainId = useChainId();
@@ -264,8 +264,24 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
       return;
     }
 
-    connect({ connector });
-  }, [connect, findConnector, startConnectTimeout, clearConnectTimeout]);
+    void connectAsync({ connector })
+      .then((result) => {
+        const account = Array.isArray(result.accounts) ? result.accounts[0] : result.account;
+        if (account) {
+          persistWallet(String(account), wallet.id, Number(result.chainId ?? chainId ?? 1));
+        }
+      })
+      .catch((error: unknown) => {
+        clearConnectTimeout();
+        const msg = error instanceof Error ? error.message : String(error || "Wallet connection was rejected.");
+        if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("user refused")) {
+          setStep("select");
+        } else {
+          setErrorMsg(msg);
+          setStep("error");
+        }
+      });
+  }, [connectAsync, findConnector, startConnectTimeout, clearConnectTimeout, persistWallet, chainId]);
 
   // Direct Ledger USB/Bluetooth via connect-kit-loader
   const connectLedgerDirect = useCallback(async (transport: LedgerTransport) => {

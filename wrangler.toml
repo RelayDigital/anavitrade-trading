@@ -14,7 +14,7 @@ ASTER_BUILDER_ADDRESS = "0x58c022C844B1Ee047A78dcdDeb516eD992e80828"
 ASTER_API_BASE_URL = "https://fapi.asterdex.com"
 ASTER_DEFAULT_FEE_RATE = "0"
 ASTER_ENVIRONMENT = "production"
-ASTER_LIVE_ORDER_SUBMISSION_ENABLED = "true"
+ASTER_LIVE_ORDER_SUBMISSION_ENABLED = "false"
 
 # Scrapes coinlegs every 60 seconds → scores → auto-dispatches Tier A signals.
 # Sliding 3-min window keeps latency under 1 min while catching clock-skew.
