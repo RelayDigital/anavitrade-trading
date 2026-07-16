@@ -1,3 +1,4 @@
+// DEPRECATED: Superseded by v6 (scripts/tv-deploy-v6.mjs) — has more robust CDP injection and compilation.
 #!/usr/bin/env node
 import CDP from 'chrome-remote-interface';
 import { readFileSync } from 'fs';

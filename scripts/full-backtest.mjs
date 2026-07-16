@@ -1,4 +1,5 @@
 /**
+ * DEPRECATED: Superseded by scripts/unified-backtest.mjs (8-strategy comparison).
  * Full-corpus backtest: fetch coinlegs API pages 0-N, score every signal
  * with the forward-only algorithm, simulate entry→SL→TP against real
  * Binance klines, report honest profit/loss.  No D1 dependency.

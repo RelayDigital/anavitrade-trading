@@ -18,10 +18,9 @@ DATE=$(date +%Y%m%d-%H%M)
 
 echo "=== Anavitrade Training Pipeline — $DATE ==="
 
-# 1. Fetch klines from Binance (fresh data)
+# 1. Fetch klines from Binance (fresh data to local JSON for training pipeline)
 echo "[1/4] Fetching klines from Binance..."
-node scripts/seed-klines.mjs --pairs 20 --bars 300 --timeframe 4h
-node scripts/seed-klines.mjs --pairs 20 --bars 300 --timeframe 1h
+node scripts/fetch-klines-mtf.mjs --pairs 20 --bars 300
 echo "  Klines fetched"
 
 # 2. Fetch macro context

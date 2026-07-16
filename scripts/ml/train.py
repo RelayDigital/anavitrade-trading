@@ -43,6 +43,8 @@ def main():
                        help='Parameter preset')
     parser.add_argument('--dry-run', action='store_true', help='Build data only, skip training')
     parser.add_argument('--output', type=str, help='Override training data output path')
+    parser.add_argument('--version', type=str, default='meta-v21',
+                       help='Model version directory name (default: meta-v21)')
     args = parser.parse_args()
 
     # Select config
@@ -147,7 +149,9 @@ def main():
     # ═══ 3. Train model ═══
     print("\nTraining model...")
     artifacts = train_chronological(all_rows, cfg)
-    model_dir = Path(__file__).resolve().parent.parent / 'data' / 'models' / 'meta-v18-vps'
+    models_root = Path(__file__).resolve().parent.parent / 'data' / 'models'
+    model_version = args.version
+    model_dir = models_root / model_version
     save_model(artifacts, model_dir)
 
     elapsed_total = time.time() - t0

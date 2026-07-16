@@ -1,3 +1,7 @@
+// DEPRECATED: Historical execution log from initial ICR strategy research (2026-07-08).
+// The active ML pipeline (scripts/ml/pipeline/) supersedes this rule-based approach.
+
+
 ICR Strategy v7 Real Edge
 
 Code execution:

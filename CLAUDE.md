@@ -14,6 +14,12 @@ pnpm check
 pnpm build
 pnpm dev
 pnpm smoke:wallet
+
+# Full production build (check + vite build):
+pnpm check && npx vite build
+
+# ML training:
+python3 -m scripts.ml.train --tf 1h --data scripts/data/training-data-mtf-v4.json --model-dir scripts/data/models/meta-v20-mtf-context
 ```
 
 Local dev runs on:
@@ -174,13 +180,15 @@ node scripts/tv-sweep-v4.mjs --tf 4h --symbols "SUIUSDT,MAVUSDT,..."  # Sweep sy
 # ML pipeline
 node scripts/fetch-klines-mtf.mjs --pairs 50 --bars 500    # Fetch 4h/1h/15m klines
 pnpm exec tsx scripts/ml/build-training-data-mtf.ts --input scripts/data/klines-mtf.json --output scripts/data/training-data-mtf-v4.json
-python3 scripts/ml/metacognitive.py train --data scripts/data/training-data-mtf-v4.json --model-dir scripts/data/models/meta-v6
+python3 -m scripts.ml.train --tf 1h --data scripts/data/training-data-mtf-v4.json --model-dir scripts/data/models/meta-v20-mtf-context
 ```
 
 ### Architecture (2026-07-16)
 - **Pine Script v6.2**: Runs on TradingView. 1h SMC patterns (OB, FVG, sweep, CHoCH). BB/AO continuous on every bar. NO arbitrary scoring — pure measurement instrument.
-- **ML Pipeline**: 62 features per bar across 4h/1h/15m. LightGBM + isotonic calibration + KMeans regimes + adversarial risk model. AUC 0.59, calibrated threshold 0.682 (1.1% pass rate at 89% WR).
-- **Production**: Hetzner CPX31 ($15/mo) for execution. Cloudflare Worker for dashboard. Static IP 5.161.229.209 for exchange IP whitelisting.
+- **ML Pipeline**: 12 composable Python modules at `scripts/ml/pipeline/` (config, features, labels, model, enrichment, smc, divergence, volume_profile, rewards, metacognitive, backtest, __init__). Latest model: **meta-v20-mtf-context** — 30 features, LightGBM classifier with isotonic calibration. On a 10-test-trade validation set: 80% WR at threshold 0.82. AUC 0.59 on broader corpus.
+- **Training**: `python3 -m scripts.ml.train` orchestrates feature engineering, training, calibration, and model-card export.
+- **Execution Server**: Hetzner VPS (CPX31, $15/mo) at 5.161.229.209. `src/server/execution/server.ts` polls the Worker for pending TradeIntents every 5s, decrypts credentials locally, and submits orders to CEXes. Static egress IP for exchange API-key IP whitelisting.
+- **Production**: Cloudflare Worker for dashboard + signals. VPS for CEX order execution with static IP. Redis for per-signer order mutex (planned).
 - **CORTEX**: Health-gated training supervisor at `scripts/cortex/`. Verifies AUC improvement, detects silent no-ops.
 - **Key finding**: No arbitrary scoring. BB width + FVG distance + MA separation are top SHAP features. SMC on 1h fires 4x more than on 4h. The model IS the edge — not hand-tuned gates.
 

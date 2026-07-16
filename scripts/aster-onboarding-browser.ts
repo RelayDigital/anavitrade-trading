@@ -141,6 +141,7 @@ async function main() {
     await page.getByRole("button", { name: /Connect Wallet & Activate/i }).click();
     await page.getByRole("button", { name: /MetaMask/i }).click();
     await page.getByText(/Wallet Connected/i).waitFor({ timeout: 20000 });
+    await page.waitForTimeout(1000);
     await screenshot(page, "04-wallet-connected.png");
     await page.getByRole("button", { name: /Sign & Activate Aster/i }).waitFor({ timeout: 20000 });
 

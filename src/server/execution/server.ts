@@ -23,6 +23,8 @@
  */
 
 import * as crypto from "crypto";
+import { createCexClient } from "../cex/factory";
+import type { CexOrderRequest, CexOrderResult } from "../cex/clientTypes";
 
 // Types for internal API responses
 interface PendingIntent {
@@ -56,6 +58,32 @@ interface KillState {
   perConnectionKills: Record<number, boolean>;
 }
 
+/**
+ * Tracks an order submitted to exchange that hasn't filled yet.
+ * Stores decrypted credentials to avoid re-fetching on each fill poll.
+ *
+ * SECURITY: Decrypted API keys live in the process heap for up to
+ * `MAX_ORDER_POLLS * POLL_INTERVAL_MS` (~5 minutes by default). The VPS
+ * is a dedicated private machine, so this is acceptable for MVP. For
+ * production hardening, replace with Redis-backed ephemeral storage or
+ * re-fetch credentials per-fill-poll from the Worker API.
+ */
+interface InFlightOrder {
+  idempotencyKey: string;
+  orderId: string;
+  exchange: string;
+  symbol: string;
+  userId: number;
+  cexConnectionId: number;
+  tradeIntentId: number;
+  submittedAt: number;
+  pollCount: number;
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string | undefined;
+  testnet: boolean;
+}
+
 // ─── Config ────────────────────────────────────────────────────────────────
 
 const {
@@ -73,6 +101,41 @@ for (const key of REQUIRED) {
     console.error(`[exec-server] FATAL: ${key} is not set`);
     process.exit(1);
   }
+}
+
+/** Maximum fill-poll cycles before giving up (60 x 5s = 5 min for MARKET, shorter for LIMIT). */
+const MAX_ORDER_POLLS = 60;
+/** Default position size as percentage of available balance when intent has no requestedNotionalUsd. */
+const DEFAULT_POSITION_PCT = 10;
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function normaliseSide(side: string): "BUY" | "SELL" {
+  return side.toUpperCase() === "SELL" ? "SELL" : "BUY";
+}
+
+function normaliseOrderType(t: string): "MARKET" | "LIMIT" {
+  return t.toUpperCase() === "LIMIT" ? "LIMIT" : "MARKET";
+}
+
+function computeQuantity(notionalUsd: number, price: number): string | null {
+  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const qty = (notionalUsd / price).toFixed(6);
+  return Number(qty) > 0 ? qty : null;
+}
+
+/**
+ * Fetch the current mark price for a symbol from Binance public API.
+ * No auth required. Falls back to 0 if unavailable.
+ */
+async function fetchTickerPrice(symbol: string): Promise<number> {
+  const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`);
+  if (res.ok) {
+    const data = (await res.json()) as { price?: string };
+    return parseFloat(data.price ?? "0");
+  }
+  return 0;
 }
 
 // ─── Shared crypto (delegates to the extracted module at runtime) ──────────
@@ -130,6 +193,9 @@ let healthy = false;
 let pollCount = 0;
 let lastPollDuration = 0;
 let ordersSubmitted = 0;
+let ordersFilled = 0;
+let ordersRejected = 0;
+let ordersTracked = 0;
 let errorsTotal = 0;
 let lastError: string | null = null;
 let serverStart = Date.now();
@@ -143,6 +209,9 @@ const server = http.createServer((req, res) => {
       mode: EXECUTION_MODE,
       pollCount,
       ordersSubmitted,
+      ordersFilled,
+      ordersRejected,
+      ordersTracked,
       errorsTotal,
       lastError,
       lastPollDuration,
@@ -156,6 +225,11 @@ const server = http.createServer((req, res) => {
 server.listen(Number(PORT), () => {
   console.log(`[exec-server] Health/metrics server on :${PORT}`);
 });
+
+// ─── In-flight order tracking ──────────────────────────────────────────────
+
+/** Orders that were submitted but not yet confirmed filled. */
+const inFlightOrders = new Map<string, InFlightOrder>();
 
 // ─── Main poll loop ────────────────────────────────────────────────────────
 
@@ -173,12 +247,17 @@ async function poll() {
 
     // 2. Fetch pending intents
     const { intents } = await internalGet<{ intents: PendingIntent[] }>("/api/internal/pending-intents");
-    if (intents.length === 0) return;
+    if (intents.length === 0) {
+      // Still poll for fills on in-flight orders even without new intents
+      await pollForFills();
+      return;
+    }
 
     // 3. Fetch active connections with encrypted credentials
     const { connections } = await internalGet<{ connections: EncryptedConnection[] }>("/api/internal/active-connections");
     if (connections.length === 0) {
       console.log("[exec-server] No active connections — skipping", intents.length, "intents");
+      await pollForFills();
       return;
     }
 
@@ -200,15 +279,166 @@ async function poll() {
             ? await decryptKey(conn.encryptedPassphrase, ENCRYPTION_KEY!)
             : undefined;
 
-          console.log(`[exec-server] Intent #${intent.id}: ${intent.side} ${intent.symbol} via ${conn.exchange} (conn #${conn.id})`);
-
-          // 5. Mark intent as dispatched by updating status
-          // The VPS doesn't write to D1 directly — it reports results via the API.
-          // A future enhancement can call /api/internal/update-intent-status.
-
-          // 6. Report execution (record what we attempted)
           const idempotencyKey = await sha256(`vps:${conn.userId}:${intent.id}:${conn.id}`);
 
+          console.log(`[exec-server] Intent #${intent.id}: ${intent.side} ${intent.symbol} via ${conn.exchange} (conn #${conn.id}) [mode=${EXECUTION_MODE}]`);
+
+          // ── EXECUTION_MODE guard ────────────────────────────────────────
+          if (EXECUTION_MODE === "disabled") {
+            // Dry-run mode: report as queued without calling any exchange
+            await internalPost("/api/internal/report-execution", {
+              tradeIntentId: intent.id,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              provider: conn.exchange,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              notionalUsd: intent.requestedNotionalUsd ?? undefined,
+              quantity: undefined,
+              leverage: intent.targetLeverage ?? undefined,
+              limitPrice: intent.limitPrice ?? undefined,
+              status: "queued",
+              errorMessage: "EXECUTION_MODE=disabled",
+              idempotencyKey,
+            });
+            continue;
+          }
+
+          // ── Build CEX client ────────────────────────────────────────────
+          const isTestnet = EXECUTION_MODE === "testnet";
+          const client = createCexClient(conn.exchange, {
+            apiKey,
+            apiSecret,
+            passphrase,
+            testnet: isTestnet,
+          });
+
+          // ── Sizing ──────────────────────────────────────────────────────
+          let notionalUsd = intent.requestedNotionalUsd
+            ? parseFloat(intent.requestedNotionalUsd)
+            : 0;
+
+          if (notionalUsd <= 0) {
+            try {
+              const balance = await client.validateAndReadBalance();
+              const available = balance.availableUsd || balance.equityUsd;
+              if (available > 0) {
+                notionalUsd = available * (DEFAULT_POSITION_PCT / 100);
+                console.log(`[exec-server] Sized ${intent.symbol}: ${DEFAULT_POSITION_PCT}% of $${available.toFixed(2)} = $${notionalUsd.toFixed(2)}`);
+              }
+            } catch (e: any) {
+              console.warn(`[exec-server] Balance fetch failed for conn #${conn.id}: ${e?.message?.slice(0, 100)}`);
+            }
+          }
+
+          if (notionalUsd <= 0) {
+            await internalPost("/api/internal/report-execution", {
+              tradeIntentId: intent.id,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              provider: conn.exchange,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              status: "skipped",
+              errorMessage: "cannot_determine_notional",
+              idempotencyKey,
+            });
+            continue;
+          }
+
+          // ── Price for quantity calculation ──────────────────────────────
+          let price = intent.limitPrice ? parseFloat(intent.limitPrice) : 0;
+          if (price <= 0) {
+            price = await fetchTickerPrice(intent.symbol);
+          }
+
+          if (price <= 0) {
+            await internalPost("/api/internal/report-execution", {
+              tradeIntentId: intent.id,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              provider: conn.exchange,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              notionalUsd: notionalUsd.toFixed(2),
+              status: "skipped",
+              errorMessage: "unable_to_resolve_price",
+              idempotencyKey,
+            });
+            continue;
+          }
+
+          const quantity = computeQuantity(notionalUsd, price);
+          if (!quantity) {
+            await internalPost("/api/internal/report-execution", {
+              tradeIntentId: intent.id,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              provider: conn.exchange,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              notionalUsd: notionalUsd.toFixed(2),
+              status: "skipped",
+              errorMessage: "zero_quantity",
+              idempotencyKey,
+            });
+            continue;
+          }
+
+          // ── Submit order ────────────────────────────────────────────────
+          // Set leverage first (best-effort)
+          if (intent.targetLeverage) {
+            try { await client.setLeverage(intent.symbol, intent.targetLeverage); } catch { /* non-fatal */ }
+          }
+
+          const orderReq: CexOrderRequest = {
+            symbol: intent.symbol,
+            side: normaliseSide(intent.side),
+            type: normaliseOrderType(intent.orderType),
+            quantity,
+            price: intent.limitPrice ?? undefined,
+            leverage: intent.targetLeverage ?? undefined,
+            stopLossPrice: intent.stopLossPrice ?? undefined,
+            takeProfitPrice: intent.takeProfitPrice ?? undefined,
+            clientOrderId: idempotencyKey,
+          };
+
+          let orderResult: CexOrderResult;
+          try {
+            orderResult = await client.placeOrder(orderReq);
+            console.log(`[exec-server] Order submitted: ${orderResult.orderId} -> ${orderResult.status}`);
+          } catch (e: any) {
+            const errMsg = e?.message?.slice(0, 300) ?? "order_submission_failed";
+            console.error(`[exec-server] Order submission failed for intent #${intent.id}: ${errMsg}`);
+            ordersRejected++;
+            ordersSubmitted++;
+
+            await internalPost("/api/internal/report-execution", {
+              tradeIntentId: intent.id,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              provider: conn.exchange,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              notionalUsd: notionalUsd.toFixed(2),
+              quantity,
+              leverage: intent.targetLeverage ?? undefined,
+              limitPrice: intent.limitPrice ?? undefined,
+              status: "rejected",
+              errorMessage: errMsg,
+              idempotencyKey,
+            });
+            errorsTotal++;
+            lastError = errMsg;
+            continue;
+          }
+
+          // ── Report initial result ───────────────────────────────────────
           await internalPost("/api/internal/report-execution", {
             tradeIntentId: intent.id,
             userId: conn.userId,
@@ -217,15 +447,40 @@ async function poll() {
             symbol: intent.symbol,
             side: intent.side,
             orderType: intent.orderType,
-            notionalUsd: intent.requestedNotionalUsd ?? undefined,
-            quantity: undefined, // exchange-specific calculation
+            notionalUsd: notionalUsd.toFixed(2),
+            quantity,
             leverage: intent.targetLeverage ?? undefined,
             limitPrice: intent.limitPrice ?? undefined,
-            status: "queued",
+            orderId: orderResult.orderId,
+            status: orderResult.status,
             idempotencyKey,
           });
 
           ordersSubmitted++;
+
+          if (orderResult.status === "filled") {
+            ordersFilled++;
+            console.log(`[exec-server] Intent #${intent.id} filled immediately: ${orderResult.orderId}`);
+          } else if (orderResult.status === "accepted") {
+            // Track for fill polling (LIMIT orders or slow fills)
+            inFlightOrders.set(idempotencyKey, {
+              idempotencyKey,
+              orderId: orderResult.orderId,
+              exchange: conn.exchange,
+              symbol: intent.symbol,
+              userId: conn.userId,
+              cexConnectionId: conn.id,
+              tradeIntentId: intent.id,
+              submittedAt: Date.now(),
+              pollCount: 0,
+              apiKey,
+              apiSecret,
+              passphrase,
+              testnet: isTestnet,
+            });
+            ordersTracked = inFlightOrders.size;
+            console.log(`[exec-server] Intent #${intent.id} accepted, tracking for fill: ${orderResult.orderId}`);
+          }
         } catch (e: any) {
           errorsTotal++;
           lastError = e?.message ?? String(e);
@@ -234,12 +489,77 @@ async function poll() {
       }
     }
 
+    // 5. Poll for fills on in-flight orders
+    await pollForFills();
+
     lastPollDuration = Date.now() - start;
   } catch (e: any) {
     errorsTotal++;
     lastError = e?.message ?? String(e);
     console.error("[exec-server] Poll error:", e?.message);
     lastPollDuration = Date.now() - start;
+  }
+}
+
+/**
+ * Check in-flight orders for fills by reading positions from the exchange.
+ * Reports filled status back to the Worker and removes from tracking.
+ */
+async function pollForFills() {
+  if (inFlightOrders.size === 0) return;
+
+  const start = Date.now();
+  let filledCount = 0;
+
+  for (const [key, order] of inFlightOrders) {
+    if (order.pollCount >= MAX_ORDER_POLLS) {
+      console.log(`[exec-server] Fill poll exhausted for ${order.orderId} (${order.pollCount} polls) — dropping`);
+      inFlightOrders.delete(key);
+      ordersTracked = inFlightOrders.size;
+      continue;
+    }
+
+    order.pollCount++;
+
+    try {
+      const client = createCexClient(order.exchange, {
+        apiKey: order.apiKey,
+        apiSecret: order.apiSecret,
+        passphrase: order.passphrase,
+        testnet: order.testnet,
+      });
+
+      const positions = await client.getPositions(order.symbol);
+      const position = positions.find((p) => p.symbol === order.symbol);
+
+      if (position && Math.abs(position.sizeSigned) > 0) {
+        // Position exists — order is filled
+        await internalPost("/api/internal/report-execution", {
+          tradeIntentId: order.tradeIntentId,
+          userId: order.userId,
+          cexConnectionId: order.cexConnectionId,
+          provider: order.exchange,
+          symbol: order.symbol,
+          side: position.sizeSigned > 0 ? "BUY" : "SELL",
+          orderType: "MARKET",
+          status: "filled",
+          orderId: order.orderId,
+          idempotencyKey: order.idempotencyKey,
+        });
+
+        inFlightOrders.delete(key);
+        ordersTracked = inFlightOrders.size;
+        ordersFilled++;
+        filledCount++;
+        console.log(`[exec-server] Order ${order.orderId} for ${order.symbol} confirmed filled (${order.pollCount} polls)`);
+      }
+    } catch (e: any) {
+      console.warn(`[exec-server] Fill poll error for ${order.orderId} (${order.symbol}): ${e?.message?.slice(0, 100)}`);
+    }
+  }
+
+  if (filledCount > 0) {
+    console.log(`[exec-server] Fill poll: ${filledCount} filled, ${inFlightOrders.size} still tracking (${Date.now() - start}ms)`);
   }
 }
 
@@ -286,6 +606,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = () => {
     console.log("[exec-server] Shutting down...");
+    console.log(`[exec-server] In-flight at shutdown: ${inFlightOrders.size} orders`);
     healthy = false;
     process.exit(0);
   };

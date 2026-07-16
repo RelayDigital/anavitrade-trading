@@ -1,3 +1,5 @@
+<!-- DEPRECATED: Historical audit record from the initial ICR strategy research phase (2026-07-08).
+     The active ML pipeline (scripts/ml/pipeline/) supersedes this rule-based approach. -->
 # ICR Strategy — Comprehensive Quant Audit
 
 **Date**: 2026-07-08

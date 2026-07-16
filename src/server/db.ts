@@ -338,10 +338,18 @@ export async function setDisplayMode(userId: number, mode: "live" | "demo"): Pro
 export async function createDemoAccount(input: { username: string; email: string; startingCapital: string; userId?: number }) {
   const db = getDb();
   const accessToken = nanoid(32);
+  // Seed lastSyncedSignalId to current max so the demo only picks up signals
+  // created AFTER account registration — zero-trade clean start.
+  const [maxSignal] = await db.select({ maxId: sql`COALESCE(MAX(${coinlegsSignals.id}), 0)` as any })
+    .from(coinlegsSignals);
+  const seedSyncId = (maxSignal as any)?.maxId ?? 0;
   await db.insert(demoAccounts).values({
     username: input.username, email: input.email,
     startingCapital: input.startingCapital, currentBalance: input.startingCapital,
     accessToken, status: "active", userId: input.userId ?? null,
+    lastSyncedSignalId: seedSyncId,
+    positionSizePct: "5.00", leverage: "3.00", strategyTier: "A",
+    pyramidingEnabled: false, pyramidMaxEntries: 3, pyramidScalePct: "0.50",
   } as any);
   return { accessToken };
 }
@@ -353,12 +361,17 @@ export async function getOrCreatePublicDemoAccount() {
   const existing = await db.select().from(demoAccounts).where(eq(demoAccounts.accessToken, PUBLIC_DEMO_TOKEN)).limit(1);
   if (existing.length > 0) return existing[0];
   const now = new Date();
+  // Seed lastSyncedSignalId so the public demo only picks up future signals.
+  const [maxSignal] = await db.select({ maxId: sql`COALESCE(MAX(${coinlegsSignals.id}), 0)` as any })
+    .from(coinlegsSignals);
+  const seedSyncId = (maxSignal as any)?.maxId ?? 0;
   await db.insert(demoAccounts).values({
     username: "Investor Preview", email: "demo@anavitrade.com",
     startingCapital: "10000.00", currentBalance: "10000.00",
     accessToken: PUBLIC_DEMO_TOKEN, status: "active",
     positionSizePct: "5.00", leverage: "3.00", strategyTier: "A",
     pyramidingEnabled: false, pyramidMaxEntries: 3, pyramidScalePct: "0.50",
+    lastSyncedSignalId: seedSyncId,
     createdAt: now, updatedAt: now,
   } as any);
   const created = await db.select().from(demoAccounts).where(eq(demoAccounts.accessToken, PUBLIC_DEMO_TOKEN)).limit(1);
@@ -448,6 +461,31 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
     if (tierSignalMap[t]) tierSignalMap[t].push(s);
   }
 
+  // ── Batch query: Pre-fetch existing trade counts for all accounts ────────
+  const accountIds = accounts.map((a) => a.id);
+  const existingCountRows = await db.select({
+    demoAccountId: demoTrades.demoAccountId,
+    count: sql<number>`count(*)`,
+  }).from(demoTrades)
+    .where(inArray(demoTrades.demoAccountId, accountIds))
+    .groupBy(demoTrades.demoAccountId);
+  const existingCountMap = new Map(existingCountRows.map((r) => [r.demoAccountId, r.count]));
+
+  // ── Batch query: Pre-fetch all demoTrades for pyramiding accounts ────────
+  const pyramidingAccountIds = accounts
+    .filter((a) => a.pyramidingEnabled)
+    .map((a) => a.id);
+  const pyramidingTradesByAccount = new Map<number, Array<Record<string, unknown>>>();
+  if (pyramidingAccountIds.length > 0) {
+    const allPyramidTrades = await db.select().from(demoTrades)
+      .where(inArray(demoTrades.demoAccountId, pyramidingAccountIds));
+    for (const t of allPyramidTrades) {
+      const list = pyramidingTradesByAccount.get(t.demoAccountId) ?? [];
+      list.push(t as any);
+      pyramidingTradesByAccount.set(t.demoAccountId, list);
+    }
+  }
+
   let tradesCreated = 0;
   let snapshotsWritten = 0;
   const allTradeInsertRows: Array<Record<string, unknown>> = [];
@@ -474,9 +512,7 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
       let currentBalance = parseFloat(account.currentBalance);
       const startingBalance = currentBalance;
       let maxSignalId = lastId;
-      let runningTradeCount = 0;
-      const [{ existingCount }] = await db.select({ existingCount: sql`count(*)` }).from(demoTrades).where(eq(demoTrades.demoAccountId, account.id));
-      runningTradeCount = Number(existingCount);
+      let runningTradeCount = existingCountMap.get(account.id) ?? 0;
       const snapshotRows: Array<{ demoAccountId: number; balance: string; tradeCount: number; snapshotAt: Date }> = [];
       const accountTradeRows: Array<Record<string, unknown>> = [];
 
@@ -516,11 +552,11 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
         const positionSizePct = riskPct * leverage;
         let effectivePositionPct = positionSizePct;
         if (account.pyramidingEnabled) {
-          const pyramidWindow = new Date(Number(signal.signalDate) - 7 * 24 * 60 * 60 * 1000);
-          const [{ pyramidCount }] = await db.select({ pyramidCount: sql`count(*)` }).from(demoTrades).where(
-            and(eq(demoTrades.demoAccountId, account.id), eq(demoTrades.pair, signal.marketName), sql`${demoTrades.openedAt} >= ${pyramidWindow}`)
-          );
-          const existingEntries = Number(pyramidCount);
+          const pyramidWindow = Number(signal.signalDate) - 7 * 24 * 60 * 60 * 1000;
+          const accountPyramidTrades = pyramidingTradesByAccount.get(account.id) ?? [];
+          const existingEntries = accountPyramidTrades.filter((t) =>
+            (t as any).pair === signal.marketName && Number((t as any).openedAt) >= pyramidWindow
+          ).length;
           const maxEntries = account.pyramidMaxEntries ?? 3;
           if (existingEntries >= maxEntries) continue;
           const scaleFactor = Math.pow(parseFloat(account.pyramidScalePct ?? "0.50"), existingEntries);
@@ -543,6 +579,12 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
           qualityScore: signal.qualityScore, qualityTier: signal.qualityTier,
           maxProfitPct: String(maxProfitPct), openedAt, closedAt,
         });
+        // Feed new trades into the in-memory pyramiding cache so same-batch
+        // subsequent signals for the same pair count them correctly.
+        if (account.pyramidingEnabled) {
+          const cache = pyramidingTradesByAccount.get(account.id);
+          if (cache) cache.push(accountTradeRows[accountTradeRows.length - 1] as any);
+        }
         currentBalance += pnl;
         runningTradeCount++;
         snapshotRows.push({ demoAccountId: account.id, balance: String(currentBalance.toFixed(2)), tradeCount: runningTradeCount, snapshotAt: closedAt });

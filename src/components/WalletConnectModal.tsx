@@ -117,6 +117,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasSaved, setHasSaved] = useState(false);
+  const hasSavedRef = useRef(false);
   const [ledgerTransport, setLedgerTransport] = useState<LedgerTransport | null>(null);
   const [directAddress, setDirectAddress] = useState<string | null>(null);
   const [connectKitAvailable, setConnectKitAvailable] = useState<boolean | null>(null);
@@ -182,7 +183,8 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
 
   // Persist to DB once we have a real address (from wagmi OR direct connect-kit)
   const persistWallet = useCallback((addr: string, walletId: string, chain: number) => {
-    if (hasSaved) return;
+    if (hasSavedRef.current) return;
+    hasSavedRef.current = true;
     clearConnectTimeout();
     setHasSaved(true);
     setStep("saving");
@@ -335,6 +337,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
     setSelectedWallet(wallet);
     setErrorMsg("");
     setHasSaved(false);
+    hasSavedRef.current = false;
     setDirectAddress(null);
     if (wallet.id === "ledger") {
       setStep("ledger-guide");
@@ -350,6 +353,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
     setSelectedWallet(null);
     setErrorMsg("");
     setHasSaved(false);
+    hasSavedRef.current = false;
     setDirectAddress(null);
     setLedgerTransport(null);
     onClose();
@@ -367,6 +371,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
     setSelectedWallet(null);
     setErrorMsg("");
     setHasSaved(false);
+    hasSavedRef.current = false;
     setDirectAddress(null);
     setLedgerTransport(null);
   }, [isConnected, disconnect, clearConnectTimeout]);

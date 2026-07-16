@@ -1,4 +1,5 @@
 /**
+ * DEPRECATED: Superseded by scripts/unified-backtest.mjs (8-strategy comparison).
  * Backtest: pull every coinlegs buy signal from D1, fetch real Binance
  * klines for the signal's pair + period, simulate entry → SL → TP, and
  * report verified profit/loss with statistical significance.
