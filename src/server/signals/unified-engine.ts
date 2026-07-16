@@ -1,4 +1,12 @@
 /**
+ * @deprecated Use TreeGateEngine from ./tree-gate-engine.ts instead.
+ *
+ * This engine uses 8 hand-weighted component scores that were tuned to
+ * meta-v20 feature importances, but the classifier.txt tree analysis shows
+ * that only TWO conditions (h4_bb_pos and m15_bb_pos) account for 77.4%
+ * of all root splits. The tree-gate engine replaces this with pure
+ * decision-tree logic extracted from the LightGBM ensemble.
+ *
  * Unified Signal Engine — composites ALL signal sources into a single
  * multi-timeframe, multi-indicator scoring system.
  *
@@ -27,9 +35,11 @@ import type { Candle } from "./indicators";
 
 /* ─── Exported Types ─────────────────────────────────────────────────── */
 
+/** @deprecated Use SignalGate from ./tree-gate-engine.ts instead */
 export type SignalRegime = "OVERSOLD_REVERSAL" | "MOMENTUM_CONTINUATION";
 export type SignalDirection = "long" | "short";
 
+/** @deprecated Use TreeGatedSignal from ./tree-gate-engine.ts instead */
 export interface UnifiedSignalResult {
   symbol: string;
   timeframe: string;
@@ -61,6 +71,7 @@ export interface UnifiedSignalResult {
   metadata: Record<string, number>;
 }
 
+/** @deprecated Config moved to TreeGateFeatures in ./tree-gate-engine.ts */
 export interface UnifiedEngineConfig {
   /** Minimum composite score to emit signal (0-100, default 65) */
   minCompositeScore: number;
@@ -454,6 +465,7 @@ interface IndicatorSnapshot {
 
 /* ─── UnifiedEngine Class ────────────────────────────────────────────── */
 
+/** @deprecated Use treeGateEngine from ./tree-gate-engine.ts instead */
 export class UnifiedEngine {
   private config: UnifiedEngineConfig;
 
@@ -1047,3 +1059,11 @@ export class UnifiedEngine {
     return { ...this.config };
   }
 }
+
+/* ─── Re-exports from Tree-Gate Engine ────────────────────────────────
+ * New signals should use the tree-gate engine directly:
+ *   import { treeGateEngine, treeGateEvaluate } from "./tree-gate-engine";
+ * These re-exports provide a migration path from the deprecated UnifiedEngine. */
+
+export type { SignalGate, TreeGatedSignal, TreeGateEngine, TreeGateFeatures } from "./tree-gate-engine";
+export { treeGateEngine, treeGateEvaluate } from "./tree-gate-engine";
