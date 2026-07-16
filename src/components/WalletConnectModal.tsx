@@ -268,7 +268,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
 
     void connectAsync({ connector })
       .then((result) => {
-        const account = Array.isArray(result.accounts) ? result.accounts[0] : result.account;
+        const account = result.accounts?.[0] ?? undefined;
         if (account) {
           persistWallet(String(account), wallet.id, Number(result.chainId ?? chainId ?? 1));
         }

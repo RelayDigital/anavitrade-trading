@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BINANCE_SPOT = 'https://api.binance.com';
 const BINANCE_FUTURES = 'https://fapi.binance.com';
+const BINANCE_API_KEY = process.env.BINANCE_API_KEY?.trim() || "";
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -26,7 +27,8 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function fetchTopPairs(limit = 50) {
   console.log(`Fetching top ${limit} USDT perpetual pairs...`);
-  const res = await fetch(`${BINANCE_FUTURES}/fapi/v1/exchangeInfo`);
+  const headers = BINANCE_API_KEY ? { "X-MBX-APIKEY": BINANCE_API_KEY } : {};
+  const res = await fetch(`${BINANCE_FUTURES}/fapi/v1/exchangeInfo`, { headers });
   const data = await res.json();
   const pairs = data.symbols
     .filter(s => s.symbol.endsWith('USDT') && s.status === 'TRADING' && s.contractType === 'PERPETUAL')
@@ -47,8 +49,9 @@ async function fetchTopPairs(limit = 50) {
 
 async function fetchKlines(symbol, interval, limit = 500) {
   const params = new URLSearchParams({ symbol, interval, limit: String(limit) });
+  const headers = BINANCE_API_KEY ? { "X-MBX-APIKEY": BINANCE_API_KEY } : {};
   const url = `${BINANCE_SPOT}/api/v3/klines?${params}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`${symbol}: HTTP ${res.status}`);
   const raw = await res.json();
   return raw.map(c => ({

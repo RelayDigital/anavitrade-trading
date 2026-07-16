@@ -51,6 +51,7 @@ import argparse
 import sys
 import pickle
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -61,10 +62,23 @@ logger = logging.getLogger(__name__)
 
 # -- path resolution ---------------------------------------------------------
 
-MODEL_DIR = (
+_DEFAULT_MODEL_DIR = (
     Path(__file__).resolve().parent.parent
     / "data" / "models" / "meta-v20-mtf-context"
 )
+def _resolve_model_dir() -> Path:
+    """Resolve model directory, checking env var first, then well-known paths."""
+    env = os.environ.get("ANAVITRADE_MODEL_DIR")
+    if env:
+        return Path(env)
+    # Check VPS production location
+    vps_path = Path("/opt/anavitrade/models")
+    if vps_path.exists() and (vps_path / "classifier.pkl").exists():
+        return vps_path
+    # Fall back to local development path
+    return _DEFAULT_MODEL_DIR
+
+MODEL_DIR = _resolve_model_dir()
 DEFAULT_THRESHOLD = 0.82
 
 FEATURE_NAMES_CACHE: List[str] | None = None

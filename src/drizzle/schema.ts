@@ -536,3 +536,25 @@ export const analysisRuns = sqliteTable("analysis_runs", {
 
 export type AnalysisRun = typeof analysisRuns.$inferSelect;
 export type InsertAnalysisRun = typeof analysisRuns.$inferInsert;
+
+/* ─── ML Inferences ────────────────────────────────────────────────────
+ * Stores every MTF model inference result for audit trail and calibration
+ * data collection. Recorded by the inference router on every TRADE/SKIP
+ * decision. Used to build the 500+ live prediction + outcome dataset
+ * needed for future isotonic calibration. */
+
+export const mlInferences = sqliteTable("ml_inferences", {
+  id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+  tradeIntentId: integer({ mode: "number" }),
+  symbol: text().notNull(),
+  direction: text().notNull(),
+  proba: text().notNull(),
+  threshold: text().notNull(),
+  decision: text().notNull(),
+  regime: text().notNull(),
+  featureVectorJson: text(),
+  createdAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+});
+
+export type MlInference = typeof mlInferences.$inferSelect;
+export type InsertMlInference = typeof mlInferences.$inferInsert;

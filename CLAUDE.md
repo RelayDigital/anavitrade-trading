@@ -242,3 +242,45 @@ The OpenAI Codex plugin (`codex@openai-codex`) is installed and enabled. Use it 
 - **Claude agents handle**: Architecture, security analysis, test design, synthesis
 
 Always decompose large work across both systems. Run independent work in parallel. Synthesize at the end.
+
+## Phase 1 ML Unification (2026-07-16)
+
+### Files Created
+- `src/server/signals/unified-engine.ts` — Dual-regime signal engine combining 8 signal sources
+  - 6 component scores weighted by meta-v20 feature importance
+  - OVERSOLD_REVERSAL + MOMENTUM_CONTINUATION regime classification
+- `src/server/ml/inference-router.ts` — tRPC inference endpoint with LightGBM rule-based scoring
+  - 30-feature MTF vector builder (15m + 1h + 4h)
+  - tRPC mutation `inference.inferTrade` with D1 persistence
+- `scripts/ml/production-backtest.py` — Chronological walk-forward backtest harness
+- `scripts/ml/build-training-data-expanded.py` — 65-feature expanded dataset builder (5m + macro)
+- `scripts/data/training-data-mtf-expanded.json` — Expanded training data (2,492 rows from 50 pairs)
+
+### Files Modified
+- `src/drizzle/schema.ts` — Added `ml_inferences` D1 table
+- `src/server/routers.ts` — Added `inference` tRPC router
+- `scripts/fetch-klines-mtf.mjs` — BINANCE_API_KEY header support
+- `scripts/ml/infer.py` — Auto-detect VPS model path
+- `scripts/deploy-model.sh` — Fixed smoke test
+- `scripts/ml/vps-train.sh` — Graceful fallback on fetch failure
+
+### Deployment Status
+- Worker deployed to anavitrade-trading.erhazeariel.workers.dev
+- Model deployed to VPS at /opt/anavitrade/models/
+- Cron: 0 */6 * * * (every 6 hours training cycle)
+- Health check: OK
+
+### Model Performance
+- meta-v20 MTF context model: 30 features, LightGBM 300 estimators, threshold 0.82
+- Production backtest: raw probs max at 0.77 (below 0.82 threshold), no trades at any threshold
+- Target (65% WR, PF>=3) NOT MET — data window too short (~5 days per pair)
+- ATR verification PASSED on BTC 1h (mean 386.86)
+- Top features confirmed: h4_bb_pos(1472), m15_macd(1191), h4_bb_width(1029)
+
+### Known Issues
+- 15m kline data window (490 bars, ~5 days) is insufficient for meaningful walk-forward
+- XMRUSDT spans 2024-2026, creating chronological split imbalance
+- Meta-v20 model card 80% WR was on only 10 trades (not statistically significant)
+- No isotonic calibration available — inference uses raw LightGBM probabilities
+- Rule-based fallback never fires (max prob 0.77 < threshold 0.82)
+- VPS IP geo-blocked by Binance — requires API key for live kline fetch

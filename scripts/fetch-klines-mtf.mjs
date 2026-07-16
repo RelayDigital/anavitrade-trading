@@ -23,6 +23,9 @@ const BINANCE_FUTURES = 'https://fapi.binance.com';
 
 const TIMEFRAMES = ['4h', '1h', '15m'];
 
+/** Binance API key from env — helps bypass geo-block on VPS with static US IP. */
+const BINANCE_API_KEY = process.env.BINANCE_API_KEY?.trim() || "";
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -55,7 +58,8 @@ function clipToEnd(klines, latestMs) {
 
 async function fetchTopPairs(limit = 50) {
   console.log(`Fetching top ${limit} USDT perpetual pairs...`);
-  const res = await fetch(`${BINANCE_FUTURES}/fapi/v1/exchangeInfo`);
+  const headers = BINANCE_API_KEY ? { "X-MBX-APIKEY": BINANCE_API_KEY } : {};
+  const res = await fetch(`${BINANCE_FUTURES}/fapi/v1/exchangeInfo`, { headers });
   if (!res.ok) throw new Error(`exchangeInfo: HTTP ${res.status}`);
   const data = await res.json();
 
@@ -88,8 +92,9 @@ async function fetchKlines(symbol, interval, limit = 500) {
     interval,
     limit: String(limit),
   });
+  const headers = BINANCE_API_KEY ? { "X-MBX-APIKEY": BINANCE_API_KEY } : {};
   const url = `${BINANCE_SPOT}/api/v3/klines?${params}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`${symbol} ${interval}: HTTP ${res.status}`);
   const raw = await res.json();
   return raw.map((c) => ({

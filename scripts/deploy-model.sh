@@ -152,8 +152,10 @@ import sys
 sys.path.insert(0, '/opt/anavitrade')
 from infer import InferenceEngine
 engine = InferenceEngine()
-r = engine.predict({'bb_sqz_product': 0, 'h1_rsi': 50, 'h4_rsi': 50, 'm15_rsi': 50})
-print(f'  infer.py import OK — partial predict: proba={r[\"proba\"]}')
+# Build zero vector from model's feature names
+dummy = {f: 0 for f in engine.feature_names}
+r = engine.predict(dummy)
+print(f'  infer.py import OK — zero predict: proba={r[\"proba\"]} -> {r[\"decision\"]}')
 "
 REMOTE_CHECKS
 fi

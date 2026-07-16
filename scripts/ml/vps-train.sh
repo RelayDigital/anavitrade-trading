@@ -18,15 +18,21 @@ DATE=$(date +%Y%m%d-%H%M)
 
 echo "=== Anavitrade Training Pipeline — $DATE ==="
 
-# 1. Fetch klines from Binance (fresh data to local JSON for training pipeline)
-echo "[1/4] Fetching klines from Binance..."
-node scripts/fetch-klines-mtf.mjs --pairs 20 --bars 300
-echo "  Klines fetched"
+# 1. Fetch klines from Binance (VPS has static IP — may be geo-blocked; handle gracefully)
+echo "[1/4] Fetching klines from Binance (safe — continues on failure)..."
+if node scripts/fetch-klines-mtf.mjs --pairs 20 --bars 300; then
+  echo "  Klines fetched successfully"
+else
+  echo "  ⚠ Fetch failed (geo-blocked or rate-limited) — using existing cached data"
+fi
 
-# 2. Fetch macro context
+# 2. Fetch macro context (graceful — data may already exist)
 echo "[2/4] Fetching macro context..."
-python3 scripts/ml/fetch-macro.py --update
-echo "  Macro context updated"
+if python3 scripts/ml/fetch-macro.py --update; then
+  echo "  Macro context updated"
+else
+  echo "  ⚠ Macro fetch failed — using existing cached data"
+fi
 
 # 3. Build training data + train model
 echo "[3/4] Building training data + training..."

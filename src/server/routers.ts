@@ -35,6 +35,7 @@ import {
 import { asterRouter } from "./aster/router";
 import { cexRouter } from "./cex/router";
 import { execRouter } from "./execution/router";
+import { inferenceRouter } from "./ml/inference-router";
 
 async function signSessionToken(userId: number, name: string) {
   const env = getEnv();
@@ -55,6 +56,7 @@ export const appRouter = router({
   aster: asterRouter,
   cex: cexRouter,
   exec: execRouter,
+  inference: inferenceRouter,
 
   /* Auth */
   auth: router({
