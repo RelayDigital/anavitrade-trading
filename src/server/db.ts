@@ -1,6 +1,7 @@
 import { eq, and, desc, asc, sql, inArray, gte, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Env } from "./_core/env";
+import { encryptKey as _encryptKey, decryptKey as _decryptKey } from "./cex/crypto";
 import {
   InsertUser, users,
   demoAccounts, demoTrades,
@@ -35,11 +36,11 @@ export function getDb() {
 }
 
 /* ─── Encryption key ───
-   Derive the AES key from ENCRYPTION_KEY (Cloudflare Secret in production).
-   ENCRYPTION_KEY MUST be set separately from JWT_SECRET — reusing the JWT
-   secret for both JWT signing and API-key encryption is a security risk.
-   In local dev, set ENCRYPTION_KEY in wrangler.toml [vars] or in .env. */
-function deriveEncryptionSecret(): string {
+   Delegates to the shared crypto module (src/server/cex/crypto.ts).
+   This file provides Worker-friendly wrappers that read ENCRYPTION_KEY
+   from the Worker env, while the crypto module itself is portable. */
+
+function getEncryptionKeyOrThrow(): string {
   const encryptionKey = _env?.ENCRYPTION_KEY;
   if (!encryptionKey) {
     throw new Error(
@@ -49,38 +50,15 @@ function deriveEncryptionSecret(): string {
       "Do NOT reuse JWT_SECRET as the encryption key."
     );
   }
-  return encryptionKey.slice(0, 32).padEnd(32, "0");
-}
-
-async function getEncryptionKey(secret: string): Promise<CryptoKey> {
-  const keyBytes = new TextEncoder().encode(secret.padEnd(32).slice(0, 32));
-  return crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  return encryptionKey;
 }
 
 export async function encryptKey(plaintext: string): Promise<string> {
-  const secret = deriveEncryptionSecret();
-  const iv = crypto.getRandomValues(new Uint8Array(12)); // GCM standard 96-bit IV
-  const key = await getEncryptionKey(secret);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    new TextEncoder().encode(plaintext)
-  );
-  // GCM appends a 16-byte auth tag to the ciphertext
-  const combined = new Uint8Array(12 + new Uint8Array(encrypted).length);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(encrypted), 12);
-  return btoa(String.fromCharCode(...combined));
+  return _encryptKey(plaintext, getEncryptionKeyOrThrow());
 }
 
 export async function decryptKey(ciphertext: string): Promise<string> {
-  const secret = deriveEncryptionSecret();
-  const raw = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
-  const iv = raw.slice(0, 12);
-  const encrypted = raw.slice(12); // ciphertext includes the GCM auth tag
-  const key = await getEncryptionKey(secret);
-  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
-  return new TextDecoder().decode(decrypted);
+  return _decryptKey(ciphertext, getEncryptionKeyOrThrow());
 }
 
 /* Web Crypto password hashing via PBKDF2 */
@@ -291,6 +269,13 @@ export async function getOrCreateDemoAccountForUser(
 
   const now = new Date();
   const capital = opts?.startingCapital ?? "10000.00";
+
+  // Seed lastSyncedSignalId to the current max signal id so the demo only picks
+  // up signals that arrive AFTER account creation — zero-trade clean start.
+  const [maxSignal] = await db.select({ maxId: sql`COALESCE(MAX(${coinlegsSignals.id}), 0)` as any })
+    .from(coinlegsSignals);
+  const seedSyncId = (maxSignal as any)?.maxId ?? 0;
+
   await db.insert(demoAccounts).values({
     username: opts?.username ?? `user_${userId}`,
     email: opts?.email ?? `user_${userId}@anavitrade.demo`,
@@ -305,6 +290,7 @@ export async function getOrCreateDemoAccountForUser(
     pyramidingEnabled: false,
     pyramidMaxEntries: 3,
     pyramidScalePct: "0.50",
+    lastSyncedSignalId: seedSyncId,
     createdAt: now,
     updatedAt: now,
   } as any);
@@ -337,8 +323,8 @@ export async function getDisplayMode(userId: number): Promise<"live" | "demo"> {
   const db = getDb();
   const result = await db.select({ displayMode: liveAccounts.displayMode })
     .from(liveAccounts).where(eq(liveAccounts.userId, userId)).limit(1);
-  if (result.length === 0) return "live";
-  return (result[0].displayMode as "live" | "demo") ?? "live";
+  if (result.length === 0) return "demo";
+  return (result[0].displayMode as "live" | "demo") ?? "demo";
 }
 
 export async function setDisplayMode(userId: number, mode: "live" | "demo"): Promise<void> {

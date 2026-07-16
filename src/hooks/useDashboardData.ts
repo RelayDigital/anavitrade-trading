@@ -61,7 +61,7 @@ export function useDashboardData() {
 
   // Display mode
   const { data: displayModeData, refetch: refetchDisplayMode } = trpc.liveAccount.getDisplayMode.useQuery();
-  const currentMode = displayModeData?.mode ?? "live";
+  const currentMode = displayModeData?.mode ?? "demo";
   const isDemoMode = currentMode === "demo";
 
   const setDisplayMode = trpc.liveAccount.setDisplayMode.useMutation({
@@ -74,7 +74,7 @@ export function useDashboardData() {
 
   // Unified balance: aggregated across all connected CEX exchanges + cached on live_accounts
   const { data: unifiedBalance } = trpc.cex.getUnifiedBalance.useQuery(undefined, {
-    enabled: anyConnected, // only fetch when user has at least one connection
+    enabled: true, // always fetch — live dashboard needs it regardless of connection state
     refetchInterval: 60_000, // refresh every minute
   });
 

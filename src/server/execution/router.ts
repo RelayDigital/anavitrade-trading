@@ -1,11 +1,24 @@
 import { z } from "zod";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb, writeAuditLog } from "../db";
-import { executionJobs, tradeIntents } from "../../drizzle/schema";
+import { executionJobs, orderEvents, tradeIntents } from "../../drizzle/schema";
 import { createExecutionJobsForIntent } from "./dispatch";
+import { AsterExecutionAdapter } from "../aster/adapter";
 import { isGlobalKill, setGlobalKill } from "./riskEngine";
+
+
+function terminalJobStatus(status: string): boolean {
+  return ["filled", "rejected", "cancelled", "canceled", "error", "skipped"].includes(status);
+}
+
+function mappedJobStatus(status: string): "submitted" | "filled" | "rejected" | "cancelled" {
+  if (status === "filled") return "filled";
+  if (status === "cancelled") return "cancelled";
+  if (status === "rejected") return "rejected";
+  return "submitted";
+}
 
 export const execRouter = router({
   /** Global kill switch state (admin visibility). */
@@ -40,7 +53,7 @@ export const execRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
-      await db.insert(tradeIntents).values({
+      const [intent] = await db.insert(tradeIntents).values({
         source: input.source,
         externalSignalId: input.externalSignalId ?? null,
         symbol: input.symbol,
@@ -53,10 +66,7 @@ export const execRouter = router({
         takeProfitPrice: input.takeProfitPrice ?? null,
         status: "created",
         createdBy: `admin:${ctx.user.id}`,
-      } as any);
-
-      const [intent] = await db.select().from(tradeIntents)
-        .orderBy(desc(tradeIntents.id)).limit(1);
+      } as any).returning();
       if (!intent) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Intent not created." });
 
       const result = await createExecutionJobsForIntent(intent.id);
@@ -79,5 +89,83 @@ export const execRouter = router({
         .where(eq(executionJobs.userId, ctx.user.id))
         .orderBy(desc(executionJobs.queuedAt))
         .limit(input.limit);
+    }),
+
+  syncAsterJob: protectedProcedure
+    .input(z.object({ jobId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [job] = await db.select().from(executionJobs)
+        .where(and(eq(executionJobs.id, input.jobId), eq(executionJobs.userId, ctx.user.id)))
+        .limit(1);
+      if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Execution job not found." });
+      if (job.provider !== "aster" || !job.asterAgentAccountId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only Aster jobs can be synced here." });
+      }
+      if (!job.orderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster job has no order id yet." });
+
+      const [intent] = await db.select().from(tradeIntents)
+        .where(eq(tradeIntents.id, job.tradeIntentId))
+        .limit(1);
+      const adapter = new AsterExecutionAdapter(job.asterAgentAccountId);
+      const receipt = intent?.stopLossPrice && intent?.takeProfitPrice
+        ? await adapter.queryStrategyOrder(job.orderId)
+        : await adapter.queryOrder(job.symbol, job.orderId);
+      const status = mappedJobStatus(receipt.status);
+      const now = Date.now();
+      await db.update(executionJobs).set({
+        status,
+        ...(status === "filled" ? { filledAt: now } : {}),
+        ...(status === "cancelled" ? { cancelledAt: now } : {}),
+        updatedAt: now,
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id,
+        provider: "aster",
+        eventType: `sync:${receipt.status}`,
+        payloadJson: JSON.stringify({ raw: receipt.raw ?? {} }),
+        occurredAt: now,
+      } as any);
+      return { jobId: job.id, status, receipt };
+    }),
+
+  cancelAsterJob: protectedProcedure
+    .input(z.object({ jobId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [job] = await db.select().from(executionJobs)
+        .where(and(eq(executionJobs.id, input.jobId), eq(executionJobs.userId, ctx.user.id)))
+        .limit(1);
+      if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Execution job not found." });
+      if (job.provider !== "aster" || !job.asterAgentAccountId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only Aster jobs can be cancelled here." });
+      }
+      if (!job.orderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster job has no order id yet." });
+      if (terminalJobStatus(job.status)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Execution job is already terminal." });
+      }
+
+      const [intent] = await db.select().from(tradeIntents)
+        .where(eq(tradeIntents.id, job.tradeIntentId))
+        .limit(1);
+      if (intent?.stopLossPrice && intent?.takeProfitPrice) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Strategy-order cancellation is not wired; sync status and manage from Aster until provider cancel endpoint is integrated." });
+      }
+      const receipt = await new AsterExecutionAdapter(job.asterAgentAccountId).cancelOrder(job.orderId, job.symbol);
+      const status = mappedJobStatus(receipt.status) === "filled" ? "filled" : "cancelled";
+      const now = Date.now();
+      await db.update(executionJobs).set({
+        status,
+        ...(status === "filled" ? { filledAt: now } : { cancelledAt: now }),
+        updatedAt: now,
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id,
+        provider: "aster",
+        eventType: receipt.status === "filled" ? "filled" : "cancelled",
+        payloadJson: JSON.stringify({ raw: receipt.raw ?? {} }),
+        occurredAt: now,
+      } as any);
+      return { jobId: job.id, status, receipt };
     }),
 });

@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-07-15T19:47:50.341Z",
+  "testEmail": "e2etest+1784144825859@anavitrade.test",
+  "results": {
+    "passed": [
+      "Home page loaded",
+      "Home page shows brand content",
+      "Register page loaded",
+      "Filled name",
+      "Filled email",
+      "Filled password",
+      "Filled confirm password",
+      "Dashboard reached (existing session)",
+      "No browser console errors",
+      "No unhandled page errors"
+    ],
+    "failed": [],
+    "warnings": [
+      {
+        "name": "Registration",
+        "detail": "Unexpected state after submit"
+      },
+      {
+        "name": "Dashboard greeting",
+        "detail": "No 'Welcome back' found"
+      },
+      {
+        "name": "Dashboard state",
+        "detail": "Could not find any demo indicators on dashboard"
+      },
+      {
+        "name": "Live/Demo toggle",
+        "detail": "Toggle not visible or accessible"
+      },
+      {
+        "name": "Aster panel",
+        "detail": "No Aster execution panel features found on dashboard"
+      },
+      {
+        "name": "Activation card",
+        "detail": "Could not find 'Activate DEX Execution' card"
+      },
+      {
+        "name": "Aster onboarding",
+        "detail": "Could not find Aster-related content"
+      }
+    ]
+  },
+  "trpcErrors": [],
+  "consoleErrors": [],
+  "pageErrors": [],
+  "artifactsDir": "/home/ariel/anavitrade-trading/e2e-artifacts"
+}

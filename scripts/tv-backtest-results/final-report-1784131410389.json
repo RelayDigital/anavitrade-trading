@@ -1,0 +1,38 @@
+{
+  "config": {
+    "timeframe": "4h",
+    "symbolCount": 1
+  },
+  "results": [
+    {
+      "symbol": "BINANCE:ARBUSDT",
+      "timeframe": "4h",
+      "timestamp": "2026-07-15T16:03:30.044Z",
+      "netProfit": 2.5387741814474794,
+      "netProfitPercent": 0.00025387741814474795,
+      "grossProfit": 4143.687712065699,
+      "grossLoss": 4141.148937884252,
+      "profitFactor": 1.0006130603413517,
+      "maxDrawdown": 1272.8042426123993,
+      "maxDrawdownPercent": 0.12066613880729599,
+      "totalTrades": 96,
+      "winningTrades": 27,
+      "losingTrades": 69,
+      "winRate": 0.28125,
+      "sharpeRatio": -0.04751030128753265,
+      "sortinoRatio": -0.08443249080469578,
+      "avgTrade": 0.02644556439,
+      "avgTradePercent": -0.004069981622150479,
+      "largestWin": 574.0460947760001,
+      "largestLoss": 219.15716580990005,
+      "avgBarsInTrade": 22.260416666666668
+    }
+  ],
+  "aggregate": {
+    "avgWinRate": 0.28125,
+    "avgProfitFactor": 1.0006130603413517,
+    "avgSharpe": -0.04751030128753265,
+    "avgMaxDD": 0.12066613880729599,
+    "totalTrades": 96
+  }
+}

@@ -139,6 +139,16 @@ export default function HeroSection() {
                 <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>Best July Signal</p>
               </div>
             </motion.div>
+
+            {/* Simulated data disclaimer */}
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.2, duration: 0.6 }}
+              className="text-[10px] text-muted-foreground/40 mt-4 text-left"
+            >
+              Simulated performance based on real signals. Past results don't guarantee future ones.
+            </motion.p>
           </motion.div>
 
           {/* Right: iPhone Widget on a realistic float shadow */}

@@ -17,7 +17,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       "/api": {
-        target: "http://localhost:8787",
+        target: process.env.VITE_API_TARGET || "https://anavitrade-trading.erhazeariel.workers.dev",
         changeOrigin: true,
         rewrite: (path) => path,
       },

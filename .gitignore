@@ -10,3 +10,14 @@ scripts/*.json
 __pycache__/
 .codex/
 .vercel
+
+# ML training data (too large for GitHub — generated locally)
+scripts/data/training-data-*.json
+scripts/data/klines-*.json
+scripts/data/macro-context.json
+
+# Model binaries (keep in git-lfs or deploy separately)
+scripts/data/models/*/classifier.pkl
+scripts/data/models/*/regressor.pkl
+scripts/data/models/*/calibrator.pkl
+scripts/data/models/*/*.pkl

@@ -1,0 +1,22 @@
+{
+  "h4_bb_width_pct": {
+    "direction": "higher=worse",
+    "correlation": -0.6976
+  },
+  "mtf_level_confluence_count": {
+    "direction": "higher=worse",
+    "correlation": -0.863
+  },
+  "ct_ao_value": {
+    "direction": "higher=better",
+    "correlation": 0.2413
+  },
+  "h4_ma25_slope": {
+    "direction": "higher=better",
+    "correlation": 0.1629
+  },
+  "h4_bb_squeeze_intensity": {
+    "direction": "higher=better",
+    "correlation": 0.5022
+  }
+}

@@ -1,47 +1,70 @@
-# Task Plan: Production Pipeline Fix
+# Task Plan: Anavitrade — Current State (2026-07-16)
 
-## Goal
-Fix the blocking D1 Date serialization bug so the scraper can insert signals, then re-enable all pipeline stages (analysis engine, outcome validation, fee crystallization, SMC dispatch).
+## Status: BETA (operational with known gaps)
 
-## Current Status
-- **Phase 1 (D1 Fix):** PARTIAL — schema fixed, D1 raw binding works, but confluence SELECT still passes `new Date()` → ISO string error
-- **Phase 2 (Pipeline):** PENDING — bridge disabled, SMC dispatch disabled, analysis engine never fired (0 runs)
-- **Phase 3 (Seeding):** PENDING — need to trigger engines after fix
+### Working ✅
+- Worker deployed at anavitrade-trading.erhazeariel.workers.dev
+- 2,347 Coinlegs signals in D1
+- Cron firing every 60s (native signals, scraper, demo sync, outcome, fee, analysis)
+- 8 CEX exchange clients (Binance, Bybit, OKX, Kraken, KuCoin, Gate, Coinbase, Bitunix)
+- Aster DEX v3 client (OTOCO orders, agent approval gates, fee-rate validation)
+- Internal API for VPS↔Worker (pending-intents, active-connections, kill-state, report-execution)
+- VPS at 5.161.229.209 running execution poll loop (testnet mode)
+- TradingView Desktop connected via CDP (port 9222)
+- TradingView MCP installed and configured
+- Meta-v6 ML model trained (LightGBM + isotonic cal + KMeans + adversarial)
+- 62-feature ML pipeline with multi-TF training data
 
-## Phases
+### Blocking 🟡
+- **klines table: 1 row** — analysis engine generates 0 signals because no OHLCV data
+- Analysis engine runs but can't compute indicators → 0 analysis_signals → 0 trade_intents
+- Root cause: Cloudflare 50-subrequest cap prevents kline fetching from Worker
 
-### Phase 1: Fix Remaining Date Object
-- [ ] `grep -rn "new Date(" src/server/coinlegs-scraper.ts | grep -v "toISOString\|\.getTime"`
-- [ ] Fix confluence SELECT on line 238: replace `new Date(...)` with `Date.now()`
-- [ ] Deploy and test: `curl -X POST /api/scraper/run` → expect `signalsInserted > 0`
+### In Progress
+- [~] Seed klines into D1 (scripts/seed-klines.mjs running)
+- [~] Rebuild VPS Docker container with updated execution server
 
-### Phase 2: Re-enable Bridge & Dispatch
-- [ ] Fix `analysis_signals` schema: change `createdAt`, `updatedAt` to `number` mode
-- [ ] Re-enable `bridgeCoinlegsSignals` call in scraper
-- [ ] Re-enable SMC structural validation + dispatch in scraper
-- [ ] Deploy and confirm end-to-end: signals → analysis_signals → TradeIntent → executionJobs
+### Immediate Next Steps
+1. Seed 10 pairs × 100 bars of 4h klines → trigger analysis engine
+2. After klines populate: analysis engine produces signals → intents flow to VPS
+3. Seed 1h klines for SMC patterns (4x more signals than 4h)
+4. Switch EXECUTION_MODE=production after 48h validation
 
-### Phase 3: Prime All Engines
-- [ ] Trigger `POST /api/analysis/run` → confirm `analysis_runs` populated
-- [ ] Trigger `POST /api/signals/generate` → confirm native generator creates intents
-- [ ] Trigger `POST /api/outcome/validate` → confirm `outcomeValidated` increments
-- [ ] Trigger `POST /api/fee/crystallize` → confirm `fee_payments` created
+### ML Next Steps
+1. Retrain metacognitive model on full 40K MTF rows (scripts/data/klines-mtf.json has 50 pairs)
+2. Add 1h SMC pattern features as amplifiers (not prerequisites)
+3. Run backtest via TradingView CDP (TV Desktop running at :9222)
+4. Target: 3+ PF from calibrated model (no arbitrary scoring)
 
-### Phase 4: Production Hardening (if needed)
-- [ ] Set real `ENCRYPTION_KEY` and `JWT_SECRET` via `npx wrangler secret put`
+### Demo Mode
+- Demo portfolio should start from 0 trades at user registration
+- Live/Demo toggle should show different dashboards without gating order submission
+
+### Infrastructure
 - [ ] Upgrade wrangler: `npm install --save-dev wrangler@4`
-- [ ] Verify `GET /api/signals` returns populated signals
+- [ ] Set up Redis-backed rate limiting on VPS
+- [ ] Add Prometheus alerts for execution failures
+- [ ] Wire Grafana dashboards to Prometheus
 
-## Key Commands for Next Agent
+## Recent Commits (since July 12)
+- 199dcad: Aster v3 + internal API + UI polish (current HEAD)
+- 0681b2b: fix aster activation flow
+- 2fc9c4c: fix klines inserts — chunked at 90 rows
+- 607363b: fix align aster execution with futures v3
+- fdbf722: remove Coinlegs brand from frontend
+
+## Recovery Next Steps
 ```bash
-# Deploy latest
-pnpm check && pnpm build && npx wrangler deploy
+# Check kline seed
+npx wrangler d1 execute anavitrade-db --remote --command "SELECT COUNT(*) FROM klines"
 
-# Test scraper
-curl -s -H "x-admin-api-key: dev-secret-key-anavitrade-2026" -X POST \
-  "https://anavitrade-trading.erhazeariel.workers.dev/api/scraper/run"
+# Trigger analysis after klines exist
+curl -s -H "x-admin-api-key: anavitrade-admin-key-2026-secure" -X POST \
+  "https://anavitrade-trading.erhazeariel.workers.dev/api/analysis/run"
 
-# Check DB state
-npx wrangler d1 execute anavitrade-db --remote \
-  --command "SELECT COUNT(*) FROM coinlegs_signals; SELECT COUNT(*) FROM analysis_signals;"
+# Check VPS execution server
+curl http://5.161.229.209:9090/health
+
+# Seed 1h klines (SMC patterns fire 4x more)
+node scripts/seed-klines.mjs --pairs 10 --bars 300 --timeframe 1h
 ```

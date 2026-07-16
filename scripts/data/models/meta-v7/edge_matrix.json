@@ -1,0 +1,74 @@
+{
+  "0": {
+    "cluster": 0,
+    "trades": 3716,
+    "win_rate": 0.2516,
+    "avg_pnl_r": -0.1747,
+    "expected_value": -0.1747,
+    "pnl_std": 1.3108,
+    "sharpe_like": -0.1333,
+    "edge_multiplier": 0.8179,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  },
+  "1": {
+    "cluster": 1,
+    "trades": 5764,
+    "win_rate": 0.2767,
+    "avg_pnl_r": -0.1079,
+    "expected_value": -0.1079,
+    "pnl_std": 1.338,
+    "sharpe_like": -0.0807,
+    "edge_multiplier": 0.8847,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  },
+  "2": {
+    "cluster": 2,
+    "trades": 5809,
+    "win_rate": 0.3274,
+    "avg_pnl_r": 0.0056,
+    "expected_value": 0.0056,
+    "pnl_std": 1.4039,
+    "sharpe_like": 0.004,
+    "edge_multiplier": 0.9982,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  },
+  "3": {
+    "cluster": 3,
+    "trades": 15892,
+    "win_rate": 0.3279,
+    "avg_pnl_r": 0.0346,
+    "expected_value": 0.0346,
+    "pnl_std": 1.4006,
+    "sharpe_like": 0.0247,
+    "edge_multiplier": 1.0272,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  },
+  "4": {
+    "cluster": 4,
+    "trades": 30495,
+    "win_rate": 0.3305,
+    "avg_pnl_r": 0.0303,
+    "expected_value": 0.0303,
+    "pnl_std": 1.4042,
+    "sharpe_like": 0.0215,
+    "edge_multiplier": 1.0229,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  },
+  "5": {
+    "cluster": 5,
+    "trades": 26484,
+    "win_rate": 0.3329,
+    "avg_pnl_r": 0.0157,
+    "expected_value": 0.0157,
+    "pnl_std": 1.4111,
+    "sharpe_like": 0.0111,
+    "edge_multiplier": 1.0083,
+    "overall_ev": 0.0074,
+    "overall_wr": 0.3237
+  }
+}

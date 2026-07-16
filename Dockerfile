@@ -1,0 +1,24 @@
+FROM node:22-alpine AS runtime
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# Copy package manifest and install all deps (--prod for runtime, but keep TypeScript dev for --experimental-transform-types)
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy server source code
+COPY tsconfig.json ./
+COPY src/server/ ./src/server/
+COPY src/drizzle/ ./src/drizzle/
+
+# Create data dir for ML models
+RUN mkdir -p /app/data /app/models
+
+EXPOSE 9090
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+  CMD wget -qO- http://localhost:9090/health || exit 1
+
+CMD ["node", "--experimental-transform-types", "src/server/execution/server.ts"]

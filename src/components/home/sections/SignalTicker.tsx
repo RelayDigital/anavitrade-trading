@@ -47,6 +47,7 @@ export default function SignalTicker() {
           </div>
         ))}
       </motion.div>
+      <p className="text-[9px] text-muted-foreground/30 text-center mt-1">Simulated signals. Past results don't guarantee future ones.</p>
     </div>
   );
 }

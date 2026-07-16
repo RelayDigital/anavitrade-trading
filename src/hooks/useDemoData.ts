@@ -5,6 +5,7 @@ import { toast } from "sonner";
 /**
  * Demo-specific queries, mutations, and derived portfolio metrics.
  * Fetched only when the dashboard is in demo mode.
+ * Demo starts from zero — no auto-backfill of past signals.
  */
 export function useDemoData(isDemoMode: boolean) {
   const { data: myDemoData } = trpc.demo.getMyDemo.useQuery(undefined, { enabled: isDemoMode });
@@ -13,7 +14,9 @@ export function useDemoData(isDemoMode: boolean) {
 
   const syncDemo = trpc.demo.syncMySignals.useMutation({
     onSuccess: (r) => {
-      toast.success(`${r.tradesCreated} trade${r.tradesCreated !== 1 ? "s" : ""} synced`);
+      if (r.tradesCreated > 0) {
+        toast.success(`${r.tradesCreated} trade${r.tradesCreated !== 1 ? "s" : ""} synced`);
+      }
       refetchDemoTrades();
       refetchDemoSeries();
     },

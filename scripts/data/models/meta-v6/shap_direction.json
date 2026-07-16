@@ -1,0 +1,22 @@
+{
+  "ct_ao_distance_from_zero_atr": {
+    "direction": "higher=worse",
+    "correlation": -0.6525
+  },
+  "h4_bb_squeeze_intensity": {
+    "direction": "higher=better",
+    "correlation": 0.6581
+  },
+  "h4_bb_width_pct": {
+    "direction": "higher=worse",
+    "correlation": -0.6317
+  },
+  "h4_ao_slope": {
+    "direction": "higher=worse",
+    "correlation": -0.3858
+  },
+  "h4_price_in_bb": {
+    "direction": "higher=worse",
+    "correlation": -0.1256
+  }
+}

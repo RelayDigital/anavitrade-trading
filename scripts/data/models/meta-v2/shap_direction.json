@@ -1,0 +1,22 @@
+{
+  "h4_fvg_present": {
+    "direction": "higher=better",
+    "correlation": 0.6068
+  },
+  "h1_atr_ratio": {
+    "direction": "higher=worse",
+    "correlation": -0.3499
+  },
+  "mtf_exit_proximity": {
+    "direction": "higher=worse",
+    "correlation": -0.5999
+  },
+  "h4_atr_percentile": {
+    "direction": "higher=worse",
+    "correlation": -0.4316
+  },
+  "h1_confluence_count": {
+    "direction": "higher=worse",
+    "correlation": -0.92
+  }
+}

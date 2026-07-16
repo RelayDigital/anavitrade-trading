@@ -1,0 +1,17 @@
+{
+  "features": [
+    "trend",
+    "trend_bear",
+    "rsi",
+    "swing_depth",
+    "swing_mag",
+    "vol_z",
+    "atr_pct"
+  ],
+  "n_samples": 1317,
+  "baseline_wr_pct": 44.3,
+  "ml_avg_wr_pct": 46.1,
+  "ml_avg_pf": 2.47,
+  "folds_meeting_goals": "1/5",
+  "note": "Fold 1 (2024\u21922026 train, Jul 2026 test): 78% WR, PF 7.08. Narrow test windows limit ML generalization. More data needed."
+}

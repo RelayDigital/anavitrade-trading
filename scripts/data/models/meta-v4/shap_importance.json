@@ -1,0 +1,174 @@
+[
+  {
+    "feature": "h1_fvg_distance_atr",
+    "mean_abs_shap": 0.23043492346547806
+  },
+  {
+    "feature": "h1_fvg_size_atr",
+    "mean_abs_shap": 0.08459272976550886
+  },
+  {
+    "feature": "ct_bb_width_pct",
+    "mean_abs_shap": 0.07730956834720683
+  },
+  {
+    "feature": "h4_ma25_slope",
+    "mean_abs_shap": 0.07042524230140865
+  },
+  {
+    "feature": "h4_ma_separation_atr",
+    "mean_abs_shap": 0.06222631504474036
+  },
+  {
+    "feature": "h4_atr_percentile",
+    "mean_abs_shap": 0.04882355847073455
+  },
+  {
+    "feature": "mtf_1h_fvg_near_4h_fib_distance",
+    "mean_abs_shap": 0.04695678979804394
+  },
+  {
+    "feature": "h4_swing_distance_atr",
+    "mean_abs_shap": 0.02252400442985573
+  },
+  {
+    "feature": "h4_fib_detected",
+    "mean_abs_shap": 0.016646267303554653
+  },
+  {
+    "feature": "h4_trend_bear",
+    "mean_abs_shap": 0.015552278021953348
+  },
+  {
+    "feature": "h1_fvg_bull",
+    "mean_abs_shap": 0.01526253727350104
+  },
+  {
+    "feature": "h1_fvg_bear",
+    "mean_abs_shap": 0.01517744410933967
+  },
+  {
+    "feature": "h4_trend_bull",
+    "mean_abs_shap": 0.013804536734594875
+  },
+  {
+    "feature": "ct_ao_acceleration",
+    "mean_abs_shap": 0.009440495094872338
+  },
+  {
+    "feature": "ct_volume_ratio",
+    "mean_abs_shap": 0.009144632938978148
+  },
+  {
+    "feature": "ct_bb_squeeze_intensity",
+    "mean_abs_shap": 0.00901759813001551
+  },
+  {
+    "feature": "mtf_level_confluence_count",
+    "mean_abs_shap": 0.00890375304964932
+  },
+  {
+    "feature": "ct_displacement",
+    "mean_abs_shap": 0.007947375051969489
+  },
+  {
+    "feature": "ct_wick_magnitude_atr",
+    "mean_abs_shap": 0.00765474947398166
+  },
+  {
+    "feature": "h1_ob_bull",
+    "mean_abs_shap": 0.007453630681755898
+  },
+  {
+    "feature": "ct_rsi_velocity",
+    "mean_abs_shap": 0.007093884858521081
+  },
+  {
+    "feature": "ct_body_ratio",
+    "mean_abs_shap": 0.007023224074958192
+  },
+  {
+    "feature": "ct_ao_slope",
+    "mean_abs_shap": 0.0063726175639172095
+  },
+  {
+    "feature": "ct_volume_zscore",
+    "mean_abs_shap": 0.0063425012837099925
+  },
+  {
+    "feature": "h1_ob_distance_atr",
+    "mean_abs_shap": 0.0062111541939115465
+  },
+  {
+    "feature": "ct_close_position",
+    "mean_abs_shap": 0.0061390302900137675
+  },
+  {
+    "feature": "h1_ob_size_atr",
+    "mean_abs_shap": 0.006134926529922472
+  },
+  {
+    "feature": "ct_ao_value",
+    "mean_abs_shap": 0.005273701397024915
+  },
+  {
+    "feature": "ct_rsi",
+    "mean_abs_shap": 0.005081678844984225
+  },
+  {
+    "feature": "h4_fib_golden_distance_atr",
+    "mean_abs_shap": 0.004182014058655781
+  },
+  {
+    "feature": "mtf_1h_ob_near_4h_fib_distance",
+    "mean_abs_shap": 0.0028026322922848246
+  },
+  {
+    "feature": "mtf_1h_fvg_near_4h_fib",
+    "mean_abs_shap": 0.0020919926687602976
+  },
+  {
+    "feature": "h1_sweep_depth_atr",
+    "mean_abs_shap": 0.0018067971235885341
+  },
+  {
+    "feature": "h1_smc_confluence_count",
+    "mean_abs_shap": 0.0018012095680694962
+  },
+  {
+    "feature": "h1_sweep_bear",
+    "mean_abs_shap": 0.001272064898566983
+  },
+  {
+    "feature": "h1_ob_bear",
+    "mean_abs_shap": 0.0008809970778796896
+  },
+  {
+    "feature": "h1_choch_bull",
+    "mean_abs_shap": 0.000847543685088776
+  },
+  {
+    "feature": "ct_bb_expanding",
+    "mean_abs_shap": 0.000590360545514293
+  },
+  {
+    "feature": "h1_sweep_bull",
+    "mean_abs_shap": 0.0004431973995400445
+  },
+  {
+    "feature": "h1_choch_bear",
+    "mean_abs_shap": 7.570557022547026e-05
+  },
+  {
+    "feature": "ct_ao_cross_up",
+    "mean_abs_shap": 0.0
+  },
+  {
+    "feature": "ct_ao_cross_down",
+    "mean_abs_shap": 0.0
+  },
+  {
+    "feature": "mtf_1h_ob_near_4h_fib",
+    "mean_abs_shap": 0.0
+  }
+]

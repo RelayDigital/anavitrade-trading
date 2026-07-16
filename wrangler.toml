@@ -1,6 +1,6 @@
 name = "anavitrade-trading"
 main = "src/server/worker.ts"
-compatibility_date = "2026-07-07"
+compatibility_date = "2025-07-18"
 
 [[d1_databases]]
 binding = "DB"
@@ -9,13 +9,12 @@ database_id = "2f30b46a-e457-4691-a309-a3c8e27bbac7"
 
 # Local/dev vars. In production these are set as Worker secrets, not here.
 [vars]
-JWT_SECRET = "dev-secret-key-anavitrade-2026"
-ENCRYPTION_KEY = "local-encryption-key-2026"
 VITE_APP_ID = "anavitrade-trading"
 ASTER_BUILDER_ADDRESS = "0x58c022C844B1Ee047A78dcdDeb516eD992e80828"
 ASTER_API_BASE_URL = "https://fapi.asterdex.com"
 ASTER_DEFAULT_FEE_RATE = "0"
 ASTER_ENVIRONMENT = "production"
+ASTER_LIVE_ORDER_SUBMISSION_ENABLED = "true"
 
 # Scrapes coinlegs every 60 seconds → scores → auto-dispatches Tier A signals.
 # Sliding 3-min window keeps latency under 1 min while catching clock-skew.

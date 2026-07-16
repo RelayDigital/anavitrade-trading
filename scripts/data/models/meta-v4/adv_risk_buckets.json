@@ -1,0 +1,101 @@
+{
+  "1": {
+    "risk_range": [
+      0.0,
+      0.15040873758584083
+    ],
+    "risk_mid": 0.0752,
+    "n_trades": 8000,
+    "actual_wr": 0.3252,
+    "expected_wr": 0.0538,
+    "discount_factor": 0.0
+  },
+  "2": {
+    "risk_range": [
+      0.15040873758584083,
+      0.2882461287744574
+    ],
+    "risk_mid": 0.2193,
+    "n_trades": 3997,
+    "actual_wr": 0.2765,
+    "expected_wr": 0.4164,
+    "discount_factor": 0.3361
+  },
+  "3": {
+    "risk_range": [
+      0.2882461287744574,
+      0.361185142648404
+    ],
+    "risk_mid": 0.3247,
+    "n_trades": 4003,
+    "actual_wr": 0.3093,
+    "expected_wr": 0.4803,
+    "discount_factor": 0.3561
+  },
+  "4": {
+    "risk_range": [
+      0.361185142648404,
+      0.413447353385506
+    ],
+    "risk_mid": 0.3873,
+    "n_trades": 3999,
+    "actual_wr": 0.3218,
+    "expected_wr": 0.4991,
+    "discount_factor": 0.3552
+  },
+  "5": {
+    "risk_range": [
+      0.413447353385506,
+      0.4532886958609339
+    ],
+    "risk_mid": 0.4334,
+    "n_trades": 3998,
+    "actual_wr": 0.3184,
+    "expected_wr": 0.5135,
+    "discount_factor": 0.38
+  },
+  "6": {
+    "risk_range": [
+      0.4532886958609339,
+      0.4897136353538182
+    ],
+    "risk_mid": 0.4715,
+    "n_trades": 3999,
+    "actual_wr": 0.3433,
+    "expected_wr": 0.5253,
+    "discount_factor": 0.3465
+  },
+  "7": {
+    "risk_range": [
+      0.4897136353538182,
+      0.5344654187283332
+    ],
+    "risk_mid": 0.5121,
+    "n_trades": 4004,
+    "actual_wr": 0.3299,
+    "expected_wr": 0.5127,
+    "discount_factor": 0.3565
+  },
+  "8": {
+    "risk_range": [
+      0.5344654187283332,
+      0.5874472415875418
+    ],
+    "risk_mid": 0.561,
+    "n_trades": 3986,
+    "actual_wr": 0.3118,
+    "expected_wr": 0.5144,
+    "discount_factor": 0.3937
+  },
+  "9": {
+    "risk_range": [
+      0.5874472415875418,
+      0.8680279654751408
+    ],
+    "risk_mid": 0.7277,
+    "n_trades": 4014,
+    "actual_wr": 0.3181,
+    "expected_wr": 0.5227,
+    "discount_factor": 0.3913
+  }
+}

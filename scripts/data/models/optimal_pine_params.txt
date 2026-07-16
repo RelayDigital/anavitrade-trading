@@ -1,0 +1,33 @@
+// ═══════════════════════════════════════════════════════════════════
+// OPTIMAL PARAMETERS -- ML-derived via LightGBM + SHAP
+// Composite score: 0.7468
+// Set these in the Settings panel of icr-smc-engine.pine
+// ═══════════════════════════════════════════════════════════════════
+
+// -- Impulse Detection --
+minImpulseBars = 3
+maxImpulseBars = 20
+maxSignalAge = 42
+impulseAtrMult = 0.8
+impulseVolMult = 1.5
+
+// -- Pullback --
+minPullbackBars = 1
+nearMaAtrMult = 2.5
+pullbackVolRatio = 1.5
+
+// -- Compression --
+compressionLookback = 12
+compRangeRatio = 0.95
+compAtrRatio = 0.9
+compNarrowAtrMult = 2
+
+// -- Scoring --
+scoreThreshold = 55
+minRr = 1.5
+tierAThresh = 65
+
+// -- Exit Trail --
+trailAtrMult = 7
+trailActivateAtR = 2
+maxBars = 100

@@ -9,7 +9,9 @@ import { decryptCexCredentials } from "../cex/store";
 import { createCexClient } from "../cex/factory";
 import { CexExecutionAdapter } from "../cex/adapter";
 import { AsterExecutionAdapter } from "../aster/adapter";
+import { AsterApiClient } from "../aster/client";
 import { getAsterConfig } from "../aster/config";
+import { syncAsterFuturesBalance } from "../aster/store";
 import { decideExecution, prefetchUserData, sizeNotionalFromEquity, type TradeIntentInput } from "./riskEngine";
 
 /** Deterministic idempotency key per (user, intent). Prevents duplicate mirrors. */
@@ -24,6 +26,63 @@ function enqueue<T>(connectionId: number, task: () => Promise<T>): Promise<T> {
   const next = prev.catch(() => undefined).then(task);
   connectionQueues.set(connectionId, next);
   return next;
+}
+
+function decimalValue(value: string | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function skipJob(
+  jobId: number,
+  provider: string,
+  reason: string,
+  payload: Record<string, unknown> = {},
+) {
+  const db = getDb();
+  const skippedAt = Date.now();
+  await db.update(executionJobs).set({
+    status: "skipped",
+    errorMessage: reason,
+    updatedAt: skippedAt,
+  } as any).where(eq(executionJobs.id, jobId));
+  await db.insert(orderEvents).values({
+    executionJobId: jobId,
+    provider,
+    eventType: "skipped",
+    payloadJson: JSON.stringify({ reason, ...payload }),
+    occurredAt: skippedAt,
+  } as any);
+}
+
+function quantityFromNotional(notionalUsd: number, price: number): string | null {
+  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const quantity = (notionalUsd / price).toFixed(6);
+  return Number(quantity) > 0 ? quantity : null;
+}
+
+async function resolveAsterSizingPrice(intent: TradeIntentInput): Promise<number> {
+  const priceHint = parseFloat(intent.limitPrice ?? "0");
+  if (Number.isFinite(priceHint) && priceHint > 0) return priceHint;
+  return new AsterApiClient().getTickerPrice(intent.symbol);
+}
+
+function protectiveOrderReason(intent: TradeIntentInput, referencePrice: number): string | null {
+  const hasStop = Boolean(intent.stopLossPrice);
+  const hasTakeProfit = Boolean(intent.takeProfitPrice);
+  if (hasStop !== hasTakeProfit) return "aster_otoco_requires_stop_loss_and_take_profit";
+  if (!hasStop || !hasTakeProfit) return null;
+  const stopLoss = Number(intent.stopLossPrice);
+  const takeProfit = Number(intent.takeProfitPrice);
+  if (!Number.isFinite(stopLoss) || !Number.isFinite(takeProfit)) return "aster_invalid_protective_price";
+  if (intent.side === "BUY" && !(stopLoss < referencePrice && referencePrice < takeProfit)) {
+    return "aster_invalid_buy_protective_range";
+  }
+  if (intent.side === "SELL" && !(takeProfit < referencePrice && referencePrice < stopLoss)) {
+    return "aster_invalid_sell_protective_range";
+  }
+  return null;
 }
 
 async function loadIntent(intentId: number): Promise<TradeIntentInput | null> {
@@ -214,11 +273,34 @@ async function fanOutAster(
   const asterConfig = getAsterConfig();
   const agents = await db.select().from(asterAgentAccounts)
     .where(eq(asterAgentAccounts.status, "active"));
+  const preloaded = agents.length > 0
+    ? await prefetchUserData([...new Set(agents.map((agent) => agent.userId))])
+    : undefined;
 
   const results: Array<{ userId: number; provider: string; status: string; reason?: string; jobId?: number }> = [];
 
   for (const agent of agents) {
-    const decision = await decideExecution(intent, agent.userId, { id: agent.userId } as any, undefined);
+    const now = Date.now();
+    if (agent.agentStatus !== "approved" || agent.builderStatus !== "approved") {
+      const reason = "aster_approval_not_confirmed";
+      await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
+      results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason });
+      continue;
+    }
+    if (agent.approvalExpiresAt != null && agent.approvalExpiresAt <= now) {
+      await db.update(asterAgentAccounts).set({ status: "paused", agentStatus: "expired", updatedAt: now } as any)
+        .where(eq(asterAgentAccounts.id, agent.id));
+      const reason = "aster_agent_expired";
+      await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
+      results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason });
+      continue;
+    }
+
+    const decision = await decideExecution(intent, agent.userId, {
+      status: "active",
+      copytradeEnabled: true,
+      killSwitchActive: false,
+    }, preloaded);
     if (decision.approved !== true) {
       const reason = "reason" in decision ? decision.reason : "unknown";
       await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
@@ -251,28 +333,77 @@ async function fanOutAster(
       continue;
     }
 
-    // Compute notional from the live account's unified balance
+    const feeRate = decimalValue(agent.feeRate);
+    const maxFeeRate = decimalValue(agent.maxFeeRate ?? agent.feeRate);
+    if (!Number.isFinite(feeRate) || !Number.isFinite(maxFeeRate) || feeRate > maxFeeRate) {
+      const reason = "fee_rate_exceeds_approved_max";
+      await skipJob(job.id, "aster", reason, { feeRate: agent.feeRate, maxFeeRate: agent.maxFeeRate });
+      await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
     let notionalUsd = decision.notionalUsd;
+    let account: typeof liveAccounts.$inferSelect | undefined;
     try {
-      const [account] = await db.select().from(liveAccounts)
+      const [row] = await db.select().from(liveAccounts)
         .where(eq(liveAccounts.userId, agent.userId)).limit(1);
-      const equity = parseFloat(account?.lastTotalEquityUsd ?? "0");
+      account = row;
+      let equity = parseFloat(account?.lastTotalEquityUsd ?? "0");
+      if (equity <= 0) {
+        try {
+          const synced = await syncAsterFuturesBalance(agent.userId);
+          equity = synced.equityUsd;
+        } catch { /* keep existing zero-equity handling below */ }
+      }
       if (equity > 0 && notionalUsd <= 0) {
         const maxPct = parseFloat(account?.maxPositionSizePct ?? "10");
         notionalUsd = sizeNotionalFromEquity(equity, maxPct);
       }
     } catch { /* fall through */ }
 
-    const priceHint = parseFloat(intent.limitPrice ?? "0");
-    const quantity = priceHint > 0 ? (notionalUsd / priceHint).toFixed(6) : (notionalUsd / 1000).toFixed(6);
-    if (!quantity || parseFloat(quantity) <= 0) {
-      results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason: "zero_quantity" });
+    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+      const reason = "no_requested_notional_or_equity_snapshot";
+      await skipJob(job.id, "aster", reason, {
+        lastTotalEquityUsd: account?.lastTotalEquityUsd ?? null,
+      });
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
+    let sizingPrice: number;
+    try {
+      sizingPrice = await resolveAsterSizingPrice(intent);
+    } catch (e: any) {
+      const reason = "price_unavailable";
+      await skipJob(job.id, "aster", reason, { error: String(e?.message).slice(0, 200) });
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
+    const protectiveReason = protectiveOrderReason(intent, sizingPrice);
+    if (protectiveReason) {
+      await skipJob(job.id, "aster", protectiveReason, {
+        stopLossPrice: intent.stopLossPrice,
+        takeProfitPrice: intent.takeProfitPrice,
+        referencePrice: sizingPrice,
+      });
+      await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${protectiveReason}`);
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason: protectiveReason });
+      continue;
+    }
+
+    const quantity = quantityFromNotional(notionalUsd, sizingPrice);
+    if (!quantity) {
+      const reason = "zero_quantity";
+      await skipJob(job.id, "aster", reason, { notionalUsd, sizingPrice });
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
       continue;
     }
 
     await db.update(executionJobs).set({
       notionalUsd: notionalUsd.toFixed(2), quantity, leverage: decision.leverage,
-      limitPrice: intent.limitPrice ?? null, updatedAt: Date.now(),
+      limitPrice: String(sizingPrice), updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
     if (!asterConfig.liveOrderSubmissionEnabled) {
@@ -305,6 +436,7 @@ async function fanOutAster(
     }
 
     // Submit via Aster adapter with retry
+    let finalStatus: "submitted" | "filled" | "rejected" | "error" = "submitted";
     await enqueue(agent.id, async () => {
       let attempts = 0;
       const maxAttempts = 3;
@@ -318,15 +450,19 @@ async function fanOutAster(
           const receipt = await adapter.submitOrder(job.id, {
             symbol: intent.symbol, side: intent.side, type: intent.orderType,
             quantity, price: intent.limitPrice ?? undefined,
+            newClientOrderId: idem,
             leverage: decision.leverage,
             stopLossPrice: intent.stopLossPrice ?? undefined,
             takeProfitPrice: intent.takeProfitPrice ?? undefined,
           });
 
+          finalStatus = receipt.status === "filled" ? "filled" : receipt.status === "rejected" ? "rejected" : "submitted";
           await db.update(executionJobs).set({
-            status: receipt.status === "filled" ? "filled" : "submitted",
-            orderId: receipt.orderId, submittedAt: Date.now(),
+            status: finalStatus,
+            orderId: receipt.orderId,
+            submittedAt: Date.now(),
             ...(receipt.status === "filled" ? { filledAt: Date.now() } : {}),
+            ...(receipt.status === "rejected" ? { errorMessage: "aster_order_rejected" } : {}),
             updatedAt: Date.now(),
           } as any).where(eq(executionJobs.id, job.id));
 
@@ -336,19 +472,8 @@ async function fanOutAster(
             occurredAt: Date.now(),
           } as any);
 
-          // NAV snapshot best-effort (Aster doesn't expose balance; use unified cache)
           try {
-            const [account] = await db.select().from(liveAccounts)
-              .where(eq(liveAccounts.userId, agent.userId)).limit(1);
-            if (account) {
-              await db.insert(navSnapshots).values({
-                userId: agent.userId, provider: "aster",
-                accountEquityUsd: account.lastTotalEquityUsd ?? "0",
-                availableBalanceUsd: account.lastAvailableUsd ?? "0",
-                source: "provider_sync",
-                snapshotAt: Date.now(),
-              } as any);
-            }
+            await syncAsterFuturesBalance(agent.userId);
           } catch { /* best-effort */ }
 
           await writeAuditLog(agent.userId, "EXEC_ORDER_SUBMITTED",
@@ -364,6 +489,7 @@ async function fanOutAster(
         }
       }
 
+      finalStatus = "error";
       await db.update(executionJobs).set({
         status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: Date.now(),
       } as any).where(eq(executionJobs.id, job.id));
@@ -376,7 +502,7 @@ async function fanOutAster(
         `intent:${intentId}; aster; ${String(lastError?.message).slice(0, 120)}; attempts:${attempts}`);
     });
 
-    results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "queued" });
+    results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: finalStatus });
   }
 
   return results;

@@ -1,51 +1,62 @@
 # Findings & Decisions
 
-## Beta State (2026-07-14) — Live at anavitrade-trading.erhazeariel.workers.dev
+## Beta State (2026-07-16) — Live at anavitrade-trading.erhazeariel.workers.dev
 
 ### Working in Production ✅
-- Coinlegs scraper: ~1,400 signals, cron inserts every 60s
+- Worker deployed, cron running every 60s
+- 2,347 Coinlegs signals in D1
+- 1,000+ 4h klines seeded (11 symbols, 100 bars each)
+- VPS at 5.161.229.209: execution poll loop running (testnet mode)
 - 8 CEX exchange clients (Binance, Bitunix, Bybit, OKX, Kraken, KuCoin, Gate.io, Coinbase)
-- CEX connection management with encrypted key storage
-- Aster DEX activation flow (EIP-712 signing via viem)
-- Dashboard: 9 components, 3 hooks, 1285→220 lines
+- Aster DEX v3 client (OTOCO protective orders, agent approval gates, fee-rate validation)
+- Internal API for VPS↔Worker (pending-intents, active-connections, kill-state, report-execution)
+- Dashboard: 9 components, 3 hooks, dark theme
 - Unified balance aggregation (DEX + CEX sum)
-- tRPC API: 24 endpoints covering auth, live, demo, signals, exec, CEX, Aster
-- REST API: 18 admin endpoints for backtest, analysis, mirror, scraper, fee
-- Outcome validator: tracks 1,400+ signals for claimed-vs-actual accuracy
-- Fee engine: 2&20 model, quarterly periods, NAV-snapshot based
-- Auth header bypass: Binance 451 geo-block solved with X-MBX-APIKEY
-- D1 Date serialization: fixed with raw D1 binding + `number` mode
-- D1 100-variable limit: fixed with chunked inArray (80 IDs per query)
-- Cron throttle: D1-persisted counter survives Worker restarts
-- SMC dispatch: active, validates Tier-A signals before TradeIntent creation
-- analysis_signals bridge: re-enabled, raw D1 insert bypasses Date bug
+- tRPC API: 24 endpoints + REST: 18 admin endpoints
+- ADMIN_API_KEY working (set via wrangler secret put)
+- TradingView Desktop connected via CDP (port :9222)
+- TradingView MCP installed at ~/tradingview-mcp/
 
-### Blocked by Cloudflare 50-Subrequest Cap 🟡
-- Analysis engine: completes with status="completed" but klines table empty
-- Klines insert: 500-row batch exceeds D1 999-variable limit
-- Max per analysis run: ~15 pairs under 50-subrequest cap (1 fetch + 1 insert each)
-- Signal spotting API and kline warehouse require VPS upgrade
+### Blocking 🟡
+- Signal pipeline: 0 analysis_signals, 0 execution_jobs — analysis engine needs more kline data
+  - Root cause 1: Worker can't fetch klines (Cloudflare 50-subrequest cap)
+  - Root cause 2: ICR detection requires MA99 warmup + full SMC patterns (100 bars = bare minimum)
+  - Fix: seed-klines.mjs running locally for 15 pairs × 300 bars (4h + 1h timeframes)
+- Cloudflare subrequest cap: analysis engine can't run properly from Worker
+  - Kline fetching, derivatives, and signal spotting need to move to VPS
 
 ### Known Production Gaps
 - **Error reporting:** No Sentry/DataDog
 - **Fee collection:** Engine tracks but no payment provider integration
 - **Alerting:** No Slack/webhook for cron failures
-- **Live order execution:** Needs static egress IP for exchange whitelisting
-- **Analysis engine:** 0 signals until klines table is populated
+- **Live order execution:** VPS needs exchange API keys configured for real trading
 
 ### Aster Live Submission Gate
-- Keep `ASTER_LIVE_ORDER_SUBMISSION_ENABLED=false` until Aster request signing, exact order payload fields, and fill sync are verified end-to-end.
-- Before enabling live submission, verify staged/submitted/filled/rejected transitions in `execution_jobs`, `order_events`, audit logs, and NAV snapshots.
-- Use testnet or a non-production wallet first; do not depend on fee crystallization from Aster fills until NAV reconciliation is proven.
-- 2026-07-14 follow-up: `execution_jobs`, `order_events`, and `nav_snapshots` are shared by Aster and CEX; CEX dispatch timestamp writes were audited and corrected to epoch milliseconds where they target numeric columns.
-- 2026-07-14 audit: the old Aster client was not live-order capable because it used `/fapi/v1/order`, JSON, and an order-shaped EIP-712 payload. It now uses Aster Futures V3 `/fapi/v3/order`, form-urlencoded params, microsecond nonce, and `AsterSignTransaction` signing.
-- 2026-07-14 audit: local-only Aster activation was unsafe. Activation now requires the connected wallet to sign Aster's official `registerAndApproveAgent` message and only marks the agent active after Aster accepts registration.
-- Remaining production proof: run a testnet or non-production wallet trade with `ASTER_LIVE_ORDER_SUBMISSION_ENABLED=true`, then verify order status/fill sync/NAV reconciliation before enabling production live submission.
+- Keep `ASTER_LIVE_ORDER_SUBMISSION_ENABLED=true` is currently SET in wrangler.toml vars
+  - This means live orders WILL be attempted — verify with testnet first
+- 2026-07-14 audit: Aster uses Futures V3 `/fapi/v3/order`, form-urlencoded params,
+  microsecond nonce, and `AsterSignTransaction` signing
+- 2026-07-14 audit: Activation requires wallet-signed `registerAndApproveAgent` message
+- Remaining production proof: run a testnet wallet trade, verify order status/fill sync/NAV reconciliation
 
-### Next Steps (When Infrastructure Upgrades)
-- Apply PRDs in `docs/plans/2026-07-14-*-prd.md`
-- Deploy VPS with Node.js backend and static egress IP
-- Phase 1: Seed klines (1-2 hours)
-- Phase 2: Backtest parameter sweep (4-8 hours)
-- Phase 3: Signal spotting API
-- Phase 4: Dynamic watchlist from signal activity
+### Infrastructure Notes
+- VPS runs 5 containers: execution, redis, prometheus, grafana, node-exporter
+- Docker compose pulls images from Docker Hub (large Grafana image ~340MB)
+- .env on VPS contains INTERNAL_SECRET, ENCRYPTION_KEY (matching Worker secrets)
+- Port 9090: execution health/metrics, Port 3000: Grafana, Port 9091: Prometheus
+
+### ML Pipeline (Meta-v6)
+- 62 features per bar across 4h/1h/15m timeframes
+- LightGBM + isotonic calibration + KMeans regimes + adversarial risk model
+- AUC 0.59, calibrated threshold 0.682 (1.1% pass rate at 89% WR)
+- SMC patterns are feature AMPLIFIERS, not entry requisites
+- Next: retrain on full 40K MTF dataset (50 pairs in klines-mtf.json)
+- Key: NO arbitrary scoring — the calibrated probability IS the decision threshold
+
+### Next Steps (After Kline Seeding)
+1. Trigger analysis engine → expect signalsGenerated > 0
+2. Verify signal → TradeIntent → execution_jobs end-to-end
+3. Watch VPS logs: should see pending intents being picked up
+4. Seed 1h klines (SMC patterns fire 4x more)
+5. Retrain metacognitive model on full MTF data
+6. TradingView backtest with new model

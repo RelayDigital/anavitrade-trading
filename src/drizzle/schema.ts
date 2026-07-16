@@ -31,7 +31,7 @@ export const liveAccounts = sqliteTable("live_accounts", {
   maxLeverage: text().default("10.00").notNull(),
   maxPositionSizePct: text().default("10.00").notNull(),
   maxTotalExposurePct: text().default("25.00").notNull(),
-  displayMode: text().default("live").notNull(),
+  displayMode: text().default("demo").notNull(),
 
   // Unified funds tracking — aggregated across all linked providers
   lastTotalEquityUsd: text(),               // cached sum of all linked exchange/wallet equity

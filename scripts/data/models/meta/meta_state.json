@@ -1,0 +1,190 @@
+{
+  "brier": 0.2176798379819232,
+  "auc": 0.6996278768687678,
+  "trained_at": "2026-07-15T18:54:45.752140+00:00",
+  "recent_trades": [
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.600Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.600Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.604Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.605Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.605Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.605Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.605Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.605Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:12:35.606Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.806Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.807Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": true,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    },
+    {
+      "win": false,
+      "prob": 0.5,
+      "pnl_r": 0.5,
+      "timestamp": "2026-07-15T20:14:18.808Z"
+    }
+  ],
+  "drift_status": "ok",
+  "needs_retrain": false,
+  "total_trades": 30
+}

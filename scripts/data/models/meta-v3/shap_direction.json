@@ -1,0 +1,22 @@
+{
+  "h1_fvg_distance_atr": {
+    "direction": "higher=better",
+    "correlation": 0.922
+  },
+  "h1_fvg_size_atr": {
+    "direction": "higher=worse",
+    "correlation": -0.8375
+  },
+  "ct_bb_width_pct": {
+    "direction": "higher=worse",
+    "correlation": -0.8616
+  },
+  "h4_ma25_slope": {
+    "direction": "higher=better",
+    "correlation": 0.0361
+  },
+  "h4_ma_separation_atr": {
+    "direction": "higher=better",
+    "correlation": 0.3928
+  }
+}

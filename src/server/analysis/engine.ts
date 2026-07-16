@@ -14,7 +14,7 @@
  */
 
 import { getDb } from "../db";
-import { analysisRuns, analysisSignals, derivativesSnapshots } from "../../drizzle/schema";
+import { analysisRuns, analysisSignals, derivativesSnapshots, klines } from "../../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import type { UnifiedSignal, EnrichedCandle, IcrConfig, DerivativesSnapshot } from "./types";
 import {
@@ -141,6 +141,12 @@ interface IcrModule {
     timeframe: string,
     cfg: IcrConfig,
   ) => UnifiedSignal[];
+  findSignals: (
+    candles: EnrichedCandle[],
+    symbol: string,
+    timeframe: string,
+    cfg: IcrConfig,
+  ) => UnifiedSignal[];
 }
 
 let _icrModule: IcrModule | null = null;
@@ -185,11 +191,15 @@ export async function runAnalysisEngine(
   const db = getDb();
 
   try {
-    const watchlist = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","LINKUSDT","MATICUSDT","UNIUSDT","SHIBUSDT","LTCUSDT","ATOMUSDT"];
+    // Dynamically discover symbols that have klines in D1
+    const watchlist = (await db.select({ symbol: klines.symbol }).from(klines)
+      .groupBy(klines.symbol).limit(38))
+      .map((r: any) => r.symbol);
+    if (watchlist.length === 0) watchlist.push("BTCUSDT", "ETHUSDT", "SOLUSDT");
 
     // 1. Fetch latest klines for all symbols
     const klineUpdates = 0;
-    const fetcher = new KlineFetcher(15);
+    const fetcher = new KlineFetcher(3);
     try { const updates = await fetcher.updateTimeframe(timeframe); console.log("[analysis-engine] kline fetch:", updates, "new candles"); } catch (e: any) { console.warn("[analysis-engine] kline fetch error:", e.message); }
     console.log(
       `[analysis-engine] kline updates: ${klineUpdates} new candles across ${watchlist.length} symbols`,
@@ -199,7 +209,7 @@ export async function runAnalysisEngine(
     const enrichedBySymbol = new Map<string, EnrichedCandle[]>();
     for (const symbol of watchlist) {
       const klines = await getKlines(symbol, timeframe, 200);
-      if (klines.length < 30) {
+      if (klines.length < 1) {
         // Not enough data yet – skip this symbol
         continue;
       }
@@ -221,7 +231,9 @@ export async function runAnalysisEngine(
         if (candles.length < DEFAULT_ICR_CONFIG.slowMa) continue;
 
         try {
-          const sigs = icrModule.findLatestSignals(
+          // Full scan on initial run; cron's findLatestSignals only checks latest candle
+          const scanFn = icrModule.findSignals;
+          const sigs = scanFn(
             candles,
             symbol,
             timeframe,

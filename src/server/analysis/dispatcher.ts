@@ -107,10 +107,13 @@ export async function dispatchSignal(
       typeof signal.metadata?.maxProfit === "number"
         ? signal.metadata.maxProfit
         : 0;
+    // ICR signals use SMC structural detection — different from Coinlegs indicators
     const indicatorName =
-      typeof signal.metadata?.indicatorName === "string"
-        ? signal.metadata.indicatorName
-        : "analysis_engine";
+      signal.source === "icr"
+        ? "smc_structure"
+        : typeof signal.metadata?.indicatorName === "string"
+          ? signal.metadata.indicatorName
+          : "analysis_engine";
 
     const structuralResult = validateStructure({
       period: signal.timeframe,
@@ -187,7 +190,7 @@ export async function dispatchSignal(
     // 3. Create TradeIntent
     const side = direction === "long" ? "buy" : "sell";
 
-    await db
+    const [intent] = await db
       .insert(tradeIntents)
       .values({
         source: signal.source,
@@ -202,13 +205,8 @@ export async function dispatchSignal(
         status: "created",
         createdBy: "analysis-engine",
         sourceSignal: signal.source,
-      } as any);
-
-    const [intent] = await db
-      .select()
-      .from(tradeIntents)
-      .orderBy(desc(tradeIntents.id))
-      .limit(1);
+      } as any)
+      .returning();
 
     if (!intent) {
       throw new Error("Failed to create trade intent");
@@ -218,14 +216,16 @@ export async function dispatchSignal(
     let jobsCreated = 0;
     try {
       const execResult = await createExecutionJobsForIntent(intent.id);
-      jobsCreated = execResult.jobs.length;
+      // Only count jobs that actually progressed past staging/skipping.
+      jobsCreated = execResult.jobs.filter(j => j.status !== "skipped").length;
     } catch (e: any) {
       console.warn("[dispatcher] createExecutionJobsForIntent:", e?.message);
     }
 
-    // 5. Record dispatched analysis signal (upsert pattern: insert if
-    //    the earlier dedup check found a stale rejected row, no-op on
-    //    unique constraint violation)
+    // 5. Record dispatched analysis signal ONLY when at least one job was created.
+    //    If fan-out produced zero executable jobs (all skipped/staged/errored), don't
+    //    mark the signal as dispatched — it can be retried on the next cron cycle.
+    if (jobsCreated > 0) {
     try {
       await db
         .insert(analysisSignals)
@@ -239,6 +239,7 @@ export async function dispatchSignal(
       if (!e?.message?.includes("UNIQUE")) {
         throw e;
       }
+    }
     }
 
     return {
@@ -273,9 +274,12 @@ export async function dispatchSignalsBatch(
   errors: number;
   duplicates: number;
 }> {
-  // Score-filter: only Tier A signals with minimum threshold
-  const tierA = signals.filter((s) => s.tier === "A" && s.score >= 60);
-  tierA.sort((a, b) => b.score - a.score);
+  // Score-filter: allow Tier A, B, or C with minimum score for initial pipeline priming.
+  // Tighten to Tier A only after at least 100 dispatched signals in production.
+  const qualifies = (s: UnifiedSignal) =>
+    (typeof s.score === "number" && s.score >= 55);
+  const candidates = signals.filter(qualifies);
+  candidates.sort((a, b) => b.score - a.score);
 
   const results: DispatchResult[] = [];
   let dispatched = 0;
@@ -285,7 +289,7 @@ export async function dispatchSignalsBatch(
 
   // Group by symbol and process sequentially per symbol to avoid races
   const bySymbol = new Map<string, UnifiedSignal[]>();
-  for (const s of tierA) {
+  for (const s of candidates) {
     const group = bySymbol.get(s.symbol) ?? [];
     group.push(s);
     bySymbol.set(s.symbol, group);

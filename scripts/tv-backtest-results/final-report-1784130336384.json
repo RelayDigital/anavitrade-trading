@@ -1,0 +1,38 @@
+{
+  "config": {
+    "timeframe": "4h",
+    "symbolCount": 1
+  },
+  "results": [
+    {
+      "symbol": "BINANCE:AVAXUSDT",
+      "timeframe": "4h",
+      "timestamp": "2026-07-15T15:45:35.808Z",
+      "netProfit": -424713.3503963526,
+      "netProfitPercent": -0.4247133503963526,
+      "grossProfit": 2033567.4326800995,
+      "grossLoss": 2458280.783076452,
+      "profitFactor": 0.8272315541331944,
+      "maxDrawdown": 717690.6272110195,
+      "maxDrawdownPercent": 0.6178584454075207,
+      "totalTrades": 250,
+      "winningTrades": 33,
+      "losingTrades": 217,
+      "winRate": 0.132,
+      "sharpeRatio": -0.04101026189460527,
+      "sortinoRatio": -0.07124086279066452,
+      "avgTrade": -1698.853402,
+      "avgTradePercent": -0.007051874283353072,
+      "largestWin": 225504.79175730003,
+      "largestLoss": 100466.46803670004,
+      "avgBarsInTrade": 9.564
+    }
+  ],
+  "aggregate": {
+    "avgWinRate": 0.132,
+    "avgProfitFactor": 0.8272315541331944,
+    "avgSharpe": -0.04101026189460527,
+    "avgMaxDD": 0.6178584454075207,
+    "totalTrades": 250
+  }
+}

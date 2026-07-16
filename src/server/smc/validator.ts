@@ -62,8 +62,9 @@ function gateBias(ctx: SignalContext): SmcGate {
   const pct24 = ctx.pct24;
 
   // Strong structural signal: reliable TF + top-tier indicator
-  const isTopTier = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch");
-  const isMidTier = ind.includes("trend") || ind.includes("reversal") || ind.includes("cci");
+  // smc_structure = ICR engine's own SMC detection (OB, FVG, sweep — more reliable than generic indicators)
+  const isTopTier = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch") || ind.includes("smc_structure");
+  const isMidTier = ind.includes("trend") || ind.includes("reversal") || ind.includes("cci") || ind.includes("icr");
 
   if (tfReliable && isTopTier) {
     return { pass: true, score: 25, maxScore: 25,
@@ -107,7 +108,7 @@ function gateBias(ctx: SignalContext): SmcGate {
 function gateDOL(ctx: SignalContext): SmcGate {
   const tfReliable = TF_RELIABLE.has(ctx.period.toLowerCase());
   const ind = ctx.indicatorName.toLowerCase();
-  const isStrongInd = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch");
+  const isStrongInd = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch") || ind.includes("smc_structure");
   const highConf = (ctx.confluenceCount || 1) >= 3;
 
   if (tfReliable && isStrongInd && highConf) {
@@ -154,7 +155,7 @@ function gateSweep(ctx: SignalContext): SmcGate {
   const tfReliable = TF_RELIABLE.has(ctx.period.toLowerCase());
 
   // Trend Reversal firing = high probability of sweep event
-  const isReversalSignal = ind.includes("trend") || ind.includes("reversal");
+  const isReversalSignal = ind.includes("trend") || ind.includes("reversal") || ind.includes("smc_structure");
 
   // Negative momentum on a buy = potential sell-side sweep (good for longs)
   const sweepAlignment = pct24 < 0; // price dipped → swept sell-side → now reversing
@@ -208,8 +209,7 @@ function gateDisplacement(ctx: SignalContext): SmcGate {
   const absPct = Math.abs(ctx.pct24);
   const ind = ctx.indicatorName.toLowerCase();
   const tfReliable = TF_RELIABLE.has(ctx.period.toLowerCase());
-  const isStrongSignal = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch");
-
+  const isStrongSignal = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch") || ind.includes("smc_structure");
   // Rule R4 from analysis_findings.md: displacement magnitude by percentile
   // Strong >10% = strong, 3-10% = moderate, <3% = weak
   if (absPct > 10 && tfReliable && isStrongSignal) {
@@ -254,8 +254,8 @@ function gateMSS(ctx: SignalContext): SmcGate {
   const absPct = Math.abs(ctx.pct24);
   const highConf = ctx.confluenceCount >= 3;
 
-  const isReversal = ind.includes("trend") || ind.includes("reversal");
-  const isMomentum = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch");
+  const isReversal = ind.includes("trend") || ind.includes("reversal") || ind.includes("smc_structure");
+  const isMomentum = ind.includes("macd") || ind.includes("stochastic") || ind.includes("stoch") || ind.includes("smc_structure");
 
   if (tfReliable && isReversal && absPct > 3) {
     return { pass: true, score: 15, maxScore: 15,
@@ -298,7 +298,7 @@ function gateZone(ctx: SignalContext): SmcGate {
   const highConf = ctx.confluenceCount >= 3;
 
   // CCI + high confluence = price is at a structural zone boundary
-  if (ind.includes("cci") && highConf) {
+  if ((ind.includes("cci") || ind.includes("smc_structure")) && highConf) {
     return { pass: true, score: 10, maxScore: 10,
       reason: "structural_zone_boundary_multi_confirm" };
   }

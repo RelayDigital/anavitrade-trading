@@ -1,0 +1,25 @@
+[
+  {
+    "symbol": "BINANCE:SOLUSDT",
+    "timeframe": "4h",
+    "timestamp": "2026-07-15T15:46:04.015Z",
+    "netProfit": -220789.12448810088,
+    "netProfitPercent": -0.22078912448810087,
+    "grossProfit": 1970582.6349112997,
+    "grossLoss": 2191371.7593994006,
+    "profitFactor": 0.8992461577817296,
+    "maxDrawdown": 666606.353825361,
+    "maxDrawdownPercent": 0.5640947610346462,
+    "totalTrades": 166,
+    "winningTrades": 25,
+    "losingTrades": 141,
+    "winRate": 0.15060240963855423,
+    "sharpeRatio": -0.041507638106020706,
+    "sortinoRatio": -0.056806020502509234,
+    "avgTrade": -1330.054967,
+    "avgTradePercent": -0.006331634043643358,
+    "largestWin": 301006.554447,
+    "largestLoss": 145620.66861240004,
+    "avgBarsInTrade": 14.80722891566265
+  }
+]

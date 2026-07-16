@@ -1,0 +1,184 @@
+{
+  "brier": 0.21692509236603716,
+  "auc": 0.7018933716503725,
+  "trained_at": "2026-07-15T21:12:25.592819+00:00",
+  "recent_trades": [],
+  "drift_status": "ok",
+  "needs_retrain": false,
+  "tier_edges": {
+    "A": 0.4595,
+    "B": 0.1663
+  },
+  "calibrated_threshold": 0.682,
+  "calibrated_threshold_raw": 1.182,
+  "overall_wr": 0.318,
+  "n_features": 38,
+  "n_rows": 40000,
+  "n_rows_passing_threshold": 3479,
+  "pct_passing_threshold": 8.7,
+  "regime_clusters": 6,
+  "feature_importance_top20": [
+    {
+      "name": "h4_bb_width_pct",
+      "importance": 680.0
+    },
+    {
+      "name": "h4_ma25_slope",
+      "importance": 613.0
+    },
+    {
+      "name": "mtf_exit_proximity",
+      "importance": 613.0
+    },
+    {
+      "name": "h4_rsi",
+      "importance": 592.0
+    },
+    {
+      "name": "h4_atr_percentile",
+      "importance": 397.0
+    },
+    {
+      "name": "h1_atr_ratio",
+      "importance": 368.0
+    },
+    {
+      "name": "h4_displacement",
+      "importance": 329.0
+    },
+    {
+      "name": "h4_volume_zscore",
+      "importance": 239.0
+    },
+    {
+      "name": "h4_body_ratio",
+      "importance": 224.0
+    },
+    {
+      "name": "mtf_confluence",
+      "importance": 173.0
+    },
+    {
+      "name": "m15_entry_precision",
+      "importance": 170.0
+    },
+    {
+      "name": "h4_bb_squeeze",
+      "importance": 138.0
+    },
+    {
+      "name": "h1_displacement",
+      "importance": 126.0
+    },
+    {
+      "name": "h4_close_position",
+      "importance": 102.0
+    },
+    {
+      "name": "h4_trend",
+      "importance": 98.0
+    },
+    {
+      "name": "h1_body_momentum",
+      "importance": 94.0
+    },
+    {
+      "name": "m15_vwap_position",
+      "importance": 93.0
+    },
+    {
+      "name": "h4_fvg_present",
+      "importance": 91.0
+    },
+    {
+      "name": "mtf_sniper_score",
+      "importance": 71.0
+    },
+    {
+      "name": "h1_confluence_count",
+      "importance": 64.0
+    }
+  ],
+  "shap_importance_top20": [
+    {
+      "feature": "h4_fvg_present",
+      "mean_abs_shap": 0.20801380660948943
+    },
+    {
+      "feature": "h1_atr_ratio",
+      "mean_abs_shap": 0.1640640604772106
+    },
+    {
+      "feature": "mtf_exit_proximity",
+      "mean_abs_shap": 0.13846150239454483
+    },
+    {
+      "feature": "h4_atr_percentile",
+      "mean_abs_shap": 0.10642930260638718
+    },
+    {
+      "feature": "h1_confluence_count",
+      "mean_abs_shap": 0.09952286148511066
+    },
+    {
+      "feature": "h4_rsi",
+      "mean_abs_shap": 0.08325095532456583
+    },
+    {
+      "feature": "h4_ma25_slope",
+      "mean_abs_shap": 0.06742627987774313
+    },
+    {
+      "feature": "h4_bb_width_pct",
+      "mean_abs_shap": 0.06252262527772505
+    },
+    {
+      "feature": "h4_displacement",
+      "mean_abs_shap": 0.05095067508053675
+    },
+    {
+      "feature": "h4_trend",
+      "mean_abs_shap": 0.04717270152248046
+    },
+    {
+      "feature": "m15_entry_precision",
+      "mean_abs_shap": 0.045344681415787874
+    },
+    {
+      "feature": "mtf_confluence",
+      "mean_abs_shap": 0.04416812604628423
+    },
+    {
+      "feature": "h4_bb_squeeze",
+      "mean_abs_shap": 0.04351710341949828
+    },
+    {
+      "feature": "h1_displacement",
+      "mean_abs_shap": 0.029608654699021787
+    },
+    {
+      "feature": "h4_body_ratio",
+      "mean_abs_shap": 0.022052420398296604
+    },
+    {
+      "feature": "h1_ao_direction",
+      "mean_abs_shap": 0.01910642392108545
+    },
+    {
+      "feature": "h4_volume_zscore",
+      "mean_abs_shap": 0.01800954020541601
+    },
+    {
+      "feature": "h1_rsi_zone",
+      "mean_abs_shap": 0.015005144031153333
+    },
+    {
+      "feature": "m15_vwap_position",
+      "mean_abs_shap": 0.013916889005730806
+    },
+    {
+      "feature": "m15_mtf_trigger",
+      "mean_abs_shap": 0.01143501751739937
+    }
+  ]
+}

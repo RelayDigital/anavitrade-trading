@@ -7,21 +7,24 @@ import {
   getAsterAgentStatus,
   prepareAsterAgent,
   prepareAsterRegistration,
-  recordAsterApprovals,
   revokeAsterAgent,
+  syncAsterFuturesBalance,
 } from "./store";
 
 const registrationParamsSchema = z.object({
-  user: z.string().min(10).max(100),
-  nonce: z.string().regex(/^\d+$/),
   agentName: z.string().min(1).max(64),
   agentAddress: z.string().min(10).max(100),
-  expired: z.string().regex(/^\d+$/),
-  signatureChainId: z.literal("56"),
-  canSpotTrade: z.enum(["true", "false"]),
-  canPerpTrade: z.enum(["true", "false"]),
-  canWithdraw: z.enum(["true", "false"]),
-  ipWhitelist: z.string().max(512),
+  ipWhitelist: z.string().max(512).optional(),
+  expired: z.number().int().positive(),
+  canSpotTrade: z.boolean(),
+  canPerpTrade: z.boolean(),
+  canWithdraw: z.boolean(),
+  builder: z.string().min(10).max(100),
+  maxFeeRate: z.string().regex(/^\d+(\.\d+)?$/),
+  builderName: z.string().min(1).max(64),
+  asterChain: z.string().min(1).max(64).optional(),
+  user: z.string().min(10).max(100),
+  nonce: z.number().int().positive(),
 });
 
 export const asterRouter = router({
@@ -31,6 +34,9 @@ export const asterRouter = router({
       builderAddress: config.builderAddress,
       defaultFeeRate: config.defaultFeeRate,
       environment: config.environment,
+      asterChain: config.asterChain,
+      codeSigningChainId: config.codeSigningChainId,
+      includeCompatParams: config.includeCompatParams,
       liveOrderSubmissionEnabled: config.liveOrderSubmissionEnabled,
       configured: Boolean(config.builderAddress),
     };
@@ -62,18 +68,28 @@ export const asterRouter = router({
       builderApproved: z.boolean(),
       maxFeeRate: z.string().regex(/^\d+(\.\d+)?$/).optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
-      try {
-        return await recordAsterApprovals({ userId: ctx.user.id, ...input });
-      } catch (e: any) {
-        if (e?.message === "ASTER_AGENT_NOT_FOUND") {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Aster agent has not been prepared." });
-        }
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to record Aster approvals." });
-      }
+    .mutation(() => {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Aster approvals must be verified through signed registration readback. Use Sign & Activate Aster.",
+      });
     }),
 
   revokeAgent: protectedProcedure.mutation(async ({ ctx }) => revokeAsterAgent(ctx.user.id)),
+
+  syncBalance: protectedProcedure.mutation(async ({ ctx }) => {
+    try {
+      return await syncAsterFuturesBalance(ctx.user.id);
+    } catch (e: any) {
+      if (e?.message === "ASTER_AGENT_NOT_FOUND") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No active Aster agent found." });
+      }
+      if (e?.message === "ASTER_APPROVAL_NOT_CONFIRMED") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Aster approval is not confirmed." });
+      }
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to sync Aster balance." });
+    }
+  }),
 
   prepareRegistration: protectedProcedure
     .mutation(async ({ ctx }) => {

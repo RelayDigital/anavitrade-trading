@@ -1,0 +1,25 @@
+[
+  {
+    "symbol": "BINANCE:SUIUSDT",
+    "timeframe": "4h",
+    "timestamp": "2026-07-15T16:06:20.375Z",
+    "netProfit": 1145.8976428189007,
+    "netProfitPercent": 0.11458976428189008,
+    "grossProfit": 5538.967705249201,
+    "grossLoss": 4393.0700624303,
+    "profitFactor": 1.26084210507332,
+    "maxDrawdown": 1585.310842454799,
+    "maxDrawdownPercent": 0.12452163078536824,
+    "totalTrades": 44,
+    "winningTrades": 19,
+    "losingTrades": 25,
+    "winRate": 0.4318181818181818,
+    "sharpeRatio": 0.2159284849189561,
+    "sortinoRatio": 0.26942313796993106,
+    "avgTrade": 26.04312825,
+    "avgTradePercent": 0.025375950469884164,
+    "largestWin": 701.2762172910002,
+    "largestLoss": 473.5257451277999,
+    "avgBarsInTrade": 20.363636363636363
+  }
+]

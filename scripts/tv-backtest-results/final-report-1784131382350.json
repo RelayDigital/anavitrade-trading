@@ -1,0 +1,32 @@
+{
+  "config": {
+    "timeframe": "4h",
+    "symbolCount": 1
+  },
+  "results": [
+    {
+      "symbol": "BINANCE:SOLUSDT",
+      "timeframe": "4h",
+      "timestamp": "2026-07-15T16:03:01.730Z",
+      "netProfit": 0,
+      "netProfitPercent": 0,
+      "grossProfit": 0,
+      "grossLoss": 0,
+      "profitFactor": null,
+      "maxDrawdown": 0,
+      "maxDrawdownPercent": 0,
+      "totalTrades": 0,
+      "winningTrades": 0,
+      "losingTrades": 0,
+      "winRate": null,
+      "sharpeRatio": null,
+      "sortinoRatio": null,
+      "avgTrade": null,
+      "avgTradePercent": null,
+      "largestWin": null,
+      "largestLoss": null,
+      "avgBarsInTrade": 0
+    }
+  ],
+  "aggregate": null
+}

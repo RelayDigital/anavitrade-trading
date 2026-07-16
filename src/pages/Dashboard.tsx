@@ -69,6 +69,7 @@ export default function Dashboard() {
     currentMode, isDemoMode, killActive, statusLabel, statusColor, dotColor,
     setDisplayMode, toggleWeb3Kill, handleKillSwitch,
     revokeWeb3, refetchWeb3,
+    unifiedBalance, liveData,
   } = useDashboardData();
 
   const {
@@ -92,11 +93,22 @@ export default function Dashboard() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
 
-  // Portfolio data (placeholder for live mode)
-  const portfolioData: { day: string; value: number }[] = [];
-  const currentBalance = 0;
-  const totalPnl = 0;
-  const pnlPct = "0.00";
+  // ── Live portfolio data (from CEX unified balance + live account cache) ──
+  const liveSummary = unifiedBalance?.summary;
+  const liveBalanceUsd = liveSummary?.totalEquityUsd ?? parseFloat(liveData?.account?.lastTotalEquityUsd ?? "0");
+  const startingCapitalUsd = 0; // will track from first NAV snapshot once we have it
+  const liveTotalPnl = startingCapitalUsd > 0 ? liveBalanceUsd - startingCapitalUsd : 0;
+  const livePnlPct = startingCapitalUsd > 0 ? ((liveTotalPnl / startingCapitalUsd) * 100).toFixed(2) : "—";
+
+  // ── Portfolio data ──
+  // Live chart: build from unifiedBalance exchange snapshots
+  const liveChartData: { label: string; value: number }[] = (unifiedBalance?.balances ?? [])
+    .filter(b => b.equityUsd > 0)
+    .map(b => ({ label: b.exchange, value: b.equityUsd }));
+
+  const currentBalance = isDemoMode ? demoCurrentBalance : liveBalanceUsd;
+  const totalPnl = isDemoMode ? demoTotalPnl : liveTotalPnl;
+  const pnlPct = isDemoMode ? demoPnlPercent : livePnlPct;
 
   return (
     <DashboardLayout
@@ -197,12 +209,14 @@ export default function Dashboard() {
             isDemoMode={isDemoMode}
             anyConnected={anyConnected}
             demoPortfolioSeries={demoPortfolioSeries}
-            portfolioData={portfolioData}
+            portfolioData={liveChartData}
             demoStartingCapital={10000}
             totalPnl={totalPnl}
             pnlPct={pnlPct}
             syncPending={syncDemo.isPending}
             onSync={() => syncDemo.mutate()}
+            liveBalances={unifiedBalance?.balances}
+            liveTotalEquity={liveBalanceUsd}
           />
 
           <WalletPanel

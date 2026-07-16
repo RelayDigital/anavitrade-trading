@@ -1,0 +1,10 @@
+{
+  "overall_wr": 0.318,
+  "overall_loss_rate": 0.682,
+  "threshold_1_minus_wr": 0.682,
+  "threshold_05_plus_loss": 1.182,
+  "bars_passing": 3479,
+  "pct_passing": 8.7,
+  "wr_above_threshold": 0.7548,
+  "description": "Only trade when calibrated P(win) exceeds threshold"
+}

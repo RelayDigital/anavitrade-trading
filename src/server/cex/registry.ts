@@ -44,7 +44,7 @@ export const EXCHANGES: ExchangeMeta[] = [
     needsPassphrase: false,
     keyHint: "API Management → create key → grant Futures/Trade, do NOT grant Withdraw.",
   },
-  { id: "bybit", label: "Bybit", live: true, signingScheme: "hmac-sha256", baseUrl: "https://api.bybit.com", canVerifyPermissions: true, needsPassphrase: false, keyHint: "API Management → Create API → enable Unified Trading permissions, leave Withdrawals OFF." },
+  { id: "bybit", label: "Bybit", live: true, signingScheme: "hmac-sha256", baseUrl: "https://api.bybit.com", canVerifyPermissions: false, needsPassphrase: false, keyHint: "Bybit v5 lacks API permission introspection. Create a trade-only key and attest on connection. API Management → Create API → enable Unified Trading permissions, leave Withdrawals OFF." },
   { id: "okx", label: "OKX", live: true, signingScheme: "hmac-sha256", baseUrl: "https://www.okx.com", canVerifyPermissions: false, needsPassphrase: true, keyHint: "API → Create API → Futures trade permission (not withdrawal). Save the passphrase — you need it here." },
   { id: "coinbase", label: "Coinbase", live: true, signingScheme: "hmac-sha256", baseUrl: "https://api.exchange.coinbase.com", canVerifyPermissions: false, needsPassphrase: true, keyHint: "Exchange API → Create API key → Trading permission only (no withdraw). Save the passphrase." },
   { id: "kraken", label: "Kraken", live: true, signingScheme: "hmac-sha256", baseUrl: "https://futures.kraken.com", canVerifyPermissions: false, needsPassphrase: false, keyHint: "API Keys → Generate API key → enable Futures, disable Withdrawals." },

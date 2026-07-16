@@ -1,0 +1,154 @@
+[
+  {
+    "feature": "h4_fvg_present",
+    "mean_abs_shap": 0.20801380660948943
+  },
+  {
+    "feature": "h1_atr_ratio",
+    "mean_abs_shap": 0.1640640604772106
+  },
+  {
+    "feature": "mtf_exit_proximity",
+    "mean_abs_shap": 0.13846150239454483
+  },
+  {
+    "feature": "h4_atr_percentile",
+    "mean_abs_shap": 0.10642930260638718
+  },
+  {
+    "feature": "h1_confluence_count",
+    "mean_abs_shap": 0.09952286148511066
+  },
+  {
+    "feature": "h4_rsi",
+    "mean_abs_shap": 0.08325095532456583
+  },
+  {
+    "feature": "h4_ma25_slope",
+    "mean_abs_shap": 0.06742627987774313
+  },
+  {
+    "feature": "h4_bb_width_pct",
+    "mean_abs_shap": 0.06252262527772505
+  },
+  {
+    "feature": "h4_displacement",
+    "mean_abs_shap": 0.05095067508053675
+  },
+  {
+    "feature": "h4_trend",
+    "mean_abs_shap": 0.04717270152248046
+  },
+  {
+    "feature": "m15_entry_precision",
+    "mean_abs_shap": 0.045344681415787874
+  },
+  {
+    "feature": "mtf_confluence",
+    "mean_abs_shap": 0.04416812604628423
+  },
+  {
+    "feature": "h4_bb_squeeze",
+    "mean_abs_shap": 0.04351710341949828
+  },
+  {
+    "feature": "h1_displacement",
+    "mean_abs_shap": 0.029608654699021787
+  },
+  {
+    "feature": "h4_body_ratio",
+    "mean_abs_shap": 0.022052420398296604
+  },
+  {
+    "feature": "h1_ao_direction",
+    "mean_abs_shap": 0.01910642392108545
+  },
+  {
+    "feature": "h4_volume_zscore",
+    "mean_abs_shap": 0.01800954020541601
+  },
+  {
+    "feature": "h1_rsi_zone",
+    "mean_abs_shap": 0.015005144031153333
+  },
+  {
+    "feature": "m15_vwap_position",
+    "mean_abs_shap": 0.013916889005730806
+  },
+  {
+    "feature": "m15_mtf_trigger",
+    "mean_abs_shap": 0.01143501751739937
+  },
+  {
+    "feature": "h1_body_momentum",
+    "mean_abs_shap": 0.008593726055325046
+  },
+  {
+    "feature": "mtf_sniper_score",
+    "mean_abs_shap": 0.0077470574719692795
+  },
+  {
+    "feature": "h4_close_position",
+    "mean_abs_shap": 0.0067977644986125935
+  },
+  {
+    "feature": "h4_ob_present",
+    "mean_abs_shap": 0.006225544815785413
+  },
+  {
+    "feature": "h1_trend_aligned",
+    "mean_abs_shap": 0.005859107101446647
+  },
+  {
+    "feature": "h1_volume_surge",
+    "mean_abs_shap": 0.004335715619231918
+  },
+  {
+    "feature": "h4_choch_present",
+    "mean_abs_shap": 0.004070511000408827
+  },
+  {
+    "feature": "h1_bb_squeeze",
+    "mean_abs_shap": 0.0033993971888619788
+  },
+  {
+    "feature": "h1_ob_aligned",
+    "mean_abs_shap": 0.003188448466512986
+  },
+  {
+    "feature": "m15_body_confirm",
+    "mean_abs_shap": 0.0025261630204112466
+  },
+  {
+    "feature": "h4_ao_cross",
+    "mean_abs_shap": 0.0014750473532041972
+  },
+  {
+    "feature": "m15_volume_climax",
+    "mean_abs_shap": 0.0013040406237344651
+  },
+  {
+    "feature": "m15_range_expansion",
+    "mean_abs_shap": 0.00042969497196224273
+  },
+  {
+    "feature": "h1_sweep_confirm",
+    "mean_abs_shap": 0.0002474756437561193
+  },
+  {
+    "feature": "h4_sweep_present",
+    "mean_abs_shap": 0.0001309219610362755
+  },
+  {
+    "feature": "h1_fvg_in_4h_zone",
+    "mean_abs_shap": 0.0
+  },
+  {
+    "feature": "m15_trigger_fired",
+    "mean_abs_shap": 0.0
+  },
+  {
+    "feature": "m15_wick_rejection",
+    "mean_abs_shap": 0.0
+  }
+]

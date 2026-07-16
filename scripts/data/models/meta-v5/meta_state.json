@@ -1,0 +1,184 @@
+{
+  "brier": 0.2421057135678253,
+  "auc": 0.5926534999777721,
+  "trained_at": "2026-07-15T21:15:11.337599+00:00",
+  "recent_trades": [],
+  "drift_status": "ok",
+  "needs_retrain": false,
+  "tier_edges": {
+    "A": 0.416,
+    "B": 0.3254
+  },
+  "calibrated_threshold": 0.682,
+  "calibrated_threshold_raw": 1.182,
+  "overall_wr": 0.318,
+  "n_features": 54,
+  "n_rows": 40000,
+  "n_rows_passing_threshold": 693,
+  "pct_passing_threshold": 1.73,
+  "regime_clusters": 5,
+  "feature_importance_top20": [
+    {
+      "name": "h4_ma_separation_atr",
+      "importance": 388.0
+    },
+    {
+      "name": "h4_bb_width_pct",
+      "importance": 379.0
+    },
+    {
+      "name": "h4_ma25_slope",
+      "importance": 336.0
+    },
+    {
+      "name": "h4_bb_squeeze_intensity",
+      "importance": 321.0
+    },
+    {
+      "name": "h4_ao_value",
+      "importance": 309.0
+    },
+    {
+      "name": "h4_ao_slope",
+      "importance": 309.0
+    },
+    {
+      "name": "h4_swing_distance_atr",
+      "importance": 297.0
+    },
+    {
+      "name": "h1_fvg_size_atr",
+      "importance": 270.0
+    },
+    {
+      "name": "h1_fvg_distance_atr",
+      "importance": 210.0
+    },
+    {
+      "name": "h4_ao_acceleration",
+      "importance": 202.0
+    },
+    {
+      "name": "atr_percentile_x_bb_squeeze",
+      "importance": 171.0
+    },
+    {
+      "name": "h4_atr_percentile",
+      "importance": 165.0
+    },
+    {
+      "name": "bb_squeeze_x_fvg_distance",
+      "importance": 139.0
+    },
+    {
+      "name": "mtf_1h_fvg_near_4h_fib_distance",
+      "importance": 130.0
+    },
+    {
+      "name": "fvg_distance_x_mtf_fib_distance",
+      "importance": 115.0
+    },
+    {
+      "name": "ct_bb_width_pct",
+      "importance": 85.0
+    },
+    {
+      "name": "ma_sep_x_rsi_velocity",
+      "importance": 79.0
+    },
+    {
+      "name": "h1_fvg_bear",
+      "importance": 78.0
+    },
+    {
+      "name": "h4_trend_bear",
+      "importance": 70.0
+    },
+    {
+      "name": "ct_volume_zscore",
+      "importance": 64.0
+    }
+  ],
+  "shap_importance_top20": [
+    {
+      "feature": "h1_fvg_size_atr",
+      "mean_abs_shap": 0.23866899110510484
+    },
+    {
+      "feature": "mtf_1h_fvg_near_4h_fib_distance",
+      "mean_abs_shap": 0.09168239832000347
+    },
+    {
+      "feature": "ct_bb_width_pct",
+      "mean_abs_shap": 0.05901249747769065
+    },
+    {
+      "feature": "h4_bb_squeeze_intensity",
+      "mean_abs_shap": 0.05566592338465393
+    },
+    {
+      "feature": "h4_bb_width_pct",
+      "mean_abs_shap": 0.05330488203554145
+    },
+    {
+      "feature": "h4_ma_separation_atr",
+      "mean_abs_shap": 0.051348907477067725
+    },
+    {
+      "feature": "h1_fvg_distance_atr",
+      "mean_abs_shap": 0.04381198916166706
+    },
+    {
+      "feature": "h4_ma25_slope",
+      "mean_abs_shap": 0.039800194432851765
+    },
+    {
+      "feature": "h4_ao_slope",
+      "mean_abs_shap": 0.036358444648771325
+    },
+    {
+      "feature": "h4_ao_acceleration",
+      "mean_abs_shap": 0.03511217639279977
+    },
+    {
+      "feature": "h4_atr_percentile",
+      "mean_abs_shap": 0.03418914391171007
+    },
+    {
+      "feature": "h4_ao_value",
+      "mean_abs_shap": 0.03246386306282892
+    },
+    {
+      "feature": "bb_squeeze_x_fvg_distance",
+      "mean_abs_shap": 0.02218085639530232
+    },
+    {
+      "feature": "atr_percentile_x_bb_squeeze",
+      "mean_abs_shap": 0.01841549287944049
+    },
+    {
+      "feature": "h1_fvg_bear",
+      "mean_abs_shap": 0.016988570210421126
+    },
+    {
+      "feature": "ct_ao_acceleration",
+      "mean_abs_shap": 0.015101113376921379
+    },
+    {
+      "feature": "h4_swing_distance_atr",
+      "mean_abs_shap": 0.01489466343421941
+    },
+    {
+      "feature": "fvg_distance_x_mtf_fib_distance",
+      "mean_abs_shap": 0.013259376302161997
+    },
+    {
+      "feature": "h4_bb_expanding",
+      "mean_abs_shap": 0.010873739923993606
+    },
+    {
+      "feature": "h4_trend_bear",
+      "mean_abs_shap": 0.010324034123791717
+    }
+  ]
+}

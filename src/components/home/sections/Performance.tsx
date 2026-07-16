@@ -76,7 +76,7 @@ export default function Performance() {
       <div className="container relative z-10">
         <SectionHeader
           align="center"
-          eyebrow="Verified Performance"
+          eyebrow="Simulated Performance"
           title="We followed our top picks with $10,000"
           subtitle="Every signal our engine scored last month — the wins, the flat ones, and the low-quality signals we correctly skipped. All shown, nothing hidden."
           className="mb-12"

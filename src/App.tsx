@@ -25,6 +25,7 @@ const AccountSettings = lazy(() => import("@/pages/AccountSettings"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const HistoricalPerformance = lazy(() => import("@/pages/HistoricalPerformance"));
 const Security = lazy(() => import("@/pages/Security"));
+const RiskDisclosure = lazy(() => import("@/pages/RiskDisclosure"));
 const LegalPage = lazy(() => import("@/pages/LegalPage"));
 
 function PageFallback() {
@@ -112,6 +113,7 @@ function AnimatedRoutes() {
             </Route>
 
             <Route path="/security" component={Security} />
+            <Route path="/risk-disclosure" component={RiskDisclosure} />
             <Route path="/terms">{() => <LegalPage type="terms" />}</Route>
             <Route path="/privacy">{() => <LegalPage type="privacy" />}</Route>
 

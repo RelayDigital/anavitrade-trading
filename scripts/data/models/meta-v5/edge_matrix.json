@@ -1,0 +1,62 @@
+{
+  "0": {
+    "cluster": 0,
+    "trades": 18192,
+    "win_rate": 0.3365,
+    "avg_pnl_r": 0.0297,
+    "expected_value": 0.0297,
+    "pnl_std": 1.4137,
+    "sharpe_like": 0.021,
+    "edge_multiplier": 1.017,
+    "overall_ev": 0.0127,
+    "overall_wr": 0.318
+  },
+  "1": {
+    "cluster": 1,
+    "trades": 5108,
+    "win_rate": 0.1764,
+    "avg_pnl_r": -0.3426,
+    "expected_value": -0.3426,
+    "pnl_std": 1.1571,
+    "sharpe_like": -0.2961,
+    "edge_multiplier": 0.6446,
+    "overall_ev": 0.0127,
+    "overall_wr": 0.318
+  },
+  "3": {
+    "cluster": 3,
+    "trades": 14678,
+    "win_rate": 0.359,
+    "avg_pnl_r": 0.1235,
+    "expected_value": 0.1235,
+    "pnl_std": 1.4296,
+    "sharpe_like": 0.0864,
+    "edge_multiplier": 1.1108,
+    "overall_ev": 0.0127,
+    "overall_wr": 0.318
+  },
+  "4": {
+    "cluster": 4,
+    "trades": 786,
+    "win_rate": 0.2557,
+    "avg_pnl_r": -0.1199,
+    "expected_value": -0.1199,
+    "pnl_std": 1.307,
+    "sharpe_like": -0.0917,
+    "edge_multiplier": 0.8674,
+    "overall_ev": 0.0127,
+    "overall_wr": 0.318
+  },
+  "5": {
+    "cluster": 5,
+    "trades": 1235,
+    "win_rate": 0.1822,
+    "avg_pnl_r": -0.0015,
+    "expected_value": -0.0015,
+    "pnl_std": 1.1332,
+    "sharpe_like": -0.0013,
+    "edge_multiplier": 0.9858,
+    "overall_ev": 0.0127,
+    "overall_wr": 0.318
+  }
+}

@@ -17,6 +17,7 @@ import { runBacktest, compareToBaseline, DEFAULT_BACKTEST_CONFIG } from "./analy
 import { runParameterSweep, selectOptimalParams, DEFAULT_SWEEP_CONFIG } from "./analysis/parameter-sweep";
 import { runPaperEngine, validatePaperOutcomes } from "./analysis/paper-trade";
 import { runMirror, compareWithCoinlegs } from "./analysis/mirror/engine";
+import { runAsterLiveProof } from "./aster/liveProof";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -440,6 +441,28 @@ app.get("/api/outcome/stats", async (c) => {
   }
 });
 
+
+/** Guarded real Aster proof: tiny non-marketable LIMIT order followed by cancel. */
+app.post("/api/aster/live-proof", async (c) => {
+  const authErr = requireAdminAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const body = await c.req.json().catch(() => ({}));
+    const result = await runAsterLiveProof({
+      confirm: String(body.confirm ?? ""),
+      account: String(body.account ?? ""),
+      symbol: String(body.symbol ?? "BTCUSDT"),
+      maxNotionalUsd: Number(body.maxNotionalUsd ?? 0),
+      limitOffsetBps: Number(body.limitOffsetBps ?? 0),
+      side: body.side === "SELL" ? "SELL" : "BUY",
+    });
+    return c.json({ status: "ok", result });
+  } catch (e: any) {
+    return c.json({ status: "error", message: e?.message ?? String(e) }, 400);
+  }
+});
+
 /* ─── Fee Engine ─────────────────────────────────────────────────── */
 
 /** Protected admin endpoint – manually trigger fee crystallization. */
@@ -459,6 +482,128 @@ app.post("/api/fee/crystallize", async (c) => {
   } catch (e: any) {
     return c.json({ status: "error", message: e?.message }, 500);
   }
+});
+
+/* --- Execution Server Internal API (VPS to Worker) --------------------
+ * All endpoints require x-internal-secret header matching INTERNAL_SECRET.
+ * The VPS fetches pending intents, active connections, kill state, and
+ * reports execution results back.  Credentials are stored encrypted at rest
+ * and decrypted ONLY on the VPS.  */
+
+function requireInternalAuth(c: any, env: Env): Response | null {
+  const secret = c.req.header("x-internal-secret") ?? "";
+  const expected = env.INTERNAL_SECRET ?? "";
+  if (!expected) return c.json({ status: "error", message: "INTERNAL_SECRET not configured" }, 500);
+  if (secret !== expected) return c.json({ status: "error", message: "Unauthorized" }, 401);
+  return null;
+}
+
+/** Return pending TradeIntents (status = "created") -- VPS polls this. */
+app.get("/api/internal/pending-intents", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const { getDb } = await import("./db");
+    const { tradeIntents } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const intents = await getDb().select().from(tradeIntents).where(eq(tradeIntents.status, "created")).limit(50);
+    return c.json({ intents });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+});
+
+/** Active CEX connections with encrypted credentials (VPS decrypts locally). */
+app.get("/api/internal/active-connections", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const { getDb } = await import("./db");
+    const { cexConnections } = await import("../drizzle/schema");
+    const { and, eq } = await import("drizzle-orm");
+    const rows = await getDb().select().from(cexConnections)
+      .where(and(eq(cexConnections.status, "active"), eq(cexConnections.copytradeEnabled, true)));
+    const connections = rows.map((r) => ({
+      id: r.id, userId: r.userId, exchange: r.exchange,
+      encryptedApiKey: r.encryptedApiKey, encryptedApiSecret: r.encryptedApiSecret,
+      encryptedPassphrase: r.encryptedPassphrase, killSwitchActive: r.killSwitchActive, label: r.label,
+    }));
+    return c.json({ connections });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+});
+
+/** Kill switch state. */
+app.get("/api/internal/kill-state", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const { getDb } = await import("./db");
+    const { cexConnections } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const connections = await getDb().select({ id: cexConnections.id, killSwitchActive: cexConnections.killSwitchActive })
+      .from(cexConnections).where(eq(cexConnections.status, "active"));
+    const perConnectionKills: Record<number, boolean> = {};
+    for (const c of connections) perConnectionKills[c.id] = Boolean(c.killSwitchActive);
+    return c.json({ globalKill: false, perConnectionKills });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+});
+
+/** VPS reports execution result -- Worker writes execution_jobs + orderEvents + audit. */
+app.post("/api/internal/report-execution", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const body = await c.req.json();
+    const { getDb, writeAuditLog } = await import("./db");
+    const { executionJobs, orderEvents } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = getDb();
+    const now = Date.now();
+
+    const [existing] = await db.select().from(executionJobs).where(eq(executionJobs.idempotencyKey, body.idempotencyKey)).limit(1);
+    let jobId: number;
+    if (existing) {
+      jobId = existing.id;
+      await db.update(executionJobs).set({
+        status: body.status, orderId: body.orderId ?? null, errorMessage: body.errorMessage ?? null,
+        submittedAt: body.status !== "queued" ? now : existing.submittedAt,
+        filledAt: body.status === "filled" ? now : existing.filledAt, updatedAt: now,
+      } as any).where(eq(executionJobs.id, jobId));
+    } else {
+      const [inserted] = await db.insert(executionJobs).values({
+        tradeIntentId: body.tradeIntentId, userId: body.userId, cexConnectionId: body.cexConnectionId,
+        provider: body.provider, symbol: body.symbol, side: body.side,
+        orderType: body.orderType ?? "market", notionalUsd: body.notionalUsd ?? null,
+        quantity: body.quantity ?? null, leverage: body.leverage ?? null, limitPrice: body.limitPrice ?? null,
+        status: body.status, idempotencyKey: body.idempotencyKey, queuedAt: now,
+        submittedAt: body.status !== "queued" ? now : undefined,
+        filledAt: body.status === "filled" ? now : undefined,
+      } as any).returning({ id: executionJobs.id });
+      jobId = inserted.id;
+    }
+
+    await db.insert(orderEvents).values({
+      executionJobId: jobId, provider: body.provider, eventType: body.status,
+      exchangeOrderId: body.orderId ?? null, payloadJson: JSON.stringify(body), occurredAt: now,
+    } as any);
+    await writeAuditLog(body.userId, `EXECUTION_${body.status.toUpperCase()}`, body.symbol);
+    return c.json({ status: "ok", jobId });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+});
+
+/** VPS pushes klines — bypasses Cloudflare geo-block by fetching locally */
+app.post("/api/internal/seed-klines", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const body = await c.req.json();
+    const { upsertKlines } = await import("./analysis/kline-repository");
+    const count = await upsertKlines(body.klines ?? []);
+    return c.json({ status: "ok", inserted: count, total: (body.klines ?? []).length });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
 });
 
 /* ── Cron throttle counter (persisted to D1 so it survives Worker restarts) ──

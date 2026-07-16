@@ -1,0 +1,101 @@
+{
+  "1": {
+    "risk_range": [
+      0.0,
+      0.0784352431523504
+    ],
+    "risk_mid": 0.0392,
+    "n_trades": 17632,
+    "actual_wr": 0.3246,
+    "expected_wr": 0.0608,
+    "discount_factor": 0.0
+  },
+  "2": {
+    "risk_range": [
+      0.0784352431523504,
+      0.19617562079741496
+    ],
+    "risk_mid": 0.1373,
+    "n_trades": 8816,
+    "actual_wr": 0.2947,
+    "expected_wr": 0.4124,
+    "discount_factor": 0.2854
+  },
+  "3": {
+    "risk_range": [
+      0.19617562079741496,
+      0.28426654950493135
+    ],
+    "risk_mid": 0.2402,
+    "n_trades": 8815,
+    "actual_wr": 0.3148,
+    "expected_wr": 0.4462,
+    "discount_factor": 0.2944
+  },
+  "4": {
+    "risk_range": [
+      0.28426654950493135,
+      0.35481310370086927
+    ],
+    "risk_mid": 0.3195,
+    "n_trades": 8817,
+    "actual_wr": 0.3243,
+    "expected_wr": 0.4643,
+    "discount_factor": 0.3016
+  },
+  "5": {
+    "risk_range": [
+      0.35481310370086927,
+      0.41684056933332597
+    ],
+    "risk_mid": 0.3858,
+    "n_trades": 8815,
+    "actual_wr": 0.3208,
+    "expected_wr": 0.4746,
+    "discount_factor": 0.3241
+  },
+  "6": {
+    "risk_range": [
+      0.41684056933332597,
+      0.4695862937079886
+    ],
+    "risk_mid": 0.4432,
+    "n_trades": 8817,
+    "actual_wr": 0.3358,
+    "expected_wr": 0.486,
+    "discount_factor": 0.309
+  },
+  "7": {
+    "risk_range": [
+      0.4695862937079886,
+      0.5226578526312269
+    ],
+    "risk_mid": 0.4961,
+    "n_trades": 8816,
+    "actual_wr": 0.3413,
+    "expected_wr": 0.4951,
+    "discount_factor": 0.3107
+  },
+  "8": {
+    "risk_range": [
+      0.5226578526312269,
+      0.5953246909384827
+    ],
+    "risk_mid": 0.559,
+    "n_trades": 8816,
+    "actual_wr": 0.3226,
+    "expected_wr": 0.4972,
+    "discount_factor": 0.3512
+  },
+  "9": {
+    "risk_range": [
+      0.5953246909384827,
+      0.8817468548871761
+    ],
+    "risk_mid": 0.7385,
+    "n_trades": 8816,
+    "actual_wr": 0.3335,
+    "expected_wr": 0.5043,
+    "discount_factor": 0.3387
+  }
+}

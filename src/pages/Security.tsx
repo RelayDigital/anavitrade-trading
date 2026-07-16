@@ -88,7 +88,7 @@ export default function Security() {
                 step: "02",
                 icon: <Wifi className="w-5 h-5" />,
                 title: "Encrypted Routing",
-                desc: "The signal is AES-256 encrypted and routed to your registered wallet address over a TLS 1.3 channel. Only your wallet address is stored — never your private key.",
+                desc: "The signal is encrypted in transit over a TLS channel and routed to your registered wallet address. Only your wallet address is stored — never your private key.",
                 color: "text-blue-400",
                 bg: "bg-blue-400/10",
               },

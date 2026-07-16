@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, ArrowLeft, Eye, EyeOff, ShieldCheck, CheckCircle2, KeyRound, Lock } from "lucide-react";
+import { ArrowRight, ArrowLeft, Eye, EyeOff, ShieldCheck, CheckCircle2, KeyRound, Lock, Copy, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -73,6 +73,24 @@ export default function ExchangeOnboarding() {
                 selected={exchange}
                 onSelect={(id) => setExchange(id)}
               />
+
+              {/* IP whitelist notice */}
+              <div className="mt-5 p-4 rounded-2xl border border-accent/20 bg-accent/5">
+                <div className="flex items-start gap-3">
+                  <Globe className="w-4 h-4 text-accent mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground mb-1">Whitelist our execution IP</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Add{" "}
+                      <code className="px-2 py-0.5 rounded-md text-xs font-mono bg-accent/10 text-accent border border-accent/20 select-all cursor-pointer"
+                        onClick={() => { navigator.clipboard.writeText("5.161.229.209"); toast.success("IP copied"); }}>
+                        5.161.229.209
+                      </code>{" "}
+                      to your exchange's API key IP whitelist. Orders route through this static address.
+                    </p>
+                  </div>
+                </div>
+              </div>
               <div className="flex justify-end mt-8">
                 <button
                   disabled={!exchange}
@@ -95,6 +113,16 @@ export default function ExchangeOnboarding() {
                 <div className="flex items-center gap-2 mb-3">
                   <ShieldCheck className="w-4 h-4 text-accent" />
                   <span className="text-sm font-medium">Enter your API credentials</span>
+                </div>
+
+                {/* IP whitelist — compact */}
+                <div className="mb-4 flex items-center gap-2 text-xs p-2.5 rounded-xl bg-accent/5 border border-accent/15">
+                  <Globe className="w-3.5 h-3.5 text-accent shrink-0" />
+                  <span className="text-muted-foreground">Whitelist IP: </span>
+                  <code className="px-1.5 py-0.5 rounded text-[11px] font-mono bg-accent/10 text-accent border border-accent/20 cursor-pointer select-all"
+                    onClick={() => { navigator.clipboard.writeText("5.161.229.209"); toast.success("IP copied"); }}>
+                    5.161.229.209
+                  </code>
                 </div>
 
                 <label className="block text-xs mb-1.5 mt-3 text-muted-foreground">API Key</label>

@@ -120,6 +120,11 @@ export default function TestimonialsSection() {
             </div>
           </Reveal>
 
+          {/* Disclaimer */}
+          <p className="text-xs text-muted-foreground/50 text-center mt-4 max-w-lg mx-auto">
+            Testimonials reflect individual experiences and are not guaranteed, representative, or indicative of future performance or returns. Results shown are from simulated trading. Trading involves risk of loss.
+          </p>
+
           {/* ── Selectable supporting cards with staggered reveal ── */}
           <motion.div
             className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4"

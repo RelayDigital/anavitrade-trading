@@ -11,7 +11,7 @@ import {
   ExternalLink,
   Sparkles,
 } from "lucide-react";
-import { useAccount, useChainId, useSignTypedData, useSwitchChain } from "wagmi";
+import { useAccount, useChainId, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import DashboardLayout from "@/components/DashboardLayout";
 import WalletConnectModal from "@/components/WalletConnectModal";
@@ -21,7 +21,6 @@ export default function AsterOnboarding() {
   const utils = trpc.useUtils();
   const { address: wagmiAddress } = useAccount();
   const chainId = useChainId();
-  const { switchChainAsync, isPending: switchChainPending } = useSwitchChain();
   const { signTypedDataAsync } = useSignTypedData();
   const { data: web3Session } = trpc.web3Wallet.getSession.useQuery();
   const { data: status, isLoading: statusLoading } = trpc.aster.getStatus.useQuery();
@@ -45,13 +44,6 @@ export default function AsterOnboarding() {
     onError: (e) => toast.error(e.message || "Failed to activate Aster."),
   });
 
-  const ensureAsterSigningChain = async () => {
-    if (chainId === 56) {
-      return;
-    }
-    await switchChainAsync({ chainId: 56 });
-  };
-
   const ensureServerWalletSession = async () => {
     if (!wagmiAddress) {
       setShowWalletModal(true);
@@ -67,7 +59,7 @@ export default function AsterOnboarding() {
     await saveWallet.mutateAsync({
       walletAddress: wagmiAddress,
       walletType: "other",
-      chainId: 56,
+      chainId,
       maxDailyLossPct: 5,
     });
     await utils.web3Wallet.getSession.invalidate();
@@ -79,7 +71,6 @@ export default function AsterOnboarding() {
       return;
     }
     try {
-      await ensureAsterSigningChain();
       await ensureServerWalletSession();
       const challenge = await prepareRegistration.mutateAsync();
       const typedData = {
@@ -194,10 +185,10 @@ export default function AsterOnboarding() {
           {/* CTA */}
           <button
             onClick={handleActivate}
-            disabled={switchChainPending || saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending || isActive || activated}
+            disabled={saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending || isActive || activated}
             className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 relative overflow-hidden group font-heading"
             style={{
-              color: switchChainPending || saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? "var(--color-foreground)" : "var(--color-background)",
+              color: saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? "var(--color-foreground)" : "var(--color-background)",
               background: isActive
                 ? "oklch(0.74 0.18 145 / 0.15)"
                 : "var(--grad-arctic)",
@@ -205,7 +196,7 @@ export default function AsterOnboarding() {
               border: isActive ? "1px solid oklch(0.74 0.18 145 / 0.3)" : "none",
             }}
           >
-            {switchChainPending || saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? (
+            {saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Activating...

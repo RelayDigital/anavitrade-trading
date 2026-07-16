@@ -1,0 +1,22 @@
+{
+  "h1_fvg_size_atr": {
+    "direction": "higher=worse",
+    "correlation": -0.9162
+  },
+  "mtf_1h_fvg_near_4h_fib_distance": {
+    "direction": "higher=better",
+    "correlation": 0.8965
+  },
+  "ct_bb_width_pct": {
+    "direction": "higher=worse",
+    "correlation": -0.8163
+  },
+  "h4_bb_squeeze_intensity": {
+    "direction": "higher=better",
+    "correlation": 0.4736
+  },
+  "h4_bb_width_pct": {
+    "direction": "higher=worse",
+    "correlation": -0.6686
+  }
+}

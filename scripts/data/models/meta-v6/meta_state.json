@@ -1,0 +1,184 @@
+{
+  "brier": 0.249402727278451,
+  "auc": 0.5537505062477803,
+  "trained_at": "2026-07-16T17:42:20.153037+00:00",
+  "recent_trades": [],
+  "drift_status": "ok",
+  "needs_retrain": false,
+  "tier_edges": {
+    "A": 0.3936,
+    "B": 0.2739
+  },
+  "calibrated_threshold": 0.682,
+  "calibrated_threshold_raw": 1.182,
+  "overall_wr": 0.318,
+  "n_features": 66,
+  "n_rows": 40000,
+  "n_rows_passing_threshold": 60,
+  "pct_passing_threshold": 0.15,
+  "regime_clusters": 6,
+  "feature_importance_top20": [
+    {
+      "name": "h4_bb_width_pct",
+      "importance": 1167.0
+    },
+    {
+      "name": "h4_swing_distance_atr",
+      "importance": 1019.0
+    },
+    {
+      "name": "h4_price_in_bb",
+      "importance": 977.0
+    },
+    {
+      "name": "h4_ao_slope",
+      "importance": 930.0
+    },
+    {
+      "name": "h4_ma25_slope",
+      "importance": 840.0
+    },
+    {
+      "name": "h4_ao_value",
+      "importance": 840.0
+    },
+    {
+      "name": "h4_ma_separation_atr",
+      "importance": 792.0
+    },
+    {
+      "name": "h4_bb_squeeze_intensity",
+      "importance": 727.0
+    },
+    {
+      "name": "h4_ao_acceleration",
+      "importance": 611.0
+    },
+    {
+      "name": "h4_trend_strength",
+      "importance": 552.0
+    },
+    {
+      "name": "h4_atr_percentile",
+      "importance": 534.0
+    },
+    {
+      "name": "atr_percentile_x_bb_squeeze",
+      "importance": 396.0
+    },
+    {
+      "name": "h1_ob_size_atr",
+      "importance": 202.0
+    },
+    {
+      "name": "ct_ao_distance_from_zero_atr",
+      "importance": 161.0
+    },
+    {
+      "name": "ao_accel_x_ob_distance",
+      "importance": 138.0
+    },
+    {
+      "name": "bb_squeeze_x_fvg_distance",
+      "importance": 135.0
+    },
+    {
+      "name": "ma_sep_x_rsi_velocity",
+      "importance": 133.0
+    },
+    {
+      "name": "ct_bb_width_pct",
+      "importance": 131.0
+    },
+    {
+      "name": "ct_volume_zscore",
+      "importance": 126.0
+    },
+    {
+      "name": "ct_volume_ratio",
+      "importance": 122.0
+    }
+  ],
+  "shap_importance_top20": [
+    {
+      "feature": "ct_ao_distance_from_zero_atr",
+      "mean_abs_shap": 0.07981931562495585
+    },
+    {
+      "feature": "h4_bb_squeeze_intensity",
+      "mean_abs_shap": 0.059019076819559084
+    },
+    {
+      "feature": "h4_bb_width_pct",
+      "mean_abs_shap": 0.058776747450455295
+    },
+    {
+      "feature": "h4_ao_slope",
+      "mean_abs_shap": 0.04748360068480212
+    },
+    {
+      "feature": "h4_price_in_bb",
+      "mean_abs_shap": 0.040441729457931334
+    },
+    {
+      "feature": "h4_ma_separation_atr",
+      "mean_abs_shap": 0.03993167379145128
+    },
+    {
+      "feature": "h4_ma25_slope",
+      "mean_abs_shap": 0.03620549619906385
+    },
+    {
+      "feature": "h4_ao_value",
+      "mean_abs_shap": 0.030094275999760386
+    },
+    {
+      "feature": "h4_atr_percentile",
+      "mean_abs_shap": 0.027960677249095484
+    },
+    {
+      "feature": "h4_ao_acceleration",
+      "mean_abs_shap": 0.02542352221936082
+    },
+    {
+      "feature": "h1_smc_confluence_count",
+      "mean_abs_shap": 0.02450119109474869
+    },
+    {
+      "feature": "h4_trend_strength",
+      "mean_abs_shap": 0.02303456493897982
+    },
+    {
+      "feature": "h4_swing_distance_atr",
+      "mean_abs_shap": 0.021483182047480585
+    },
+    {
+      "feature": "ct_bb_width_pct",
+      "mean_abs_shap": 0.020629717523885403
+    },
+    {
+      "feature": "h1_ob_bull",
+      "mean_abs_shap": 0.019387632642374
+    },
+    {
+      "feature": "h1_fvg_bear",
+      "mean_abs_shap": 0.016605343273240473
+    },
+    {
+      "feature": "ct_ao_acceleration",
+      "mean_abs_shap": 0.01645862328374367
+    },
+    {
+      "feature": "atr_percentile_x_bb_squeeze",
+      "mean_abs_shap": 0.014379178444220785
+    },
+    {
+      "feature": "ma_sep_x_rsi_velocity",
+      "mean_abs_shap": 0.014036962327477849
+    },
+    {
+      "feature": "h4_trend_bear",
+      "mean_abs_shap": 0.014024732248827217
+    }
+  ]
+}

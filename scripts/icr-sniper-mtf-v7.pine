@@ -1,0 +1,1374 @@
+//@version=6
+// ─── ICR Sniper MTF v7 — PF 3.0+ Target ────────────────────────────────────
+// Anavitrade production multi-timeframe strategy. This script is a PURE
+// MEASUREMENT instrument. No arbitrary composite scores, no point weights,
+// no manually tuned tier thresholds. Every output is a raw measurement
+// that feeds the ML inference pipeline (LightGBM + isotonic calibration).
+//
+// v7 ARCHITECTURE (2026-07-16) — Four-Layer Measurement Stack:
+//
+//   Layer 1 — 4h Structure (measure only):
+//     Trend direction (MA7>25>99 — binary)
+//     MA separation in ATR (continuous)
+//     MA25 slope (continuous)
+//     ATR percentile (continuous)
+//     Fibonacci golden pocket price levels
+//     Distance to golden pocket in ATR
+//
+//   Layer 2 — 1h SMC Patterns (measure only):
+//     OB detected + distance (ATR) + size (ATR)
+//     FVG detected + distance (ATR) + size (ATR)
+//     Sweep detected + depth (ATR)
+//     CHoCH detected
+//     SMC confluence count (0-4)
+//
+//   Layer 3 — BB/AO Always-On Measurements (chart TF):
+//     BB width %, squeeze intensity (0-1), expanding flag
+//     AO value, slope (3-bar), acceleration (2nd derivative)
+//     AO cross zero up/down
+//     RSI + RSI velocity (3-bar)
+//     Volume Z-score, volume/MA ratio
+//     Displacement from MA7 (ATR)
+//     Body ratio, close position, wick magnitude
+//
+//   Layer 4 — Confluence (measure only):
+//     1h OB within 1 ATR of 4h fib golden pocket? (distance)
+//     1h FVG within 1 ATR of 4h fib level? (distance)
+//     Level clustering: how many TF levels within 2 ATR?
+//
+// v7 KEY CHANGES FROM v6.2 (targeting PF 3.0+):
+//
+//   ENTRY — quality over quantity. All MUST hold:
+//     1. 4h trend aligned
+//     2. At least ONE 1h SMC pattern active
+//     3. Price within 1.5 ATR of entry zone (OB/FVG/fib level)
+//     4. RR >= 2.0 (was 1.5 — tighter quality gate)
+//     5. RSI not extreme
+//     6. BB squeeze firing OR AO crossing zero (NEW — timing confirmation)
+//     7. Risk gates pass (DD breaker, cooldown)
+//
+//   EXIT — cut losers faster, let winners run:
+//     Trail at 5 ATR (was 7), arm at +3R (was +5R) — activates earlier
+//     Time stop at 30 bars (was 60) — cut dead trades faster
+//     Exhaustion: 6-signal detector preserved
+//     Breakeven: OFF (don't cap the tail)
+//
+//   POSITION SIZING:
+//     Half-Kelly from calibrated ML probability (confluence-level proxy)
+//     Risk per trade: 1% equity maximum
+//     Stop: nearest structural level (OB bottom / swing low / fib 0.786)
+//
+//   TARGET: fewer trades, higher quality, PF > 3.0.
+//
+//   USAGE: Set chart to 15m for full 3-TF measurements (recommended).
+//          Chart TF can be 15m, 1h, or 4h.
+// ───────────────────────────────────────────────────────────────────────────
+
+strategy(
+  "ICR Sniper MTF v7",
+  overlay  = true,
+  margin_long    = 100,
+  margin_short   = 100,
+  commission_type  = strategy.commission.percent,
+  commission_value = 0.05,
+  slippage         = 3,
+  default_qty_type  = strategy.percent_of_equity,
+  default_qty_value = 100,
+  initial_capital   = 10000,
+  pyramiding        = 0,
+  process_orders_on_close = true,
+  max_bars_back     = 800,
+  max_lines_count   = 500,
+  max_labels_count  = 500,
+  max_boxes_count   = 150
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PARAMETER GROUPS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Moving Averages ──
+fastMa = input.int(7,  "Fast MA",  group = "MA Periods")
+midMa  = input.int(25, "Mid MA",   group = "MA Periods")
+slowMa = input.int(99, "Slow MA",  group = "MA Periods")
+atrLen = input.int(14, "ATR Length", group = "MA Periods")
+volLen = input.int(20, "Volume MA Length", group = "MA Periods")
+
+// ── RSI Entry Filter ──
+entryRsiMax = input.int(70, "Entry RSI Max (Long)",  group = "RSI Filter")
+entryRsiMin = input.int(30, "Entry RSI Min (Short)", group = "RSI Filter")
+
+// ── Exit Trail (v7: tighter — 5 ATR, arm at +3R) ──
+trailAtrMult     = input.float(5.0, "Trail ATR Mult",      group = "Exit Trail",
+  tooltip = "v7: 5 ATR (tighter than v6.2's 7 ATR). Trailing stop distance in ATR units.")
+trailActivateAtR = input.float(3.0, "Trail Activate @ R",  group = "Exit Trail", step = 0.5,
+  tooltip = "v7: arm at +3R (was +5R in v6.2). Activates trailing stop earlier to protect profits.")
+useBreakeven     = input.bool(false, "Early Breakeven",     group = "Exit Trail",
+  tooltip = "OFF — early BE kills the fat tail. Leave disabled.")
+breakevenAtR     = input.float(999, "Breakeven @ R",        group = "Exit Trail")
+maxBars          = input.int(30, "Max Bars Held",           group = "Exit Trail",
+  tooltip = "v7: 30 bars (tighter than v6.2's 60). Cut dead trades faster.")
+
+// ── Exhaustion (v6.2 6-signal detector preserved) ──
+useExhaustion    = input.bool(true, "Exhaustion Exit",      group = "Exhaustion")
+exhaustThreshold = input.float(0.7, "Exhaustion Threshold", group = "Exhaustion", step = 0.05)
+
+// ── Position Sizing (Half-Kelly from calibrated ML probability) ──
+riskPerTrade     = input.float(1.0, "% Risk Per Trade", minval=0.25, maxval=5.0, step=0.25, group="Position Sizing",
+  tooltip = "v7: Half-Kelly risk budget. Max 1% equity per trade.")
+maxPortfolioRisk = input.float(4.0, "Max Portfolio Risk %", group="Position Sizing",
+  tooltip = "Hard cap: total open risk across all positions as % of equity.")
+
+// ── Kelly Fraction (0.5 = Half-Kelly) ──
+kellyFraction = input.float(0.5, "Kelly Fraction", minval=0.1, maxval=1.0, step=0.1, group="Position Sizing",
+  tooltip = "Half-Kelly = 0.5. Full Kelly = 1.0. Conservative = 0.25.")
+
+// ── Drawdown Protection ──
+maxDrawdownPct = input.float(15.0, "Max Drawdown %", minval=5.0, maxval=50.0, step=1.0, group="Drawdown Protection",
+  tooltip = "Circuit breaker trips when equity drawdown from peak reaches this %.")
+ddRecoveryPct  = input.float(50.0, "DD Recovery %",  minval=25.0, maxval=100.0, step=5.0, group="Drawdown Protection",
+  tooltip = "Re-arm when drawdown falls below this % of maxDrawdownPct.")
+cooldownBars   = input.int(4, "Cooldown Bars After Loss", minval=1, maxval=20, group="Drawdown Protection",
+  tooltip = "Skip N bars after any losing trade before re-entering.")
+
+// ── Correlation-Aware Sizing ──
+correlationLookback   = input.int(20, "Correlation Lookback Bars", minval=5, maxval=50, group="Correlation",
+  tooltip = "Window for detecting signal clustering.")
+correlationMaxSignals = input.float(2.5, "Max Signals in Window", minval=1.0, maxval=10.0, step=0.5, group="Correlation",
+  tooltip = "If signal count in lookback exceeds this, reduce position size proportionally.")
+
+// ── 1h SMC Detection ──
+smcLookbackOB    = input.int(20, "1h OB Lookback",    group = "SMC Detection (1h)",
+  tooltip = "1h bars to scan backward for Order Block formation.")
+smcLookbackSwing = input.int(5,  "1h Swing Lookback", group = "SMC Detection (1h)",
+  tooltip = "Left/right bars for ta.pivothigh/pivotlow on 1h.")
+smcLookbackFVG   = input.int(15, "1h FVG Lookback",   group = "SMC Detection (1h)",
+  tooltip = "1h bars to scan for unmitigated Fair Value Gaps.")
+smcFvgMinSize    = input.float(0.15, "1h FVG Min Size (ATR)", group = "SMC Detection (1h)", step = 0.05)
+smcLookbackLiq   = input.int(10, "1h Liq Sweep Lookback", group = "SMC Detection (1h)",
+  tooltip = "1h bars to scan for liquidity sweeps.")
+smcLookbackCho   = input.int(15, "1h CHoCH Lookback",  group = "SMC Detection (1h)",
+  tooltip = "1h bars to scan for market structure breaks.")
+
+// ── BB / AO ──
+bbLength     = input.int(20, "BB Length",       group = "BB / AO")
+bbMult       = input.float(2.0, "BB StdDev",    group = "BB / AO", step = 0.1)
+bbSqueezeLB  = input.int(20, "Squeeze Lookback", group = "BB / AO")
+aoFastLen    = input.int(5,  "AO Fast",         group = "BB / AO")
+aoSlowLen    = input.int(34, "AO Slow",         group = "BB / AO")
+
+// ── Fibonacci ──
+fibLookback4h = input.int(60, "4h Fib Lookback Bars", group = "Fibonacci",
+  tooltip = "Number of 4h bars to scan for swing points.")
+
+// ── Entry Gates (v7: tighter) ──
+minRR = input.float(2.0, "Min RR for Entry", group = "Entry Gates", step = 0.25,
+  tooltip = "v7: 2.0 minimum risk/reward (was 1.5 in v6.2). Only highest-conviction setups.")
+entryProxATR = input.float(1.5, "Entry Proximity (ATR)", group = "Entry Gates", step = 0.1,
+  tooltip = "Price must be within this many ATR of the entry zone (SMC or fib).")
+
+// ── Timing Confirmation (v7 NEW) ──
+bbSqueezeFireThreshold = input.float(0.30, "BB Squeeze Fire Threshold", group = "Timing Confirmation", step = 0.05,
+  tooltip = "BB squeeze intensity below this = squeeze is firing. Lower = tighter squeeze, higher conviction.")
+useAoTiming = input.bool(true, "AO Cross Zero Timing", group = "Timing Confirmation",
+  tooltip = "Require AO crossing zero as timing confirmation (alternative to BB squeeze).")
+
+// ── Display ──
+showMAs      = input.bool(true, "Show MAs",        group = "Display")
+showSignals  = input.bool(true, "Show Signals",    group = "Display")
+showStops    = input.bool(true, "Show Stops",      group = "Display")
+showSMCZones = input.bool(true, "Show SMC Zones",  group = "Display")
+showFibs     = input.bool(true, "Show Fib Levels", group = "Display")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER 3: CHART TIMEFRAME — BB/AO/RSI/VOLUME (continuous, always present)
+// ═══════════════════════════════════════════════════════════════════════════
+
+chartTF = timeframe.period
+
+ma7   = ta.sma(close, fastMa)
+ma25  = ta.sma(close, midMa)
+ma99  = ta.sma(close, slowMa)
+atr14 = ta.atr(atrLen)
+rsi14 = ta.rsi(close, 14)
+volMa = ta.sma(volume, volLen)
+
+// ── Bollinger Bands (continuous) ──
+bbBasis = ta.sma(close, bbLength)
+bbDev   = ta.stdev(close, bbLength)
+bbUpper = bbBasis + bbDev * bbMult
+bbLower = bbBasis - bbDev * bbMult
+bbWidth = bbBasis > 0 ? (bbUpper - bbLower) / bbBasis * 100 : 0
+bbWidthMin = ta.lowest(bbWidth, bbSqueezeLB)
+bbWidthMax = ta.highest(bbWidth, bbSqueezeLB)
+bbWidthRange = bbWidthMax - bbWidthMin
+bbSqueezeIntensity = bbWidthRange > 0 ? (bbWidth - bbWidthMin) / bbWidthRange : 0.5
+bbExpanding = bbWidth > bbWidth[1] and bbWidth[1] > bbWidth[2]
+
+// v7: "Squeeze firing" = bands are tight AND starting to expand
+bbSqueezeFiring = bbSqueezeIntensity < bbSqueezeFireThreshold and bbExpanding
+
+// ── Awesome Oscillator (continuous) ──
+hl2 = (high + low) / 2.0
+aoRaw = ta.sma(hl2, aoFastLen) - ta.sma(hl2, aoSlowLen)
+aoSlope3 = aoRaw - aoRaw[3]
+aoAccel = aoSlope3 - aoSlope3[2]
+aoCrossZeroUp = ta.crossover(aoRaw, 0)
+aoCrossZeroDn = ta.crossunder(aoRaw, 0)
+
+// ── RSI velocity (continuous) ──
+rsiVelocity = rsi14 - rsi14[3]
+
+// ── Volume (continuous) ──
+volRatio = volMa > 0 ? volume / volMa : 1.0
+volStdev = ta.stdev(volume, volLen)
+volZscore = volStdev > 0 ? (volume - volMa) / volStdev : 0.0
+volSurge = volMa > 0 and volume >= 2.0 * volMa
+
+// ── Displacement from MA7 (continuous, ATR units) ──
+displacementAtr = atr14 > 0 ? (close - ma7) / atr14 : 0.0
+
+// ── Candle metrics (continuous) ──
+bodyRatio   = (high - low) > 0 ? math.abs(close - open) / (high - low) : 0.0
+closePos    = (high - low) > 0 ? (close - low) / (high - low) : 0.5
+
+// ── Wick rejection (continuous, ATR units) ──
+bullWickMag = atr14 > 0 ? math.max(math.abs(open - low), math.abs(close - low)) / atr14 : 0.0
+bearWickMag = atr14 > 0 ? math.max(math.abs(high - open), math.abs(high - close)) / atr14 : 0.0
+bullWickRej = bullWickMag >= 0.5 and closePos > 0.65
+bearWickRej = bearWickMag >= 0.5 and closePos < 0.35
+
+// ── Chart pivots (for local swing proximity) ──
+chartPH = ta.pivothigh(high, 5, 5)
+chartPL = ta.pivotlow(low, 5, 5)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER 1: 4h STRUCTURE (via request.security) — trend, fib levels, swings
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Raw 4h values ──
+h4O = request.security(syminfo.tickerid, "240", open,  barmerge.gaps_off, barmerge.lookahead_off)
+h4H = request.security(syminfo.tickerid, "240", high,  barmerge.gaps_off, barmerge.lookahead_off)
+h4L = request.security(syminfo.tickerid, "240", low,   barmerge.gaps_off, barmerge.lookahead_off)
+h4C = request.security(syminfo.tickerid, "240", close, barmerge.gaps_off, barmerge.lookahead_off)
+h4ATR = request.security(syminfo.tickerid, "240", ta.atr(atrLen), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 4h Trend + Structure ──
+
+f_4hStructure(int fMa, int mMa, int sMa) =>
+    m7  = ta.sma(close, fMa)
+    m25 = ta.sma(close, mMa)
+    m99 = ta.sma(close, sMa)
+    a   = ta.atr(14)
+
+    bull = m7 > m25 and m25 > m99 and close > m25 and m25 > m25[5]
+    bear = m7 < m25 and m25 < m99 and close < m25 and m25 < m25[5]
+
+    spread = m99 > 0 ? math.abs(m7 - m99) / m99 * 100 : 0
+    atrPctPrice = m99 > 0 ? a / m99 * 100 : 0
+    ranging = spread < atrPctPrice * 0.8
+
+    // v7: continuous measurements for Layer 1
+    ma7slope  = m7 - m7[5]
+    ma25slope = m25 - m25[5]
+    ma99slope = m99 - m99[5]
+    maSepAtr  = a > 0 ? math.abs(m7 - m25) / a : 0
+
+    atrMin50 = ta.lowest(a, 50)
+    atrMax50 = ta.highest(a, 50)
+    atrRange = atrMax50 - atrMin50
+    atrPct = atrRange > 0 ? (a - atrMin50) / atrRange * 100 : 50
+
+    [bull, bear, ranging, ma7slope, ma25slope, ma99slope, maSepAtr, atrPct]
+
+[h4Bull, h4Bear, h4Ranging, h4MA7slope, h4MA25slope, h4MA99slope, h4MASepAtr, h4AtrPct] =
+  request.security(syminfo.tickerid, "240", f_4hStructure(fastMa, midMa, slowMa),
+    barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 4h RSI ──
+h4RSI = request.security(syminfo.tickerid, "240", ta.rsi(close, 14),
+  barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 4h Fibonacci ──
+
+f_4hFib(bool isLong, int lookback) =>
+    ph = ta.pivothigh(high, 5, 5)
+    pl = ta.pivotlow(low, 5, 5)
+    a = ta.atr(14)
+    found = false
+    origin = 0.0
+    extreme = 0.0
+
+    if isLong
+        bestLow = 1e18
+        bestLowIdx = 0
+        for i = 5 to lookback by 1
+            pv = pl[i]
+            if not na(pv) and pv < bestLow
+                bestLow := pv
+                bestLowIdx := i
+        if bestLowIdx < 3
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        bestHigh = 0.0
+        for j = bestLowIdx - 1 to 1 by -1
+            pv = ph[j]
+            if not na(pv) and pv > bestHigh
+                bestHigh := pv
+        if bestHigh <= 0 or bestHigh <= bestLow * 1.01
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        swing = bestHigh - bestLow
+        if swing < 1.5 * a
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        found := true
+        origin := bestLow
+        extreme := bestHigh
+    else
+        bestHigh = 0.0
+        bestHighIdx = 0
+        for i = 5 to lookback by 1
+            pv = ph[i]
+            if not na(pv) and pv > bestHigh
+                bestHigh := pv
+                bestHighIdx := i
+        if bestHighIdx < 3
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        bestLow = 1e18
+        for j = bestHighIdx - 1 to 1 by -1
+            pv = pl[j]
+            if not na(pv) and pv < bestLow
+                bestLow := pv
+        if bestLow >= 1e18 or bestLow >= bestHigh * 0.99
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        swing = bestHigh - bestLow
+        if swing < 1.5 * a
+            [false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 999.0]
+        found := true
+        origin := bestHigh
+        extreme := bestLow
+
+    sw = math.abs(extreme - origin)
+    dir = isLong ? 1.0 : -1.0
+    gp618 = origin + dir * sw * 0.618
+    gp786 = origin + dir * sw * 0.786
+    gpMid = (gp618 + gp786) / 2.0
+    x1618 = origin + dir * sw * 1.618
+    x1900 = origin + dir * sw * 1.90
+
+    gpDistAtr = a > 0 ? math.abs(close - gpMid) / a : 999.0
+
+    [found, origin, extreme, gp618, gp786, gpMid, x1618, x1900, gpDistAtr]
+
+[h4BullFibF, h4BullFibO, h4BullFibX, h4Bull618, h4Bull786, h4BullGpMid, h4Bull1618, h4Bull1900, h4BullGpDist] =
+  request.security(syminfo.tickerid, "240", f_4hFib(true, fibLookback4h),
+    barmerge.gaps_off, barmerge.lookahead_off)
+[h4BearFibF, h4BearFibO, h4BearFibX, h4Bear618, h4Bear786, h4BearGpMid, h4Bear1618, h4Bear1900, h4BearGpDist] =
+  request.security(syminfo.tickerid, "240", f_4hFib(false, fibLookback4h),
+    barmerge.gaps_off, barmerge.lookahead_off)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER 2: 1h SMC PATTERN DETECTION (via request.security)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 1h Order Block ──
+
+f_1hOB(bool isLong, int lbOB, int lbSw) =>
+    ph = ta.pivothigh(high, lbSw, lbSw)
+    pl = ta.pivotlow(low, lbSw, lbSw)
+    a = ta.atr(14)
+    found = false
+    zoneTop = 0.0
+    zoneBot = 0.0
+    distAtr = 999.0
+    sizeAtr = 0.0
+
+    if isLong
+        for i = lbSw to lbOB by 1
+            pv = pl[i]
+            if na(pv)
+                continue
+            obIdx = i
+            for j = i - 1 to math.max(i - lbSw, 0) by -1
+                if low[j] <= pv
+                    obIdx := j
+                    break
+            if close[obIdx] >= open[obIdx]
+                if obIdx + 1 < bar_index and close[obIdx + 1] < open[obIdx + 1]
+                    obIdx := obIdx + 1
+                else
+                    continue
+            obTop = high[obIdx]
+            obBot = low[obIdx]
+            maxAfter = 0.0
+            for k = 0 to obIdx - 1 by 1
+                maxAfter := math.max(maxAfter, high[k])
+            if maxAfter <= obTop * 1.01
+                continue
+            rallyPct = obTop > 0 ? (maxAfter - obTop) / obTop * 100 : 0
+            if rallyPct < 2.0
+                continue
+            mitigated = false
+            for k = 0 to obIdx - 1 by 1
+                if close[k] < obBot
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+            found := true
+            zoneTop := obTop
+            zoneBot := obBot
+            sizeAtr := a[obIdx] > 0 ? (obTop - obBot) / a[obIdx] : 0
+            zoneMid = (zoneTop + zoneBot) / 2.0
+            distAtr := a > 0 ? math.abs(close - zoneMid) / a : 999
+            break
+    else
+        for i = lbSw to lbOB by 1
+            pv = ph[i]
+            if na(pv)
+                continue
+            obIdx = i
+            for j = i - 1 to math.max(i - lbSw, 0) by -1
+                if high[j] >= pv
+                    obIdx := j
+                    break
+            if close[obIdx] <= open[obIdx]
+                if obIdx + 1 < bar_index and close[obIdx + 1] > open[obIdx + 1]
+                    obIdx := obIdx + 1
+                else
+                    continue
+            obTop = low[obIdx]
+            obBot = high[obIdx]
+            minAfter = 1e18
+            for k = 0 to obIdx - 1 by 1
+                minAfter := math.min(minAfter, low[k])
+            if minAfter >= obBot * 0.99
+                continue
+            dropPct = obBot > 0 ? (obBot - minAfter) / obBot * 100 : 0
+            if dropPct < 2.0
+                continue
+            mitigated = false
+            for k = 0 to obIdx - 1 by 1
+                if close[k] > obBot
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+            found := true
+            zoneTop := obTop
+            zoneBot := obBot
+            sizeAtr := a[obIdx] > 0 ? (obBot - obTop) / a[obIdx] : 0
+            zoneMid = (zoneTop + zoneBot) / 2.0
+            distAtr := a > 0 ? math.abs(close - zoneMid) / a : 999
+            break
+
+    [found, zoneTop, zoneBot, distAtr, sizeAtr]
+
+[h1BullOB_f, h1BullOB_t, h1BullOB_b, h1BullOB_dist, h1BullOB_sz] =
+  request.security(syminfo.tickerid, "60", f_1hOB(true, smcLookbackOB, smcLookbackSwing),
+    barmerge.gaps_off, barmerge.lookahead_off)
+[h1BearOB_f, h1BearOB_t, h1BearOB_b, h1BearOB_dist, h1BearOB_sz] =
+  request.security(syminfo.tickerid, "60", f_1hOB(false, smcLookbackOB, smcLookbackSwing),
+    barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 1h Fair Value Gap ──
+
+f_1hFVG(bool isLong, int lbFvg, float minSizeAtr) =>
+    a = ta.atr(14)
+    found = false
+    gapTop = 0.0
+    gapBot = 0.0
+    distAtr = 999.0
+    sizeAtr = 0.0
+    age = 0
+
+    for off = 2 to lbFvg by 1
+        aa = off + 2
+        bb = off + 1
+        cc = off
+        if isLong
+            if low[aa] <= high[cc]
+                continue
+            gTop = low[aa]
+            gBot = high[cc]
+            gSize = gTop - gBot
+            if gSize < minSizeAtr * a[off]
+                continue
+            bBody = math.abs(close[bb] - open[bb])
+            bRange = high[bb] - low[bb]
+            if not (bRange > 0 and bBody / bRange >= 0.5 and close[bb] > open[bb])
+                if bRange < 0.8 * a[bb]
+                    continue
+            mitigated = false
+            for k = 0 to off - 1 by 1
+                if high[k] >= gBot and low[k] <= gTop
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+            found := true
+            gapTop := gTop
+            gapBot := gBot
+            sizeAtr := a[off] > 0 ? gSize / a[off] : 0
+            gapMid = (gapTop + gapBot) / 2.0
+            distAtr := a > 0 ? math.abs(close - gapMid) / a : 999
+            age := off
+            break
+        else
+            if high[aa] >= low[cc]
+                continue
+            gTop = low[cc]
+            gBot = high[aa]
+            gSize = gBot - gTop
+            if gSize < minSizeAtr * a[off]
+                continue
+            bBody = math.abs(close[bb] - open[bb])
+            bRange = high[bb] - low[bb]
+            if not (bRange > 0 and bBody / bRange >= 0.5 and close[bb] < open[bb])
+                if bRange < 0.8 * a[bb]
+                    continue
+            mitigated = false
+            for k = 0 to off - 1 by 1
+                if high[k] >= gBot and low[k] <= gTop
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+            found := true
+            gapTop := gTop
+            gapBot := gBot
+            sizeAtr := a[off] > 0 ? gSize / a[off] : 0
+            gapMid = (gapTop + gapBot) / 2.0
+            distAtr := a > 0 ? math.abs(close - gapMid) / a : 999
+            age := off
+            break
+
+    [found, gapTop, gapBot, distAtr, sizeAtr, age]
+
+[h1BullFVG_f, h1BullFVG_t, h1BullFVG_b, h1BullFVG_dist, h1BullFVG_sz, h1BullFVG_age] =
+  request.security(syminfo.tickerid, "60", f_1hFVG(true, smcLookbackFVG, smcFvgMinSize),
+    barmerge.gaps_off, barmerge.lookahead_off)
+[h1BearFVG_f, h1BearFVG_t, h1BearFVG_b, h1BearFVG_dist, h1BearFVG_sz, h1BearFVG_age] =
+  request.security(syminfo.tickerid, "60", f_1hFVG(false, smcLookbackFVG, smcFvgMinSize),
+    barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 1h Liquidity Sweep ──
+
+f_1hSweep(bool isLong, int lbSw, int lbLiq) =>
+    ph = ta.pivothigh(high, lbSw, lbSw)
+    pl = ta.pivotlow(low, lbSw, lbSw)
+    a = ta.atr(14)
+    found = false
+    depthAtr = 0.0
+
+    if isLong
+        for i = lbSw to lbLiq by 1
+            pv = pl[i]
+            if na(pv)
+                continue
+            wicked = false
+            reclaimed = false
+            deepest = 0.0
+            for k = 0 to i - 1 by 1
+                if low[k] < pv
+                    wicked := true
+                    deepest := math.max(deepest, pv - low[k])
+                if wicked and close[k] > pv
+                    reclaimed := true
+                    break
+            if not (wicked and reclaimed)
+                continue
+            if close <= pv
+                continue
+            found := true
+            depthAtr := a > 0 ? deepest / a : 0
+            break
+    else
+        for i = lbSw to lbLiq by 1
+            pv = ph[i]
+            if na(pv)
+                continue
+            wicked = false
+            rejected = false
+            deepest = 0.0
+            for k = 0 to i - 1 by 1
+                if high[k] > pv
+                    wicked := true
+                    deepest := math.max(deepest, high[k] - pv)
+                if wicked and close[k] < pv
+                    rejected := true
+                    break
+            if not (wicked and rejected)
+                continue
+            if close >= pv
+                continue
+            found := true
+            depthAtr := a > 0 ? deepest / a : 0
+            break
+
+    [found, depthAtr]
+
+[h1BullSweep_f, h1BullSweep_d] = request.security(syminfo.tickerid, "60",
+  f_1hSweep(true, smcLookbackSwing, smcLookbackLiq), barmerge.gaps_off, barmerge.lookahead_off)
+[h1BearSweep_f, h1BearSweep_d] = request.security(syminfo.tickerid, "60",
+  f_1hSweep(false, smcLookbackSwing, smcLookbackLiq), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 1h CHoCH ──
+
+f_1hCho(bool isLong, int lbCho, int fMa, int mMa) =>
+    ph = ta.pivothigh(high, 5, 5)
+    pl = ta.pivotlow(low, 5, 5)
+    m25 = ta.sma(close, mMa)
+    found = false
+
+    if isLong
+        if close <= m25
+            [false]
+        lastLH = 0.0
+        for k = lbCho to 1 by -1
+            if not na(ph[k])
+                lastLH := ph[k]
+                break
+        if lastLH <= 0
+            [false]
+        for k = 0 to lbCho by 1
+            if close[k] > lastLH
+                found := true
+                break
+    else
+        if close >= m25
+            [false]
+        lastHL = 1e18
+        for k = lbCho to 1 by -1
+            if not na(pl[k])
+                lastHL := pl[k]
+                break
+        if lastHL >= 1e18
+            [false]
+        for k = 0 to lbCho by 1
+            if close[k] < lastHL
+                found := true
+                break
+
+    [found]
+
+[h1BullCho_f] = request.security(syminfo.tickerid, "60",
+  f_1hCho(true, smcLookbackCho, fastMa, midMa), barmerge.gaps_off, barmerge.lookahead_off)
+[h1BearCho_f] = request.security(syminfo.tickerid, "60",
+  f_1hCho(false, smcLookbackCho, fastMa, midMa), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ── 1h ATR (for distance scaling) ──
+h1ATR = request.security(syminfo.tickerid, "60", ta.atr(atrLen),
+  barmerge.gaps_off, barmerge.lookahead_off)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER 2 AGGREGATION: 1h SMC
+// ═══════════════════════════════════════════════════════════════════════════
+
+h1BullPatternAny = h1BullOB_f or h1BullFVG_f or h1BullSweep_f or h1BullCho_f
+h1BearPatternAny = h1BearOB_f or h1BearFVG_f or h1BearSweep_f or h1BearCho_f
+
+h1BullConflCount = (h1BullOB_f ? 1 : 0) + (h1BullFVG_f ? 1 : 0) + (h1BullSweep_f ? 1 : 0) + (h1BullCho_f ? 1 : 0)
+h1BearConflCount = (h1BearOB_f ? 1 : 0) + (h1BearFVG_f ? 1 : 0) + (h1BearSweep_f ? 1 : 0) + (h1BearCho_f ? 1 : 0)
+
+// Smallest distance to any active 1h SMC zone
+h1BullBestDist = math.min(h1BullOB_f ? h1BullOB_dist : 999.0, h1BullFVG_f ? h1BullFVG_dist : 999.0)
+h1BearBestDist = math.min(h1BearOB_f ? h1BearOB_dist : 999.0, h1BearFVG_f ? h1BearFVG_dist : 999.0)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER 4: CONFLUENCE MEASUREMENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 1h OB within 1 ATR of 4h fib golden pocket ──
+h1BullOB_near_4hGP = h4BullFibF and h1BullOB_f and h4ATR > 0 and
+  math.abs((h1BullOB_t + h1BullOB_b) / 2.0 - h4BullGpMid) / h4ATR < 1.0
+h1BearOB_near_4hGP = h4BearFibF and h1BearOB_f and h4ATR > 0 and
+  math.abs((h1BearOB_t + h1BearOB_b) / 2.0 - h4BearGpMid) / h4ATR < 1.0
+
+// ── 1h FVG within 1 ATR of 4h fib level ──
+h1BullFVG_near_4hFib = (h4BullFibF and h1BullFVG_f and h4ATR > 0) and
+  (math.abs((h1BullFVG_t + h1BullFVG_b) / 2.0 - h4Bull618) / h4ATR < 1.0 or
+   math.abs((h1BullFVG_t + h1BullFVG_b) / 2.0 - h4Bull786) / h4ATR < 1.0)
+h1BearFVG_near_4hFib = (h4BearFibF and h1BearFVG_f and h4ATR > 0) and
+  (math.abs((h1BearFVG_t + h1BearFVG_b) / 2.0 - h4Bear618) / h4ATR < 1.0 or
+   math.abs((h1BearFVG_t + h1BearFVG_b) / 2.0 - h4Bear786) / h4ATR < 1.0)
+
+bullFibSMCoverlap = h1BullOB_near_4hGP or h1BullFVG_near_4hFib
+bearFibSMCoverlap = h1BearOB_near_4hGP or h1BearFVG_near_4hFib
+
+// ── Level clustering: count TF levels within 2 ATR of current price ──
+bullLevelCluster = 0
+bullLevelCluster := (h4BullFibF and h4ATR > 0 and math.abs(close - h4Bull618) / h4ATR < 2.0 ? 1 : 0) +
+  (h4BullFibF and h4ATR > 0 and math.abs(close - h4Bull786) / h4ATR < 2.0 ? 1 : 0) +
+  (h1BullOB_f and h4ATR > 0 and math.abs(close - h1BullOB_b) / h4ATR < 2.0 ? 1 : 0) +
+  (h1BullFVG_f and h4ATR > 0 and math.abs(close - h1BullFVG_b) / h4ATR < 2.0 ? 1 : 0)
+
+bearLevelCluster = 0
+bearLevelCluster := (h4BearFibF and h4ATR > 0 and math.abs(close - h4Bear618) / h4ATR < 2.0 ? 1 : 0) +
+  (h4BearFibF and h4ATR > 0 and math.abs(close - h4Bear786) / h4ATR < 2.0 ? 1 : 0) +
+  (h1BearOB_f and h4ATR > 0 and math.abs(close - h1BearOB_t) / h4ATR < 2.0 ? 1 : 0) +
+  (h1BearFVG_f and h4ATR > 0 and math.abs(close - h1BearFVG_t) / h4ATR < 2.0 ? 1 : 0)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTRY / STOP / TP COMPUTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+computeEntry(bool isLong) =>
+    if isLong
+        // Stop: nearest structural support — 1h SMC > 4h fib > 10-bar low
+        stopLevel = ta.lowest(low, 10)[1]
+        if h1BullOB_f and h1BullOB_b < close
+            stopLevel := h1BullOB_b
+        if h1BullFVG_f and h1BullFVG_b < close
+            if not h1BullOB_f or h1BullFVG_b > h1BullOB_b
+                stopLevel := h1BullFVG_b
+        if h4BullFibF and not na(h4Bull618) and h4Bull618 < close
+            if not h1BullOB_f or h4Bull618 > stopLevel
+                stopLevel := h4Bull618
+        if h4BullFibF and not na(h4Bull786) and h4Bull786 < close
+            if h4Bull786 > stopLevel
+                stopLevel := h4Bull786
+
+        atrBuf = 0.1 * atr14
+        stop = stopLevel - atrBuf
+        entry = close
+
+        if stop >= entry
+            [entry, stop, entry, 0.0, 999.0]
+
+        risk = entry - stop
+        if risk <= 0
+            [entry, stop, entry, 0.0, 999.0]
+
+        // TP: nearest fib extension above entry, or 3R fallback
+        tp = entry + 3.0 * risk
+        if h4BullFibF and not na(h4Bull1618) and h4Bull1618 > entry + 1.5 * risk
+            tp := h4Bull1618
+        if h4BullFibF and not na(h4Bull1900) and h4Bull1900 > entry + 1.5 * risk
+            if h4Bull1900 < tp or tp == entry + 3.0 * risk
+                tp := h4Bull1900
+
+        rrVal = risk > 0 ? (tp - entry) / risk : 0.0
+        stopDistAtr = atr14 > 0 ? (entry - stop) / atr14 : 999.0
+        [entry, stop, tp, rrVal, stopDistAtr]
+
+    else
+        stopLevel = ta.highest(high, 10)[1]
+        if h1BearOB_f and h1BearOB_t > close
+            stopLevel := h1BearOB_t
+        if h1BearFVG_f and h1BearFVG_t > close
+            if not h1BearOB_f or h1BearFVG_t < h1BearOB_t
+                stopLevel := h1BearFVG_t
+        if h4BearFibF and not na(h4Bear618) and h4Bear618 > close
+            if not h1BearOB_f or h4Bear618 < stopLevel
+                stopLevel := h4Bear618
+        if h4BearFibF and not na(h4Bear786) and h4Bear786 > close
+            if h4Bear786 < stopLevel
+                stopLevel := h4Bear786
+
+        atrBuf = 0.1 * atr14
+        stop = stopLevel + atrBuf
+        entry = close
+
+        if stop <= entry
+            [entry, stop, entry, 0.0, 999.0]
+
+        risk = stop - entry
+        if risk <= 0
+            [entry, stop, entry, 0.0, 999.0]
+
+        tp = entry - 3.0 * risk
+        if h4BearFibF and not na(h4Bear1618) and h4Bear1618 < entry - 1.5 * risk
+            tp := h4Bear1618
+        if h4BearFibF and not na(h4Bear1900) and h4Bear1900 < entry - 1.5 * risk
+            if h4Bear1900 > tp or tp == entry - 3.0 * risk
+                tp := h4Bear1900
+
+        rrVal = risk > 0 ? (entry - tp) / risk : 0.0
+        stopDistAtr = atr14 > 0 ? (stop - entry) / atr14 : 999.0
+        [entry, stop, tp, rrVal, stopDistAtr]
+
+[bullEntry, bullStop, bullTP, bullRR, bullStopDist] = computeEntry(true)
+[bearEntry, bearStop, bearTP, bearRR, bearStopDist] = computeEntry(false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTRY SIGNAL (v7: ALL gates must pass, including timing confirmation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Gate 1: 4h trend aligned
+bullTrendOk = h4Bull and not h4Ranging
+bearTrendOk = h4Bear and not h4Ranging
+
+// Gate 2: at least one 1h SMC pattern active (implicit in h1BullPatternAny)
+
+// Gate 3: price within 1.5 ATR of entry zone
+bullNearZone = (h1BullOB_f and h1BullOB_dist <= entryProxATR) or
+  (h1BullFVG_f and h1BullFVG_dist <= entryProxATR) or
+  (h4BullFibF and h4BullGpDist <= entryProxATR)
+bearNearZone = (h1BearOB_f and h1BearOB_dist <= entryProxATR) or
+  (h1BearFVG_f and h1BearFVG_dist <= entryProxATR) or
+  (h4BearFibF and h4BearGpDist <= entryProxATR)
+
+// Gate 4: RR >= 2.0
+bullRrOk = bullStop < close and bullRR >= minRR
+bearRrOk = bearStop > close and bearRR >= minRR
+
+// Gate 5: RSI not extreme
+bullRsiOk = na(rsi14) ? true : rsi14 < entryRsiMax
+bearRsiOk = na(rsi14) ? true : rsi14 > entryRsiMin
+
+// Gate 6: v7 NEW — timing confirmation (BB squeeze firing OR AO crossing zero)
+// Bullish timing: BB squeeze firing in bull trend, or AO crossing zero upward
+bullTimingOk = bbSqueezeFiring or (useAoTiming and aoCrossZeroUp)
+// Bearish timing: BB squeeze firing in bear trend, or AO crossing zero downward
+bearTimingOk = bbSqueezeFiring or (useAoTiming and aoCrossZeroDn)
+
+// Gate 7: risk gates (checked at execution time)
+
+// Compose full signal — ALL seven gates
+bullSignalCore = bullTrendOk and h1BullPatternAny and bullNearZone and bullRrOk and bullRsiOk and bullTimingOk
+bearSignalCore = bearTrendOk and h1BearPatternAny and bearNearZone and bearRrOk and bearRsiOk and bearTimingOk
+
+bullSignal = bullSignalCore
+bearSignal = bearSignalCore
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HALF-KELLY POSITION SIZING (v7)
+// ═══════════════════════════════════════════════════════════════════════════
+// Uses confluence level as proxy for calibrated ML probability.
+// Level 3+ (max):  1.0x base sizing — highest conviction
+// Level 2 (high):  0.75x base sizing
+// Level 1 (base):  0.50x base sizing — lowest conviction, Half-Kelly discount
+// Half-Kelly fraction is applied globally via kellyFraction (default 0.5).
+
+bullConfluenceLvl = bullFibSMCoverlap or h1BullConflCount >= 3 ? 3 : h1BullConflCount >= 2 ? 2 : h1BullConflCount >= 1 ? 1 : 0
+bearConfluenceLvl = bearFibSMCoverlap or h1BearConflCount >= 3 ? 3 : h1BearConflCount >= 2 ? 2 : h1BearConflCount >= 1 ? 1 : 0
+
+// v7: Half-Kelly sizing — confluence level scales the Kelly fraction
+// Kelly fraction already embedded as kellyFraction (0.5), confluence scales within that
+bullKellyMult = bullConfluenceLvl >= 3 ? 1.0 : bullConfluenceLvl == 2 ? 0.75 : 0.5
+bearKellyMult = bearConfluenceLvl >= 3 ? 1.0 : bearConfluenceLvl == 2 ? 0.75 : 0.5
+
+// Combine Kelly fraction with confluence scaling
+bullSizingMult = bullKellyMult * kellyFraction / 0.5  // normalize so kellyFraction=0.5 gives 1.0 at max confluence
+bearSizingMult = bearKellyMult * kellyFraction / 0.5
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POSITION SIZING COMPUTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+computePositionSize(float stopPrice, bool isLong, float corrMult) =>
+    stopDistAbs = isLong ? math.max(close - stopPrice, 1e-12) : math.max(stopPrice - close, 1e-12)
+    stopDistPct = close > 0 ? stopDistAbs / close : 0
+    basePct = stopDistPct > 0 ? riskPerTrade / stopDistPct * 100 : 0
+    maxPct  = stopDistPct > 0 ? maxPortfolioRisk / stopDistPct * 100 : 0
+    cappedPct = math.min(basePct, maxPct)
+    math.max(cappedPct * corrMult, 0.0)
+
+// Correlation density
+var float corrDensity = 0.0
+corrDensity := corrDensity * 0.9
+if bullSignal or bearSignal
+    corrDensity += 1.0
+
+correlationMult = corrDensity > correlationMaxSignals
+  ? math.max(0.25, correlationMaxSignals / math.max(corrDensity, 0.01))
+  : 1.0
+
+bullPositionPct = computePositionSize(bullStop, true, correlationMult) * bullSizingMult
+bearPositionPct = computePositionSize(bearStop, false, correlationMult) * bearSizingMult
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRADE STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+var float trailStop      = na
+var float highestFav     = na
+var float entryPrice     = na
+var float initialStop    = na
+var float entryRisk      = na
+var bool  trailArmed     = false
+var int   direction      = 0
+var int   barsInTrade    = 0
+var float maxFavR        = 0.0
+
+// Risk Management State
+var float peakEquity          = 0.0
+var bool  ddCircuitBroken     = false
+var int   barsSinceLastLoss   = 999
+var float entryPricePreReset  = na
+var int   dirPreReset         = 0
+var bool  checkForLoss        = false
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRADE MANAGEMENT — Update trail each bar (v7: 5 ATR, arm at +3R)
+// ═══════════════════════════════════════════════════════════════════════════
+
+if strategy.position_size == 0
+
+    if checkForLoss
+        if (dirPreReset == 1 and close < entryPricePreReset) or (dirPreReset == -1 and close > entryPricePreReset)
+            barsSinceLastLoss := 0
+        checkForLoss := false
+
+    entryPricePreReset := entryPrice
+    dirPreReset        := direction
+
+    trailStop   := na
+    highestFav  := na
+    entryPrice  := na
+    initialStop := na
+    entryRisk   := na
+    trailArmed  := false
+    direction   := 0
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+inLong  = strategy.position_size > 0
+inShort = strategy.position_size < 0
+
+justEnteredLong  = inLong  and direction != 1
+justEnteredShort = inShort and direction != -1
+
+if justEnteredLong
+    entryPrice  := close
+    initialStop := bullStop
+    entryRisk   := entryPrice - initialStop
+    trailStop   := initialStop
+    highestFav  := entryPrice
+    trailArmed  := false
+    direction   := 1
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+if justEnteredShort
+    entryPrice  := close
+    initialStop := bearStop
+    entryRisk   := initialStop - entryPrice
+    trailStop   := initialStop
+    highestFav  := entryPrice
+    trailArmed  := false
+    direction   := -1
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+if direction != 0
+    barsInTrade += 1
+    float favR = 0.0
+
+    if direction == 1
+        highestFav := math.max(highestFav, high)
+        if entryRisk > 0
+            favR := (highestFav - entryPrice) / entryRisk
+    else
+        highestFav := math.min(highestFav, low)
+        if entryRisk > 0
+            favR := (entryPrice - highestFav) / entryRisk
+
+    maxFavR := math.max(maxFavR, favR)
+
+    // v7: Breakeven OFF (useBreakeven defaults to false, breakevenAtR = 999)
+    if useBreakeven and favR >= breakevenAtR
+        if direction == 1
+            trailStop := math.max(trailStop, entryPrice)
+        else
+            trailStop := math.min(trailStop, entryPrice)
+
+    // v7: Arm trail at +3R (was +5R in v6.2)
+    if favR >= trailActivateAtR
+        trailArmed := true
+
+    // v7: Trail at 5 ATR (was 7 ATR in v6.2)
+    if trailArmed
+        newTrail = direction == 1 ? highestFav - trailAtrMult * atr14 : highestFav + trailAtrMult * atr14
+        if direction == 1
+            trailStop := math.max(trailStop, newTrail)
+        else
+            trailStop := math.min(trailStop, newTrail)
+
+    // Ratchet: trail only moves in favorable direction
+    if direction == 1
+        trailStop := math.max(trailStop, trailStop[1])
+    else
+        trailStop := math.min(trailStop, trailStop[1])
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXIT CONDITIONS (v6.2 6-signal exhaustion detector preserved)
+// ═══════════════════════════════════════════════════════════════════════════
+
+trailHitLong  = direction == 1 and low  <= trailStop
+trailHitShort = direction == -1 and high >= trailStop
+
+// Exhaustion signals (6-signal detector)
+rsiDivLong   = direction == 1 and rsi14 > 68 and rsi14 < rsi14[3] and high > high[3]
+rsiDivShort  = direction == -1 and rsi14 < 32 and rsi14 > rsi14[3] and low < low[3]
+rsiDivEx     = rsiDivLong or rsiDivShort
+rsiDivScore  = rsiDivEx ? 0.25 : 0.0
+
+volExSpike   = volMa > 0 and volume >= 2.5 * volMa
+volExWide    = atr14 > 0 and (high - low) >= 1.5 * atr14
+volExRejLong = direction == 1 and closePos < 0.45
+volExRejShort = direction == -1 and closePos > 0.55
+volEx        = volExSpike and volExWide and (volExRejLong or volExRejShort)
+volExScore   = volEx ? 0.20 : 0.0
+
+overExtLong  = direction == 1 and displacementAtr >= 3.0
+overExtShort = direction == -1 and displacementAtr <= -3.0
+overExt      = overExtLong or overExtShort
+overExtScore = overExt ? 0.20 : 0.0
+
+bbRetLong  = direction == 1 and bbUpper > close and close[1] > bbUpper[1]
+bbRetShort = direction == -1 and bbLower < close and close[1] < bbLower[1]
+bbRet      = bbRetLong or bbRetShort
+bbRetScore = bbRet ? 0.20 : 0.0
+
+bcBodyOk = bodyRatio < 0.3
+bcB1Long  = direction == 1 and close[1] > open[1] and bodyRatio[1] >= 0.6
+bcB2Long  = direction == 1 and close[2] > open[2] and bodyRatio[2] >= 0.6
+bcB3Long  = direction == 1 and close[3] > open[3] and bodyRatio[3] >= 0.6
+bcB1Short = direction == -1 and close[1] < open[1] and bodyRatio[1] >= 0.6
+bcB2Short = direction == -1 and close[2] < open[2] and bodyRatio[2] >= 0.6
+bcB3Short = direction == -1 and close[3] < open[3] and bodyRatio[3] >= 0.6
+bcSeqLong  = bcB1Long and bcB2Long and bcB3Long
+bcSeqShort = bcB1Short and bcB2Short and bcB3Short
+bcSeq      = bcSeqLong or bcSeqShort
+bcScore    = bcBodyOk and bcSeq ? 0.15 : 0.0
+
+exhAggScore = rsiDivScore + volExScore + overExtScore + bbRetScore + bcScore
+exitExhaustion = useExhaustion and exhAggScore >= exhaustThreshold
+
+// v7: Time stop at 30 bars (was 60 in v6.2)
+exitTime = barsInTrade >= maxBars
+
+if inLong and (trailHitLong or exitExhaustion or exitTime)
+    strategy.close("Long",
+      comment = trailHitLong ? "Trail" : exitExhaustion ? str.tostring(exhAggScore, "#.##") : "Time")
+
+if inShort and (trailHitShort or exitExhaustion or exitTime)
+    strategy.close("Short",
+      comment = trailHitShort ? "Trail" : exitExhaustion ? str.tostring(exhAggScore, "#.##") : "Time")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRAWDOWN CIRCUIT BREAKER & COOLDOWN
+// ═══════════════════════════════════════════════════════════════════════════
+
+if barstate.isfirst
+    peakEquity := strategy.equity
+
+peakEquity := math.max(peakEquity, strategy.equity)
+
+float currentDD = peakEquity > 0 ? (peakEquity - strategy.equity) / peakEquity * 100 : 0
+float ddReArmLevel = maxDrawdownPct * ddRecoveryPct / 100
+ddCircuitBroken := currentDD >= maxDrawdownPct or (ddCircuitBroken and currentDD > ddReArmLevel)
+
+if (inLong and (trailHitLong or exitExhaustion or exitTime)) or (inShort and (trailHitShort or exitExhaustion or exitTime))
+    checkForLoss := true
+
+if strategy.position_size == 0
+    barsSinceLastLoss := math.min(barsSinceLastLoss + 1, 99999)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTRY EXECUTION (Gate 7: risk gates pass)
+// ═══════════════════════════════════════════════════════════════════════════
+
+canEnter = strategy.position_size == 0
+riskGatesOk = not ddCircuitBroken and barsSinceLastLoss >= cooldownBars
+
+// v7: entry comment includes timing confirmation source
+timingLabelBull = bbSqueezeFiring ? "SQZ" : aoCrossZeroUp ? "AO+" : "—"
+timingLabelBear = bbSqueezeFiring ? "SQZ" : aoCrossZeroDn ? "AO-" : "—"
+
+if canEnter and bullSignal and riskGatesOk
+    strategy.entry("Long", strategy.long,
+      qty = bullPositionPct,
+      comment = "C" + str.tostring(bullConfluenceLvl, "#") + " " + timingLabelBull + " RR" + str.tostring(bullRR, "#.##"))
+    strategy.exit("Long TP/SL", "Long",
+      limit = bullTP,
+      stop  = bullStop)
+
+if canEnter and bearSignal and riskGatesOk
+    strategy.entry("Short", strategy.short,
+      qty = bearPositionPct,
+      comment = "C" + str.tostring(bearConfluenceLvl, "#") + " " + timingLabelBear + " RR" + str.tostring(bearRR, "#.##"))
+    strategy.exit("Short TP/SL", "Short",
+      limit = bearTP,
+      stop  = bearStop)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VISUAL OVERLAYS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── MA Ribbon ──
+plot(showMAs ? ma7  : na, "MA7",  color.new(#2962FF, 0), 1)
+plot(showMAs ? ma25 : na, "MA25", color.new(#FF6D00, 0), 2)
+plot(showMAs ? ma99 : na, "MA99", color.new(#9E9E9E, 0), 1)
+
+// ── 4h Trend Background ──
+bgcolor(h4Bull ? color.new(#00C853, 93) : h4Bear ? color.new(#FF1744, 93) : na,
+  title = "4h Trend")
+
+// ── BB Squeeze Background (v7: timing confirmation highlight) ──
+bgcolor(bbSqueezeFiring ? color.new(#FFD600, 93) : na,
+  title = "BB Squeeze Firing")
+
+// ── 1h SMC Zone Boxes ──
+if showSMCZones and h1BullOB_f and not na(h1BullOB_t) and not na(h1BullOB_b)
+    box.new(bar_index, h1BullOB_t, bar_index + 8, h1BullOB_b,
+      border_color = color.new(#00E676, 70), bgcolor = color.new(#00E676, 94),
+      border_width = 1, text = "1h OB " + str.tostring(h1BullOB_sz, "#.##") + "A",
+      text_color = color.white, text_size = size.small)
+
+if showSMCZones and h1BearOB_f and not na(h1BearOB_t) and not na(h1BearOB_b)
+    box.new(bar_index, h1BearOB_t, bar_index + 8, h1BearOB_b,
+      border_color = color.new(#FF1744, 70), bgcolor = color.new(#FF1744, 94),
+      border_width = 1, text = "1h OB " + str.tostring(h1BearOB_sz, "#.##") + "A",
+      text_color = color.white, text_size = size.small)
+
+if showSMCZones and h1BullFVG_f and not na(h1BullFVG_t) and not na(h1BullFVG_b) and h1BullFVG_t > h1BullFVG_b
+    box.new(bar_index, h1BullFVG_t, bar_index + 5, h1BullFVG_b,
+      border_color = color.new(#448AFF, 70), bgcolor = color.new(#448AFF, 94),
+      border_width = 1, text = "1h FVG " + str.tostring(h1BullFVG_sz, "#.##") + "A",
+      text_color = color.white, text_size = size.small)
+
+if showSMCZones and h1BearFVG_f and not na(h1BearFVG_t) and not na(h1BearFVG_b) and h1BearFVG_b > h1BearFVG_t
+    box.new(bar_index, h1BearFVG_t, bar_index + 5, h1BearFVG_b,
+      border_color = color.new(#FF6D00, 70), bgcolor = color.new(#FF6D00, 94),
+      border_width = 1, text = "1h FVG " + str.tostring(h1BearFVG_sz, "#.##") + "A",
+      text_color = color.white, text_size = size.small)
+
+// ── 4h Fib Golden Pocket ──
+if showFibs and h4BullFibF and not na(h4Bull618) and not na(h4Bull786)
+    line.new(bar_index - 3, h4Bull618, bar_index + 10, h4Bull618,
+      color = color.new(#FFD600, 60), width = 1, style = line.style_dashed)
+    line.new(bar_index - 3, h4Bull786, bar_index + 10, h4Bull786,
+      color = color.new(#FFD600, 60), width = 1, style = line.style_dashed)
+    box.new(bar_index, h4Bull618, bar_index + 10, h4Bull786,
+      border_color = color.new(#FFD600, 30), bgcolor = color.new(#FFD600, 92),
+      border_width = 1, text = "GP", text_color = color.new(#FFD600, 90), text_size = size.small)
+if showFibs and h4BullFibF and not na(h4Bull1618)
+    line.new(bar_index - 3, h4Bull1618, bar_index + 10, h4Bull1618,
+      color = color.new(#00E676, 40), width = 1, style = line.style_dashed)
+
+if showFibs and h4BearFibF and not na(h4Bear618) and not na(h4Bear786)
+    line.new(bar_index - 3, h4Bear618, bar_index + 10, h4Bear618,
+      color = color.new(#FFD600, 60), width = 1, style = line.style_dashed)
+    line.new(bar_index - 3, h4Bear786, bar_index + 10, h4Bear786,
+      color = color.new(#FFD600, 60), width = 1, style = line.style_dashed)
+    box.new(bar_index, h4Bear786, bar_index + 10, h4Bear618,
+      border_color = color.new(#FFD600, 30), bgcolor = color.new(#FFD600, 92),
+      border_width = 1, text = "GP", text_color = color.new(#FFD600, 90), text_size = size.small)
+if showFibs and h4BearFibF and not na(h4Bear1618)
+    line.new(bar_index - 3, h4Bear1618, bar_index + 10, h4Bear1618,
+      color = color.new(#FF1744, 40), width = 1, style = line.style_dashed)
+
+// ── Sweep/CHoCH Markers ──
+if showSignals and h1BullSweep_f
+    label.new(bar_index, low, "1h LS " + str.tostring(h1BullSweep_d, "#.##") + "A",
+      color = color.new(#00E5FF, 55), textcolor = color.white,
+      style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny)
+if showSignals and h1BearSweep_f
+    label.new(bar_index, high, "1h LS " + str.tostring(h1BearSweep_d, "#.##") + "A",
+      color = color.new(#FF6D00, 55), textcolor = color.white,
+      style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny)
+if showSignals and h1BullCho_f
+    label.new(bar_index, low, "1h CHoCH",
+      color = color.new(#76FF03, 50), textcolor = color.white,
+      style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny)
+if showSignals and h1BearCho_f
+    label.new(bar_index, high, "1h CHoCH",
+      color = color.new(#FF1744, 50), textcolor = color.white,
+      style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny)
+
+// ── Signal Arrows ──
+if showSignals and canEnter and riskGatesOk and bullSignal
+    entryLbl = bullConfluenceLvl >= 3 ? "v7 MAX" : bullConfluenceLvl == 2 ? "v7 HIGH" : "v7 BASE"
+    entryCol = bullConfluenceLvl >= 3 ? color.new(#00E676, 90) : bullConfluenceLvl == 2 ? color.yellow : color.new(#00C853, 55)
+    label.new(bar_index, low, entryLbl + " " + timingLabelBull,
+      color = entryCol, textcolor = color.white, style = label.style_label_up,
+      yloc = yloc.belowbar, size = size.small)
+
+if showSignals and canEnter and riskGatesOk and bearSignal
+    entryLbl = bearConfluenceLvl >= 3 ? "v7 MAX" : bearConfluenceLvl == 2 ? "v7 HIGH" : "v7 BASE"
+    entryCol = bearConfluenceLvl >= 3 ? color.new(#FF1744, 90) : bearConfluenceLvl == 2 ? color.yellow : color.new(#FF1744, 55)
+    label.new(bar_index, high, entryLbl + " " + timingLabelBear,
+      color = entryCol, textcolor = color.white, style = label.style_label_down,
+      yloc = yloc.abovebar, size = size.small)
+
+// ── Trail Stop Line ──
+plot(showStops and inLong ? trailStop : na, "Trail Long",
+  color = color.green, style = plot.style_linebr, linewidth = 1)
+plot(showStops and inShort ? trailStop : na, "Trail Short",
+  color = color.red, style = plot.style_linebr, linewidth = 1)
+
+// ── Entry/Exit Markers ──
+plotshape(inLong and direction[1] != 1 ? close : na, "Entry Long",
+  style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small)
+plotshape(inShort and direction[1] != -1 ? close : na, "Entry Short",
+  style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEASUREMENT INFO PANEL — raw values, no composite scores
+// ═══════════════════════════════════════════════════════════════════════════
+
+var infoTable = table.new(position.top_right, 3, 30,
+  border_width = 1, border_color = color.new(#9E9E9E, 50),
+  bgcolor = color.new(#1A1A2E, 88))
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "SNIPER MTF v7", text_color = color.new(#00E5FF, 90), text_size = size.small)
+    table.cell(infoTable, 1, 0, syminfo.ticker, text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 0, chartTF, text_color = color.new(#FFD600, 80), text_size = size.small)
+    table.cell(infoTable, 0, 1, "Target: PF 3.0+ | K:" + str.tostring(kellyFraction, "#.#"),
+      text_color = color.new(#CE93D8, 70), text_size = size.small)
+
+    // ── Layer 1: 4h Structure ──
+    table.cell(infoTable, 0, 2, "── L1: 4h Structure ──", text_color = color.new(#00E5FF, 70), text_size = size.small)
+    regimeTxt = h4Ranging ? "RANGING" : h4Bull ? "BULL" : h4Bear ? "BEAR" : "NEUTRAL"
+    regimeCol = h4Ranging ? color.yellow : h4Bull ? color.green : h4Bear ? color.red : color.gray
+    table.cell(infoTable, 0, 3, "Regime", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 3, regimeTxt, text_color = regimeCol, text_size = size.small)
+    table.cell(infoTable, 2, 3, "ATR " + str.tostring(h4AtrPct, "#") + "%", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 0, 4, "MA Slopes", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 4, "7:" + str.tostring(h4MA7slope, "#.#####"),
+      text_color = h4MA7slope > 0 ? color.green : color.red, text_size = size.small)
+    table.cell(infoTable, 2, 4, "25:" + str.tostring(h4MA25slope, "#.#####"),
+      text_color = h4MA25slope > 0 ? color.green : color.red, text_size = size.small)
+    table.cell(infoTable, 0, 5, "MA Sep", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 5, str.tostring(h4MASepAtr, "#.##") + " ATR",
+      text_color = h4MASepAtr < 1.0 ? color.yellow : color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 5, "99:" + str.tostring(h4MA99slope, "#.#####"),
+      text_color = h4MA99slope > 0 ? color.green : color.red, text_size = size.small)
+
+    // ── 4h Fibonacci ──
+    table.cell(infoTable, 0, 6, "── 4h Fibonacci ──", text_color = color.new(#FFD600, 70), text_size = size.small)
+    h4FibTxt = h4BullFibF ? "Bull GP " + str.tostring(h4BullGpDist, "#.##") + "A" :
+      h4BearFibF ? "Bear GP " + str.tostring(h4BearGpDist, "#.##") + "A" : "—"
+    h4FibCol = h4BullFibF ? color.green : h4BearFibF ? color.red : color.gray
+    table.cell(infoTable, 0, 7, "Fib GP", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 7, h4FibTxt, text_color = h4FibCol, text_size = size.small)
+    h4TpTxt = h4BullFibF and not na(h4Bull1618) ? str.tostring(h4Bull1618, "#.##") :
+      h4BearFibF and not na(h4Bear1618) ? str.tostring(h4Bear1618, "#.##") : "—"
+    table.cell(infoTable, 2, 7, "1618: " + h4TpTxt, text_color = color.gray, text_size = size.small)
+
+    // ── Layer 2: 1h SMC ──
+    table.cell(infoTable, 0, 8, "── L2: 1h SMC ──", text_color = color.new(#00E676, 70), text_size = size.small)
+    table.cell(infoTable, 0, 9, "OB", text_color = color.gray, text_size = size.small)
+    obTxt = h1BullOB_f ? "B " + str.tostring(h1BullOB_dist, "#.##") + "A" + " sz" + str.tostring(h1BullOB_sz, "#.##") :
+      h1BearOB_f ? "S " + str.tostring(h1BearOB_dist, "#.##") + "A" + " sz" + str.tostring(h1BearOB_sz, "#.##") : "—"
+    obCol = h1BullOB_f ? color.green : h1BearOB_f ? color.red : color.gray
+    table.cell(infoTable, 1, 9, obTxt, text_color = obCol, text_size = size.small)
+
+    table.cell(infoTable, 0, 10, "FVG", text_color = color.gray, text_size = size.small)
+    fvgTxt = h1BullFVG_f ? "B " + str.tostring(h1BullFVG_dist, "#.##") + "A" :
+      h1BearFVG_f ? "S " + str.tostring(h1BearFVG_dist, "#.##") + "A" : "—"
+    fvgCol = h1BullFVG_f ? color.green : h1BearFVG_f ? color.red : color.gray
+    table.cell(infoTable, 1, 10, fvgTxt, text_color = fvgCol, text_size = size.small)
+    table.cell(infoTable, 2, 10, h1BullFVG_f ? "sz" + str.tostring(h1BullFVG_sz, "#.##") :
+      h1BearFVG_f ? "sz" + str.tostring(h1BearFVG_sz, "#.##") : "", text_color = color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 11, "Sweep", text_color = color.gray, text_size = size.small)
+    swTxt = h1BullSweep_f ? "B " + str.tostring(h1BullSweep_d, "#.##") + "A" :
+      h1BearSweep_f ? "S " + str.tostring(h1BearSweep_d, "#.##") + "A" : "—"
+    swCol = h1BullSweep_f ? color.green : h1BearSweep_f ? color.red : color.gray
+    table.cell(infoTable, 1, 11, swTxt, text_color = swCol, text_size = size.small)
+
+    table.cell(infoTable, 0, 12, "CHoCH", text_color = color.gray, text_size = size.small)
+    chTxt = h1BullCho_f ? "BULL" : h1BearCho_f ? "BEAR" : "—"
+    chCol = h1BullCho_f ? color.green : h1BearCho_f ? color.red : color.gray
+    table.cell(infoTable, 1, 12, chTxt, text_color = chCol, text_size = size.small)
+
+    conflCol = h1BullConflCount >= 3 ? color.green : h1BullConflCount >= 2 ? color.yellow : h1BullConflCount >= 1 ? color.white : color.gray
+    table.cell(infoTable, 0, 13, "Confluence", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 13, str.tostring(h1BullConflCount, "#") + "B/" + str.tostring(h1BearConflCount, "#") + "S",
+      text_color = math.max(h1BullConflCount, h1BearConflCount) >= 2 ? color.green : color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 13, "Clust " + str.tostring(math.max(bullLevelCluster, bearLevelCluster), "#"),
+      text_color = math.max(bullLevelCluster, bearLevelCluster) >= 2 ? color.green : color.gray, text_size = size.small)
+
+    // ── Layer 4: Confluence ──
+    table.cell(infoTable, 0, 14, "── L4: Confluence ──", text_color = color.new(#CE93D8, 70), text_size = size.small)
+    overlapTxt = (bullFibSMCoverlap or bearFibSMCoverlap) ? "Fib+SMC OVERLAP" : "—"
+    overlapCol = (bullFibSMCoverlap or bearFibSMCoverlap) ? color.green : color.gray
+    table.cell(infoTable, 1, 14, overlapTxt, text_color = overlapCol, text_size = size.small)
+
+    // ── Layer 3: Chart TF Measurements ──
+    table.cell(infoTable, 0, 15, "── L3: Chart TF ──", text_color = color.new(#448AFF, 70), text_size = size.small)
+
+    // BB row
+    sqzTxt = bbSqueezeIntensity < 0.25 ? "TIGHT" : bbSqueezeIntensity < 0.50 ? "SQUEEZE" : "WIDE"
+    sqzCol = bbSqueezeIntensity < 0.25 ? color.yellow : bbSqueezeIntensity < 0.50 ? color.white : color.gray
+    table.cell(infoTable, 0, 16, "BB", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 16, sqzTxt + " " + str.tostring(bbSqueezeIntensity, "#.##") +
+      (bbSqueezeFiring ? " FIRE" : ""), text_color = bbSqueezeFiring ? color.green : sqzCol, text_size = size.small)
+    table.cell(infoTable, 2, 16, (bbExpanding ? "EXP" : "") + " w" + str.tostring(bbWidth, "#.#") + "%",
+      text_color = bbExpanding ? color.green : color.gray, text_size = size.small)
+
+    // AO row
+    aoTxt = str.tostring(aoRaw, "#.##")
+    aoDir = aoCrossZeroUp ? "ZERO+" : aoCrossZeroDn ? "ZERO-" : aoSlope3 > 0 ? "up" : "dn"
+    aoCol = aoCrossZeroUp ? color.green : aoCrossZeroDn ? color.red : aoSlope3 > 0 ? color.yellow : color.red
+    table.cell(infoTable, 0, 17, "AO", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 17, aoTxt + " " + aoDir, text_color = aoCol, text_size = size.small)
+    table.cell(infoTable, 2, 17, "acc" + str.tostring(aoAccel, "#.####"),
+      text_color = aoAccel > 0 ? color.green : color.red, text_size = size.small)
+
+    // RSI row
+    table.cell(infoTable, 0, 18, "RSI", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 18, str.tostring(rsi14, "#.#") + " v" + str.tostring(rsiVelocity, "#.##"),
+      text_color = rsi14 > 60 ? color.green : rsi14 < 40 ? color.red : color.gray, text_size = size.small)
+
+    // Volume row
+    table.cell(infoTable, 0, 19, "Vol", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 19, "x" + str.tostring(volRatio, "#.##") + " Z" + str.tostring(volZscore, "#.##"),
+      text_color = volSurge ? color.green : color.gray, text_size = size.small)
+
+    // Displacement row
+    table.cell(infoTable, 0, 20, "Disp", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 20, str.tostring(displacementAtr, "#.##") + " ATR",
+      text_color = displacementAtr > 2 ? color.green : displacementAtr < -2 ? color.red : color.gray, text_size = size.small)
+
+    // Body + Close Pos
+    table.cell(infoTable, 0, 21, "Body/Pos", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 21, "b" + str.tostring(bodyRatio, "#.##") + " p" + str.tostring(closePos, "#.##"),
+      text_color = color.gray, text_size = size.small)
+    wickTxt = bullWickRej ? "B" + str.tostring(bullWickMag, "#.##") : bearWickRej ? "S" + str.tostring(bearWickMag, "#.##") : "—"
+    wickCol = bullWickRej ? color.green : bearWickRej ? color.red : color.gray
+    table.cell(infoTable, 2, 21, "W:" + wickTxt, text_color = wickCol, text_size = size.small)
+
+    // ── Timing Confirmation (v7 NEW row) ──
+    table.cell(infoTable, 0, 22, "── Timing (v7) ──", text_color = color.new(#FFD600, 70), text_size = size.small)
+    timingTxt = bbSqueezeFiring ? "BB SQUEEZE FIRE" : aoCrossZeroUp ? "AO ZERO UP" : aoCrossZeroDn ? "AO ZERO DN" : "WAITING"
+    timingCol = bbSqueezeFiring ? color.green : (aoCrossZeroUp or aoCrossZeroDn) ? color.yellow : color.gray
+    table.cell(infoTable, 0, 23, "Timing", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 23, timingTxt, text_color = timingCol, text_size = size.small)
+    table.cell(infoTable, 2, 23, "sqz<" + str.tostring(bbSqueezeFireThreshold, "#.##"),
+      text_color = bbSqueezeIntensity < bbSqueezeFireThreshold ? color.green : color.gray, text_size = size.small)
+
+    // ── Entry Status ──
+    table.cell(infoTable, 0, 24, "── Entry ──", text_color = color.new(#CE93D8, 70), text_size = size.small)
+    bullEntryTxt = bullSignal ? ("C" + str.tostring(bullConfluenceLvl, "#") + " RR" + str.tostring(bullRR, "#.##")) : "—"
+    bullEntryCol = bullSignal and bullConfluenceLvl >= 3 ? color.green : bullSignal ? color.yellow : color.gray
+    table.cell(infoTable, 0, 25, "Bull", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 25, bullEntryTxt, text_color = bullEntryCol, text_size = size.small)
+    table.cell(infoTable, 2, 25, str.tostring(bullPositionPct, "#.#") + "% s" + str.tostring(bullStopDist, "#.##") + "A",
+      text_color = bullSignal ? color.green : color.gray, text_size = size.small)
+
+    bearEntryTxt = bearSignal ? ("C" + str.tostring(bearConfluenceLvl, "#") + " RR" + str.tostring(bearRR, "#.##")) : "—"
+    bearEntryCol = bearSignal and bearConfluenceLvl >= 3 ? color.red : bearSignal ? color.yellow : color.gray
+    table.cell(infoTable, 0, 26, "Bear", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 26, bearEntryTxt, text_color = bearEntryCol, text_size = size.small)
+    table.cell(infoTable, 2, 26, str.tostring(bearPositionPct, "#.#") + "% s" + str.tostring(bearStopDist, "#.##") + "A",
+      text_color = bearSignal ? color.red : color.gray, text_size = size.small)
+
+    // ── Risk ──
+    table.cell(infoTable, 0, 27, "── Risk ──", text_color = color.new(#FFD600, 70), text_size = size.small)
+    ddColor = ddCircuitBroken ? color.red : currentDD > maxDrawdownPct * 0.7 ? color.yellow : color.green
+    table.cell(infoTable, 0, 28, "DD " + str.tostring(currentDD, "#.#") + "%" +
+      (ddCircuitBroken ? " BRK" : ""),
+      text_color = ddColor, text_size = size.small)
+    table.cell(infoTable, 1, 28, "Cool " + str.tostring(barsSinceLastLoss, "#") + "b" +
+      (barsSinceLastLoss >= cooldownBars ? " OK" : " +" + str.tostring(cooldownBars - barsSinceLastLoss, "#")),
+      text_color = barsSinceLastLoss >= cooldownBars ? color.green : color.red, text_size = size.small)
+    table.cell(infoTable, 2, 28, "Corr x" + str.tostring(correlationMult, "#.##"),
+      text_color = correlationMult >= 0.9 ? color.green : correlationMult >= 0.5 ? color.yellow : color.red, text_size = size.small)
+
+    // ── 4h RSI ──
+    table.cell(infoTable, 0, 29, "4h RSI: " + str.tostring(h4RSI, "#.#"),
+      text_color = h4RSI > 60 ? color.green : h4RSI < 40 ? color.red : color.gray, text_size = size.small)

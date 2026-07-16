@@ -9,7 +9,7 @@ const TRUST_ITEMS = [
   { icon: TrendingUp, text: "Institutional-grade signals" },
   { icon: Zap, text: "Automated execution available" },
   { icon: Lock, text: "Non-custodial — your keys, your funds" },
-  { icon: Shield, text: "AES-256 encrypted sessions" },
+  { icon: Shield, text: "AES-256 encrypted API keys" },
 ];
 
 export default function Login() {
@@ -87,7 +87,7 @@ export default function Login() {
 
         {/* Bottom note */}
         <div className="relative z-10 text-xs text-muted-foreground/60">
-          Secured with AES-256 encryption · Non-custodial architecture
+          Secured with TLS encryption · Non-custodial architecture
         </div>
       </div>
 
@@ -195,7 +195,7 @@ export default function Login() {
           {/* Security note */}
           <div className="mt-5 flex items-center justify-center gap-2 text-xs text-muted-foreground">
             <Shield className="w-3.5 h-3.5 text-primary" />
-            <span>Secured with AES-256 encryption · Non-custodial</span>
+            <span>Secured with TLS · Non-custodial</span>
           </div>
         </motion.div>
       </div>

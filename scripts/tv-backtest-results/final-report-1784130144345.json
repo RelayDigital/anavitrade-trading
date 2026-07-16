@@ -1,0 +1,14 @@
+{
+  "config": {
+    "timeframe": "4h",
+    "symbolCount": 1
+  },
+  "results": [
+    {
+      "symbol": "BINANCE:SOLUSDT",
+      "timeframe": "4h",
+      "error": "no_strategy_report"
+    }
+  ],
+  "aggregate": null
+}

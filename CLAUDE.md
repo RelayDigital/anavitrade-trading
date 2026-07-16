@@ -162,6 +162,31 @@ For any new backtest campaign:
 - Use `apply_patch` for manual edits.
 - Preserve the current dark trading UI unless a redesign is explicitly requested.
 
+## Trading Engine — Quick Start
+
+Read `docs/ops/SYSTEM_OPERATIONS.md` for the full operations guide. Quick commands:
+
+```bash
+# Backtest on TradingView (requires TV Desktop running with --remote-debugging-port=9222)
+node scripts/tv-deploy-v6.mjs                              # Inject Pine Script + compile
+node scripts/tv-sweep-v4.mjs --tf 4h --symbols "SUIUSDT,MAVUSDT,..."  # Sweep symbols
+
+# ML pipeline
+node scripts/fetch-klines-mtf.mjs --pairs 50 --bars 500    # Fetch 4h/1h/15m klines
+pnpm exec tsx scripts/ml/build-training-data-mtf.ts --input scripts/data/klines-mtf.json --output scripts/data/training-data-mtf-v4.json
+python3 scripts/ml/metacognitive.py train --data scripts/data/training-data-mtf-v4.json --model-dir scripts/data/models/meta-v6
+```
+
+### Architecture (2026-07-16)
+- **Pine Script v6.2**: Runs on TradingView. 1h SMC patterns (OB, FVG, sweep, CHoCH). BB/AO continuous on every bar. NO arbitrary scoring — pure measurement instrument.
+- **ML Pipeline**: 62 features per bar across 4h/1h/15m. LightGBM + isotonic calibration + KMeans regimes + adversarial risk model. AUC 0.59, calibrated threshold 0.682 (1.1% pass rate at 89% WR).
+- **Production**: Hetzner CPX31 ($15/mo) for execution. Cloudflare Worker for dashboard. Static IP 5.161.229.209 for exchange IP whitelisting.
+- **CORTEX**: Health-gated training supervisor at `scripts/cortex/`. Verifies AUC improvement, detects silent no-ops.
+- **Key finding**: No arbitrary scoring. BB width + FVG distance + MA separation are top SHAP features. SMC on 1h fires 4x more than on 4h. The model IS the edge — not hand-tuned gates.
+
+### TradingView Backtest — Known Good Pairs (lesser-known Coinlegs alts, 4h)
+PLUMEUSDT (PF 1.42), OPNUSDT (PF 1.36), XPLUSDT (PF 1.22), WCTUSDT (PF 1.18), HEIUSDT (PF 1.02)
+
 ## Backtest Corpus
 
 The backtest corpus lives in `scripts/backtest-prioritized.json` (1,265 trades,
@@ -175,13 +200,14 @@ Key backtest scripts:
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/unified-backtest.mjs` | 5-strategy comparison (ICR, Native, Sniper, Hybrid, Consensus) |
-| `scripts/mtf-matrix-backtest.mjs` | 19-layer MTF detection matrix |
-| `scripts/train-sniper-zoom.mjs` | ML-trained sniper + zoom MDP policy |
-| `scripts/final-report.mjs` | Consolidated report generator |
+| `scripts/unified-backtest.mjs` | 8-strategy comparison including RR-First Sniper v3 |
+| `scripts/tv-backtest-runner.mjs` | CDP-driven TradingView backtest automation |
+| `scripts/fetch-klines-mtf.mjs` | Binance → JSON: 4h/1h/15m for 50 pairs |
 
-Best live configuration: **ICT Sniper (Rule-Based)** — 694 trades, 68% WR,
-Sharpe 7.00, walk-forward PASS.
+Best live configuration was **ICT Sniper (Rule-Based)** — 694 trades, 68% WR,
+Sharpe 7.00, walk-forward PASS (corpus-derived; does NOT generalize to raw OHLCV).
+
+Current ML approach supersedes rule-based — see `docs/ops/SYSTEM_OPERATIONS.md`.
 
 ## Codex + Claude Multi-Agent Orchestration
 

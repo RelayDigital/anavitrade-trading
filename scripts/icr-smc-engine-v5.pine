@@ -1,0 +1,1434 @@
+//@version=6
+// ─── ICR + SMC + BBAWE Engine v5.0 ─────────────────────────────────────────
+// Anavitrade production strategy. v5.0 replaces the Coinlegs-calibrated ICR
+// impulse/pullback/compression gates with proper Smart Money Concepts (SMC)
+// entry detection and Bollinger Band + Awesome Oscillator (BBAWE) filtering.
+//
+// v5.0 KEY CHANGES (2026-07-15):
+//   • SMC Entry Module replaces impulse/pullback/compression/trigger gates
+//   • Order Blocks, Breaker Blocks, FVG, Liquidity Sweeps, CHoCH on HTF
+//   • BBAWE: BB squeeze + AO confluence for momentum confirmation
+//   • Score fusion: SMC(0-30) + BBAWE(0-20) + Trend(0-20) + RR(0-30) = 100
+//   • Tier A: >=75 (full size), Tier B: 60-74 (half size), Tier C: <60 (skip)
+//   • ALL v4.0 risk management preserved (position sizing, DD breaker, cooldown)
+//   • ALL v4.0 exit trail preserved (5ATR, arm@+4R, exhaustion detection)
+//
+// v4.0 findings preserved:
+//   • 4h is the dominant timeframe (73.8% WR at RR>=2)
+//   • Wide trail (5ATR, arm@+4R, NO early BE) — tail is sacred
+//   • RSI entry filter 70/30 still adds value
+//   • Correlation-aware sizing reduces max DD
+// ───────────────────────────────────────────────────────────────────────────
+
+strategy(
+  "ICR SMC BBAWE v5",
+  overlay  = true,
+  margin_long    = 100,
+  margin_short   = 100,
+  commission_type  = strategy.commission.percent,
+  commission_value = 0.05,
+  slippage         = 3,
+  default_qty_type  = strategy.percent_of_equity,
+  default_qty_value = 100,
+  initial_capital   = 10000,
+  pyramiding        = 0,
+  process_orders_on_close = true,
+  max_bars_back     = 500,
+  max_lines_count   = 500,
+  max_labels_count  = 500,
+  max_boxes_count   = 100
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PARAMETER GROUPS — all tunable from the Settings panel
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Moving Averages ──
+fastMa   = input.int(7,   "Fast MA",     group = "MA Periods")
+midMa    = input.int(25,  "Mid MA",      group = "MA Periods")
+slowMa   = input.int(99,  "Slow MA",     group = "MA Periods")
+atrLen   = input.int(14,  "ATR Length",  group = "MA Periods")
+volLen   = input.int(20,  "Volume MA Length", group = "MA Periods")
+
+// ── Impulse Detection (v4.0 — deprecated, retained for backward compat) ──
+minImpulseBars   = input.int(2,  "Min Impulse Bars",  group = "Impulse (v4.0 deprecated)",
+  tooltip = "v5.0: ICR impulse gates replaced by SMC module. These params are inactive unless SMC is disabled.")
+maxImpulseBars   = input.int(14, "Max Impulse Bars",  group = "Impulse (v4.0 deprecated)")
+maxSignalAge     = input.int(35, "Max Signal Age",    group = "Impulse (v4.0 deprecated)")
+impulseAtrMult   = input.float(1.2, "Impulse ATR Mult", group = "Impulse (v4.0 deprecated)", step = 0.05)
+impulseVolMult   = input.float(1.0, "Impulse Vol Mult", group = "Impulse (v4.0 deprecated)", step = 0.05)
+maSepAtrMult     = input.float(0.03, "MA Sep ATR Mult", group = "Impulse (v4.0 deprecated)", step = 0.01)
+
+// ── Pullback (v4.0 — deprecated) ──
+minPullbackBars   = input.int(2,  "Min Pullback Bars",    group = "Pullback (v4.0 deprecated)")
+nearMaAtrMult     = input.float(1.5, "Near MA ATR Mult",  group = "Pullback (v4.0 deprecated)", step = 0.05)
+pullbackVolRatio  = input.float(1.15, "Pullback Vol Ratio", group = "Pullback (v4.0 deprecated)", step = 0.05)
+
+// ── Compression (v4.0 — deprecated) ──
+compressionLookback  = input.int(8,  "Compression Lookback",   group = "Compression (v4.0 deprecated)")
+compRangeRatio       = input.float(0.95, "Comp Range Ratio",   group = "Compression (v4.0 deprecated)", step = 0.01)
+compAtrRatio         = input.float(0.99, "Comp ATR Ratio",     group = "Compression (v4.0 deprecated)", step = 0.01)
+compNarrowAtrMult    = input.float(4.0, "Comp Narrow ATR Mult", group = "Compression (v4.0 deprecated)", step = 0.5)
+
+// ── Trigger (v4.0 — deprecated) ──
+closePositionThreshold = input.float(0.55, "Close Position Thresh", group = "Trigger (v4.0 deprecated)", step = 0.05)
+
+// ── RSI Entry Filter ──
+entryRsiMax  = input.int(70, "Entry RSI Max (Long)",  group = "RSI Filter")
+entryRsiMin  = input.int(30, "Entry RSI Min (Short)", group = "RSI Filter")
+
+// ── Exit Trail ──
+trailAtrMult      = input.float(5.0, "Trail ATR Mult",      group = "Exit Trail")
+trailActivateAtR  = input.float(4.0, "Trail Activate @ R",  group = "Exit Trail", step = 0.5)
+useBreakeven      = input.bool(false, "Early Breakeven",     group = "Exit Trail",
+  tooltip = "OFF — early BE kills the fat tail. Leave disabled.")
+breakevenAtR      = input.float(999, "Breakeven @ R",        group = "Exit Trail")
+maxBars           = input.int(60, "Max Bars Held",           group = "Exit Trail")
+
+// ── Exhaustion ──
+useExhaustion     = input.bool(true, "Exhaustion Exit",      group = "Exhaustion")
+exhaustThreshold  = input.float(0.7, "Exhaustion Threshold", group = "Exhaustion", step = 0.05)
+
+// ── Position Sizing (v4.0) ──
+riskPerTrade     = input.float(1.0, "% Risk Per Trade", minval=0.25, maxval=5.0, step=0.25, group="Position Sizing v4.0",
+  tooltip = "Risk this % of current equity per trade. 1% = 100 losing trades to blow up.")
+maxPortfolioRisk = input.float(4.0, "Max Portfolio Risk %", group="Position Sizing v4.0",
+  tooltip = "Hard cap: total open risk across all positions as % of equity.")
+
+// ── Drawdown Protection (v4.0) ──
+maxDrawdownPct   = input.float(15.0, "Max Drawdown %", minval=5.0, maxval=50.0, step=1.0, group="Drawdown Protection v4.0",
+  tooltip = "Circuit breaker trips when equity drawdown from peak reaches this %.")
+ddRecoveryPct    = input.float(50.0, "DD Recovery %", minval=25.0, maxval=100.0, step=5.0, group="Drawdown Protection v4.0",
+  tooltip = "Re-arm when drawdown falls below this % of maxDrawdownPct.")
+cooldownBars     = input.int(4, "Cooldown Bars After Loss", minval=1, maxval=20, group="Drawdown Protection v4.0",
+  tooltip = "Skip N bars after any losing trade before re-entering.")
+
+// ── Correlation-Aware Sizing (v4.0) ──
+correlationLookback = input.int(20, "Correlation Lookback Bars", minval=5, maxval=50, group="Correlation v4.0",
+  tooltip = "Window for detecting signal clustering.")
+correlationMaxSignals = input.float(2.5, "Max Signals in Window", minval=1.0, maxval=10.0, step=0.5, group="Correlation v4.0",
+  tooltip = "If signal count in lookback exceeds this, reduce position size proportionally.")
+
+// ── v5.0 SMC Entry Parameters ──
+smcLookbackOB      = input.int(20, "OB Detection Lookback",  group = "SMC Entry v5.0",
+  tooltip = "Bars to scan backward for Order Block formation. Higher = finds older, deeper OBs.")
+smcLookbackSwing   = input.int(5,  "Swing Pivot Lookback",  group = "SMC Entry v5.0",
+  tooltip = "Left/right bars for ta.pivothigh/pivotlow. 5 on 4h = 20h swing window.")
+smcFvgLookback      = input.int(15, "FVG Scan Lookback",     group = "SMC Entry v5.0",
+  tooltip = "Bars to scan backward for unmitigated Fair Value Gaps.")
+smcFvgMinSize       = input.float(0.15, "FVG Min Size (ATR)", group = "SMC Entry v5.0", step = 0.05,
+  tooltip = "Minimum FVG size as multiple of ATR. Filters noise gaps.")
+smcLiqSweepLookback = input.int(10, "Liquidity Sweep Lookback", group = "SMC Entry v5.0",
+  tooltip = "Bars to scan for recent swing highs/lows to check for liquidity sweeps.")
+smcChochLookback    = input.int(15, "CHoCH Lookback",        group = "SMC Entry v5.0",
+  tooltip = "Bars to scan for market structure breaks (Change of Character).")
+smcRetestAtrMult    = input.float(0.5, "Retest Zone ATR Mult", group = "SMC Entry v5.0", step = 0.1,
+  tooltip = "How close price must be to an OB/FVG zone to count as a retest (in ATR).")
+
+// ── v5.0 BBAWE Filter Parameters ──
+bbLength       = input.int(20, "BB Length",          group = "BBAWE Filter v5.0")
+bbMult         = input.float(2.0, "BB StdDev Mult",  group = "BBAWE Filter v5.0", step = 0.1)
+bbSqueezeLookback = input.int(20, "Squeeze Lookback", group = "BBAWE Filter v5.0",
+  tooltip = "Bars for detecting BB width at N-period low. Higher = tighter squeeze.")
+bbSqueezeThreshold = input.float(0.75, "Squeeze Expansion Threshold", group = "BBAWE Filter v5.0", step = 0.05,
+  tooltip = "BB width must expand to this fraction of its recent max to confirm squeeze firing.")
+aoFastLen       = input.int(5,  "AO Fast Length",    group = "BBAWE Filter v5.0")
+aoSlowLen       = input.int(34, "AO Slow Length",    group = "BBAWE Filter v5.0")
+aoSaucerBars    = input.int(3,  "AO Saucer Bars",    group = "BBAWE Filter v5.0",
+  tooltip = "Consecutive bars for AO saucer pattern detection.")
+
+// ── v5.0 Score Fusion Parameters ──
+smcWeight       = input.int(30, "SMC Max Score",      group = "Score Fusion v5.0", minval=10, maxval=40,
+  tooltip = "Max points from SMC pattern detection. OB=25-30, Breaker=20-25, FVG=15-20, LiqSweep=20-25, CHoCH=15-20.")
+bbaweWeight     = input.int(20, "BBAWE Max Score",    group = "Score Fusion v5.0", minval=10, maxval=30,
+  tooltip = "Max points from BB squeeze + AO confluence.")
+trendWeight     = input.int(20, "Trend Max Score",    group = "Score Fusion v5.0", minval=10, maxval=30,
+  tooltip = "Max points from MA alignment trend gate (v4.0 gates 1+2).")
+rrWeight        = input.int(30, "RR Max Score",       group = "Score Fusion v5.0", minval=10, maxval=40,
+  tooltip = "Max points from risk/reward ratio quality.")
+tierAThresh     = input.int(75, "Tier A Threshold",   group = "Score Fusion v5.0",
+  tooltip = "Composite score >= this = Tier A (full size, high conviction).")
+tierBThresh     = input.int(60, "Tier B Threshold",   group = "Score Fusion v5.0",
+  tooltip = "Composite score >= this = Tier B (half size, moderate conviction).")
+
+// ── Display ──
+showMAs     = input.bool(true, "Show MAs",      group = "Display")
+showSignals = input.bool(true, "Show Signals",  group = "Display")
+showStops   = input.bool(true, "Show Stops",    group = "Display")
+showBoxes   = input.bool(true, "Show Zones",    group = "Display")
+showSMCZones = input.bool(true, "Show SMC Zones", group = "Display")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INDICATOR COMPUTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+ma7   = ta.sma(close, fastMa)
+ma25  = ta.sma(close, midMa)
+ma99  = ta.sma(close, slowMa)
+atr14 = ta.atr(atrLen)
+rsi14 = ta.rsi(close, 14)
+volMa = ta.sma(volume, volLen)
+
+// Bollinger Bands (v5.0 — used by both BBAWE and legacy exhaustion)
+bbMid   = ta.sma(close, bbLength)
+bbStd   = ta.stdev(close, bbLength)
+bbUpper = bbMid + bbStd * bbMult
+bbLower = bbMid - bbStd * bbMult
+bbWidth = bbMid > 0 ? (bbUpper - bbLower) / bbMid * 100 : 0
+
+// Awesome Oscillator (v5.0)
+hl2     = (high + low) / 2.0
+ao      = ta.sma(hl2, aoFastLen) - ta.sma(hl2, aoSlowLen)
+
+// Derived helpers
+ma25Slope  = ma25 - ma25[5]                // 5-bar slope
+bodyRatio  = math.abs(close - open) / math.max(high - low, 1e-12)
+closePos   = (close - low) / math.max(high - low, 1e-12)
+displacement = atr14 > 0 ? (close - ma7) / atr14 : 0
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURE DETECTION — Swing Points (shared)
+// ═══════════════════════════════════════════════════════════════════════════
+
+ph = ta.pivothigh(high, smcLookbackSwing, smcLookbackSwing)
+pl = ta.pivotlow(low, smcLookbackSwing, smcLookbackSwing)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v4.0 GATES 1+2: TREND DETECTION (0–20 pts) — PRESERVED
+// ═══════════════════════════════════════════════════════════════════════════
+
+bullTrend  = ma7 > ma25 and ma25 > ma99 and close > ma25 and ma25Slope > 0
+bearTrend  = ma7 < ma25 and ma25 < ma99 and close < ma25 and ma25Slope < 0
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v5.0 SMC ENTRY MODULE — replaces impulse/pullback/compression/trigger
+// ═══════════════════════════════════════════════════════════════════════════
+// Detects ICT Smart Money Concepts patterns using only completed bar data.
+// All patterns are forward-safe: no future lookahead.
+
+// ── v5.0 ORDER BLOCK DETECTION ─────────────────────────────────────────────
+// Bullish OB: last red candle before a strong green impulse that broke structure.
+// Bearish OB: last green candle before a strong red impulse that broke structure.
+// OB must be unmitigated (price hasn't returned to it) and entry is at OB retest.
+
+type OB
+    bool   found
+    float  top       // OB zone top (high for bullish, low for bearish)
+    float  bottom    // OB zone bottom (low for bullish, high for bearish)
+    int    barOffset // offset of the OB candle
+    int    score
+
+detectOrderBlock(bool isLong) =>
+    result = OB.new(false, na, na, na, 0)
+
+    // Scan backward from recent bars looking for swing points with follow-through
+    for obOffset = smcLookbackSwing to smcLookbackOB by 1
+        if obOffset >= bar_index
+            break
+
+        if isLong
+            // Bullish OB: look for pivot low (swing low) that preceded a strong rally
+            pivotLow = pl[obOffset]
+            if na(pivotLow)
+                continue
+
+            // Find the candle that made this pivot low
+            obCandleOffset = obOffset
+            for j = obOffset - 1 to math.max(obOffset - smcLookbackSwing, 0) by -1
+                if low[j] <= pivotLow
+                    obCandleOffset := j
+                    break
+
+            // OB is the bearish candle at the swing low (or nearest bearish before the rally)
+            obIdx = obCandleOffset
+            isBearishOB = close[obIdx] < open[obIdx]
+            if not isBearishOB
+                // Check previous candle
+                if obIdx + 1 < bar_index and close[obIdx + 1] < open[obIdx + 1]
+                    obIdx := obIdx + 1
+                else
+                    continue
+
+            obTopVal    = high[obIdx]
+            obBotVal    = low[obIdx]
+            obZoneSize  = obTopVal - obBotVal
+
+            // Verify a strong rally followed: price moved at least 2% above OB top
+            maxPriceAfter = 0.0
+            for k = 0 to obIdx - 1 by 1
+                maxPriceAfter := math.max(maxPriceAfter, high[k])
+            rallyFromOB = obTopVal > 0 ? (maxPriceAfter - obTopVal) / obTopVal * 100 : 0
+            if rallyFromOB < 2.0 or maxPriceAfter <= obTopVal * 1.005
+                continue
+
+            // Check OB is unmitigated: no close below OB bottom since the rally started
+            mitigated = false
+            for k = 0 to obIdx - 1 by 1
+                if close[k] < obBotVal
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+
+            // Check for retest: current price is within or near the OB zone
+            inZone = close <= obTopVal and close >= obBotVal
+            nearZone = math.abs(close - obTopVal) <= smcRetestAtrMult * atr14
+            if not inZone and not nearZone
+                continue
+
+            // Score: larger rally and cleaner OB = higher score
+            sc = 25
+            if rallyFromOB >= 5.0
+                sc += 3
+            if obZoneSize >= 0.5 * atr14[obIdx]
+                sc += 2
+            sc := math.min(30, sc)
+
+            result := OB.new(true, obTopVal, obBotVal, obIdx, sc)
+            break  // Found best (most recent) valid OB
+
+        else
+            // Bearish OB: look for pivot high (swing high) that preceded a strong drop
+            pivotHigh = ph[obOffset]
+            if na(pivotHigh)
+                continue
+
+            obCandleOffset = obOffset
+            for j = obOffset - 1 to math.max(obOffset - smcLookbackSwing, 0) by -1
+                if high[j] >= pivotHigh
+                    obCandleOffset := j
+                    break
+
+            obIdx = obCandleOffset
+            isBullishOB = close[obIdx] > open[obIdx]
+            if not isBullishOB
+                if obIdx + 1 < bar_index and close[obIdx + 1] > open[obIdx + 1]
+                    obIdx := obIdx + 1
+                else
+                    continue
+
+            obTopVal    = low[obIdx]
+            obBotVal    = high[obIdx]
+            obZoneSize  = obBotVal - obTopVal
+
+            // Verify a strong drop followed
+            minPriceAfter = 1e18
+            for k = 0 to obIdx - 1 by 1
+                minPriceAfter := math.min(minPriceAfter, low[k])
+            dropFromOB = obBotVal > 0 ? (obBotVal - minPriceAfter) / obBotVal * 100 : 0
+            if dropFromOB < 2.0 or minPriceAfter >= obBotVal * 0.995
+                continue
+
+            // Check unmitigated: no close above OB bottom (which is the high)
+            mitigated = false
+            for k = 0 to obIdx - 1 by 1
+                if close[k] > obBotVal
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+
+            // Retest: price in or near OB zone
+            inZone = close >= obTopVal and close <= obBotVal
+            nearZone = math.abs(close - obBotVal) <= smcRetestAtrMult * atr14
+            if not inZone and not nearZone
+                continue
+
+            sc = 25
+            if dropFromOB >= 5.0
+                sc += 3
+            if obZoneSize >= 0.5 * atr14[obIdx]
+                sc += 2
+            sc := math.min(30, sc)
+
+            result := OB.new(true, obTopVal, obBotVal, obIdx, sc)
+            break
+
+    result
+
+bullOB = detectOrderBlock(true)
+bearOB = detectOrderBlock(false)
+
+// ── v5.0 FAIR VALUE GAP (FVG) DETECTION ────────────────────────────────────
+// Bullish FVG: low[i] > high[i+2] — a 3-candle pattern where a large impulsive
+//   candle leaves a price void (gap between candle i's low and candle i+2's high)
+// Bearish FVG: high[i] < low[i+2] — same inverted
+// FVGs that remain unmitigated are stronger signals.
+
+type FVG
+    bool   found
+    float  top       // upper bound of the gap
+    float  bottom    // lower bound of the gap
+    int    barOffset // offset of the FVG's middle candle
+    int    age       // bars since FVG formed
+    int    score
+
+detectFVG(bool isLong) =>
+    result = FVG.new(false, na, na, na, 0, 0)
+
+    // Scan backward for unmitigated FVGs
+    for fvgOffset = 2 to smcFvgLookback by 1
+        // Check 3-candle pattern at offsets: a(fvgOffset+2), b(fvgOffset+1), c(fvgOffset)
+        a = fvgOffset + 2  // first candle
+        b = fvgOffset + 1  // impulsive candle
+        c = fvgOffset      // third candle
+
+        if a >= bar_index or b >= bar_index or c >= bar_index
+            break
+
+        if isLong
+            // Bullish FVG: low of candle A > high of candle C
+            gapTop    = low[a]
+            gapBot    = high[c]
+            gapExists = gapTop > gapBot
+
+            if not gapExists
+                continue
+
+            gapSize = gapTop - gapBot
+            minGap  = smcFvgMinSize * atr14[fvgOffset]
+            if gapSize < minGap
+                continue
+
+            // Verify candle B is a large impulsive candle
+            bBody  = math.abs(close[b] - open[b])
+            bRange = high[b] - low[b]
+            bBullish = close[b] > open[b]
+            bImpulsive = bRange > 0 and bBody / bRange >= 0.5 and bBullish
+            if not (bImpulsive or bRange >= 0.8 * atr14[b])
+                continue
+
+            // Check FVG is unmitigated: no candle since formation has wicked into the gap
+            mitigated = false
+            for k = 0 to fvgOffset - 1 by 1
+                if high[k] >= gapBot and low[k] <= gapTop
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+
+            // Check for retest: current price in or near FVG zone
+            inZone = close <= gapTop and close >= gapBot
+            nearZone = math.abs(close - gapTop) <= smcRetestAtrMult * atr14
+            if not inZone and not nearZone
+                continue
+
+            // Score based on gap size and age (older unmitigated = stronger)
+            sc = 15
+            if gapSize >= 1.0 * atr14[fvgOffset]
+                sc += 3
+            if fvgOffset >= 5
+                sc += 2
+            sc := math.min(20, sc)
+
+            result := FVG.new(true, gapTop, gapBot, fvgOffset, fvgOffset, sc)
+            break
+
+        else
+            // Bearish FVG: high of candle A < low of candle C
+            gapTop    = low[c]
+            gapBot    = high[a]
+            gapExists = gapBot > gapTop
+
+            if not gapExists
+                continue
+
+            gapSize = gapBot - gapTop
+            minGap  = smcFvgMinSize * atr14[fvgOffset]
+            if gapSize < minGap
+                continue
+
+            // Verify candle B is a large bearish impulsive candle
+            bBody  = math.abs(close[b] - open[b])
+            bRange = high[b] - low[b]
+            bBearish = close[b] < open[b]
+            bImpulsive = bRange > 0 and bBody / bRange >= 0.5 and bBearish
+            if not (bImpulsive or bRange >= 0.8 * atr14[b])
+                continue
+
+            // Check unmitigated
+            mitigated = false
+            for k = 0 to fvgOffset - 1 by 1
+                if high[k] >= gapBot and low[k] <= gapTop
+                    mitigated := true
+                    break
+            if mitigated
+                continue
+
+            // Retest
+            inZone = close >= gapTop and close <= gapBot
+            nearZone = math.abs(close - gapBot) <= smcRetestAtrMult * atr14
+            if not inZone and not nearZone
+                continue
+
+            sc = 15
+            if gapSize >= 1.0 * atr14[fvgOffset]
+                sc += 3
+            if fvgOffset >= 5
+                sc += 2
+            sc := math.min(20, sc)
+
+            result := FVG.new(true, gapTop, gapBot, fvgOffset, fvgOffset, sc)
+            break
+
+    result
+
+bullFVG = detectFVG(true)
+bearFVG = detectFVG(false)
+
+// ── v5.0 LIQUIDITY SWEEP / STOP HUNT DETECTION ─────────────────────────────
+// Bullish: price dips below recent swing low, wicks below, closes back above.
+// Bearish: price spikes above recent swing high, wicks above, closes back below.
+
+detectLiqSweep(bool isLong) =>
+    found = false
+    score = 0
+
+    if isLong
+        // Look for a recent swing low that was briefly broken then reclaimed
+        for sweepOffset = smcLookbackSwing to smcLiqSweepLookback by 1
+            if sweepOffset >= bar_index
+                break
+            pivotLow = pl[sweepOffset]
+            if na(pivotLow)
+                continue
+
+            // Check if price wicked below the pivot low then closed back above
+            wickedBelow = false
+            reclaimed   = false
+            for k = 0 to sweepOffset - 1 by 1
+                if low[k] < pivotLow
+                    wickedBelow := true
+                if wickedBelow and close[k] > pivotLow
+                    reclaimed := true
+                    break
+
+            if not (wickedBelow and reclaimed)
+                continue
+
+            // Confirmation: current close is above the pivot (bullish)
+            if close <= pivotLow
+                continue
+
+            found := true
+            score := 20
+            // Fewer bars below = cleaner trap (quick sweep)
+            barsBelow = 0
+            for k = 0 to sweepOffset - 1 by 1
+                if low[k] < pivotLow
+                    barsBelow += 1
+            if barsBelow <= 2
+                score += 3
+            score := math.min(25, score)
+            break
+
+    else
+        // Look for a recent swing high that was briefly broken then rejected
+        for sweepOffset = smcLookbackSwing to smcLiqSweepLookback by 1
+            if sweepOffset >= bar_index
+                break
+            pivotHigh = ph[sweepOffset]
+            if na(pivotHigh)
+                continue
+
+            wickedAbove = false
+            rejected    = false
+            for k = 0 to sweepOffset - 1 by 1
+                if high[k] > pivotHigh
+                    wickedAbove := true
+                if wickedAbove and close[k] < pivotHigh
+                    rejected := true
+                    break
+
+            if not (wickedAbove and rejected)
+                continue
+
+            if close >= pivotHigh
+                continue
+
+            found := true
+            score := 20
+            barsAbove = 0
+            for k = 0 to sweepOffset - 1 by 1
+                if high[k] > pivotHigh
+                    barsAbove += 1
+            if barsAbove <= 2
+                score += 3
+            score := math.min(25, score)
+            break
+
+    [found, score]
+
+[bullLiqSweep, bullLiqSweepScore] = detectLiqSweep(true)
+[bearLiqSweep, bearLiqSweepScore] = detectLiqSweep(false)
+
+// ── v5.0 CHoCH / MARKET STRUCTURE SHIFT DETECTION ──────────────────────────
+// Bullish CHoCH: price breaks above the last lower high in a downtrend.
+// Bearish CHoCH: price breaks below the last higher low in an uptrend.
+// The break signals a potential reversal in market structure.
+
+detectCHoCH(bool isLong) =>
+    found = false
+    score = 0
+
+    // Determine trend context
+    downtrend = close < ma25 and ma25 < ma99
+    uptrend   = close > ma25 and ma25 > ma99
+
+    if isLong
+        // Need downtrend context for bullish CHoCH
+        if not downtrend
+            [false, 0]
+
+        // Find the last lower high in the downtrend
+        lastLH = 0.0
+        for k = smcChochLookback to 1 by -1
+            if k >= bar_index
+                break
+            phVal = ph[k]
+            if not na(phVal)
+                lastLH := phVal
+                break
+
+        if lastLH <= 0
+            [false, 0]
+
+        // Check if price has broken above the last lower high
+        brokeAbove = false
+        for k = 0 to smcChochLookback by 1
+            if close[k] > lastLH
+                brokeAbove := true
+                break
+
+        if not brokeAbove
+            [false, 0]
+
+        // CHoCH confirmed: structure is shifting bullish
+        found := true
+        score := 15
+        // Quality: how far above the LH, how clean the break
+        breakoutPct = lastLH > 0 ? (close - lastLH) / lastLH * 100 : 0
+        if breakoutPct >= 1.0
+            score += 2
+        if volume > volMa[1] * 1.1
+            score += 3  // volume-confirmed break
+        score := math.min(20, score)
+
+    else
+        // Need uptrend context for bearish CHoCH
+        if not uptrend
+            [false, 0]
+
+        // Find the last higher low in the uptrend
+        lastHL = 1e18
+        for k = smcChochLookback to 1 by -1
+            if k >= bar_index
+                break
+            plVal = pl[k]
+            if not na(plVal)
+                lastHL := plVal
+                break
+
+        if lastHL >= 1e18
+            [false, 0]
+
+        brokeBelow = false
+        for k = 0 to smcChochLookback by 1
+            if close[k] < lastHL
+                brokeBelow := true
+                break
+
+        if not brokeBelow
+            [false, 0]
+
+        found := true
+        score := 15
+        breakdownPct = lastHL > 0 ? (lastHL - close) / lastHL * 100 : 0
+        if breakdownPct >= 1.0
+            score += 2
+        if volume > volMa[1] * 1.1
+            score += 3
+        score := math.min(20, score)
+
+    [found, score]
+
+[bullCHoCH, bullCHoCHScore] = detectCHoCH(true)
+[bearCHoCH, bearCHoCHScore] = detectCHoCH(false)
+
+// ── v5.0 SMC COMPOSITE SCORE (0–30) ────────────────────────────────────────
+// Collects all SMC signals, takes the best individual pattern score as base,
+// then adds confluence and HTF alignment bonuses.
+
+computeSMCScore(bool isLong) =>
+    // Collect all SMC signals for the direction
+    obFound      = isLong ? bullOB.found    : bearOB.found
+    obSc         = isLong ? bullOB.score    : bearOB.score
+    fvgFound     = isLong ? bullFVG.found   : bearFVG.found
+    fvgSc        = isLong ? bullFVG.score   : bearFVG.score
+    liqFound     = isLong ? bullLiqSweep    : bearLiqSweep
+    liqSc        = isLong ? bullLiqSweepScore : bearLiqSweepScore
+    chochFound   = isLong ? bullCHoCH       : bearCHoCH
+    chochSc      = isLong ? bullCHoCHScore  : bearCHoCHScore
+
+    // v5.0: Take the best individual pattern score as the base
+    bestScore = 0
+    if obFound
+        bestScore := math.max(bestScore, obSc)
+    if fvgFound
+        bestScore := math.max(bestScore, fvgSc)
+    if liqFound
+        bestScore := math.max(bestScore, liqSc)
+    if chochFound
+        bestScore := math.max(bestScore, chochSc)
+
+    if bestScore == 0
+        0
+
+    // v5.0: Confluence bonuses
+    confluenceCount = 0
+    if obFound
+        confluenceCount += 1
+    if fvgFound
+        confluenceCount += 1
+    if liqFound
+        confluenceCount += 1
+    if chochFound
+        confluenceCount += 1
+
+    // Multiple confluent SMC patterns at the same level = +5 bonus
+    if confluenceCount >= 2
+        bestScore += 5
+
+    // v5.0: Higher timeframe alignment bonus — stronger trend = +3
+    trendAligned = isLong ? bullTrend : bearTrend
+    if trendAligned
+        bestScore += 3
+
+    math.min(smcWeight, bestScore)
+
+bullSMCScore = computeSMCScore(true)
+bearSMCScore = computeSMCScore(false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v5.0 BBAWE FILTER MODULE
+// ═══════════════════════════════════════════════════════════════════════════
+// Combines Bollinger Band squeeze detection with Awesome Oscillator momentum
+// signals for entry timing confirmation.
+
+// ── v5.0 BB SQUEEZE DETECTION ──────────────────────────────────────────────
+// Tracks BB width relative to its recent range. A squeeze is when BB width
+// is at its N-period low (volatility contraction). Expansion from a squeeze
+// signals a breakout.
+
+// Rolling min/max of BB width for squeeze detection
+bbWidthMin = ta.lowest(bbWidth, bbSqueezeLookback)
+bbWidthMax = ta.highest(bbWidth, bbSqueezeLookback)
+bbWidthRange = bbWidthMax - bbWidthMin
+
+// Squeeze: BB width is in the bottom quartile of its recent range
+inSqueeze = bbWidthRange > 0 and (bbWidth - bbWidthMin) / bbWidthRange < 0.25
+
+// Squeeze firing: was in squeeze, now expanding
+squeezeFiring = inSqueeze[1] and not inSqueeze
+
+// Squeeze score: 0-10 based on duration and expansion rate
+computeSqueezeScore() =>
+    if not squeezeFiring
+        0
+
+    // Count how many consecutive bars were in squeeze
+    squeezeBars = 0
+    for i = 1 to bbSqueezeLookback by 1
+        if inSqueeze[i]
+            squeezeBars += 1
+
+    // v5.0: Longer squeeze = more energy built up
+    sc = 5
+    if squeezeBars >= 5
+        sc += 2
+    if squeezeBars >= 10
+        sc += 2
+
+    // v5.0: Expansion rate — how fast is width expanding
+    if bbWidthRange > 0 and bbWidth[1] > 0
+        expansionRate = (bbWidth - bbWidth[1]) / math.max(bbWidth[1], 0.01)
+        if expansionRate >= 0.15
+            sc += 1
+
+    math.min(10, sc)
+
+squeezeScore = computeSqueezeScore()
+
+// ── v5.0 AWESOME OSCILLATOR SIGNALS ─────────────────────────────────────────
+
+// AO zero cross
+aoCrossUp   = ta.crossover(ao, 0)
+aoCrossDown = ta.crossunder(ao, 0)
+
+// AO saucer: 3 consecutive decreasing values → reversal up (bullish saucer)
+// Pattern: ao was falling for 3 bars [3] > [2] > [1], then current bar rises: [1] > [0]
+aoRising      = ao > ao[1]
+aoFalling     = ao < ao[1]
+aoBullSaucer  = aoFalling[2] and aoFalling[1] and aoRising and ao < 0
+aoBearSaucer  = aoRising[2] and aoRising[1] and aoFalling and ao > 0
+
+// AO twin peaks (above zero, bullish continuation):
+// Find two recent peaks above zero where second is lower and price makes higher low
+aoTwinPeaksBull = false
+aoTwinPeaksBear = false
+if ao > 0
+    peak1 = 0.0
+    peak2 = 0.0
+    peak1Idx = 0
+    peak2Idx = 0
+    for k = 5 to aoSlowLen + 10 by 1
+        if k >= bar_index
+            break
+        if ao[k] > 0 and ao[k] > ao[k+1] and ao[k] > ao[k-1]
+            if peak1 == 0.0
+                peak1 := ao[k]
+                peak1Idx := k
+            else if peak2 == 0.0
+                peak2 := ao[k]
+                peak2Idx := k
+                break
+
+    // Twin peaks: peak2 < peak1, both above zero, price making higher low
+    if peak2 > 0 and peak1 > 0 and peak2Idx > peak1Idx
+        if peak2 < peak1 and peak2 >= peak1 * 0.6
+            if low[peak2Idx] > low[peak1Idx]
+                aoTwinPeaksBull := true
+
+if ao < 0
+    peak1 = 0.0
+    peak2 = 0.0
+    peak1Idx = 0
+    peak2Idx = 0
+    for k = 5 to aoSlowLen + 10 by 1
+        if k >= bar_index
+            break
+        if ao[k] < 0 and ao[k] < ao[k+1] and ao[k] < ao[k-1]
+            if peak1 == 0.0
+                peak1 := ao[k]
+                peak1Idx := k
+            else if peak2 == 0.0
+                peak2 := ao[k]
+                peak2Idx := k
+                break
+
+    // Bearish twin peaks (below zero): second trough is higher (less negative)
+    // while price makes lower high
+    if peak2 < 0 and peak1 < 0 and peak2Idx > peak1Idx
+        if peak2 > peak1 and peak2 <= peak1 * 0.6
+            if high[peak2Idx] < high[peak1Idx]
+                aoTwinPeaksBear := true
+
+// ── v5.0 BBAWE COMPOSITE SCORE (0–20) ──────────────────────────────────────
+
+computeBBAWEScore(bool isLong) =>
+    total = 0
+
+    // --- Squeeze component (0-10) ---
+    if squeezeScore > 0
+        total += squeezeScore
+
+    // --- AO component (0-10) ---
+    if isLong
+        if aoCrossUp
+            total += 5
+        if aoBullSaucer
+            total += 3
+        // Emerging bullish momentum: AO rising from below zero
+        if ao < 0 and ao > ao[1] and ao[1] > ao[2]
+            total += 2
+        if aoTwinPeaksBull
+            total += 3
+    else
+        if aoCrossDown
+            total += 5
+        if aoBearSaucer
+            total += 3
+        if ao > 0 and ao < ao[1] and ao[1] < ao[2]
+            total += 2
+        if aoTwinPeaksBear
+            total += 3
+
+    // --- v5.0: BB + AO Confluence bonus ---
+    // Squeeze firing + AO crossing zero = highest conviction (+2)
+    if squeezeScore > 0
+        if isLong and (aoCrossUp or aoBullSaucer)
+            total += 2
+        if not isLong and (aoCrossDown or aoBearSaucer)
+            total += 2
+
+    // Squeeze firing + AO divergence (twin peaks) = medium conviction (+1)
+    if squeezeScore > 0
+        if isLong and aoTwinPeaksBull
+            total += 1
+        if not isLong and aoTwinPeaksBear
+            total += 1
+
+    math.min(bbaweWeight, total)
+
+bullBBAWEScore = computeBBAWEScore(true)
+bearBBAWEScore = computeBBAWEScore(false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v4.0 RR COMPUTATION (entry/stop/target) — PRESERVED, enhanced with SMC zones
+// ═══════════════════════════════════════════════════════════════════════════
+// v5.0: Stop placement uses SMC zones when available (OB/FVG bottom/top),
+// otherwise falls back to compression boundaries.
+
+computeEntry(bool isLong) =>
+    if isLong
+        // v5.0: Bullish stop placement — prefer OB bottom or FVG bottom
+        stopLevel = 0.0
+        if bullOB.found
+            stopLevel := bullOB.bottom
+        if bullFVG.found and (stopLevel == 0.0 or bullFVG.bottom > stopLevel)
+            stopLevel := bullFVG.bottom
+        if stopLevel == 0.0
+            stopLevel := ta.lowest(low, compressionLookback)[1]
+
+        atrBuf = 0.1 * atr14
+        stop = stopLevel - atrBuf
+        entry = close
+
+        if stop >= entry
+            [entry, stop, entry, 0.0, false]
+
+        risk = entry - stop
+        if risk <= 0
+            [entry, stop, entry, 0.0, false]
+
+        // v5.0: TP targets the recent high (impulse extreme proxy) or 3R minimum
+        recentHigh = ta.highest(high, 20)[1]
+        tp = math.max(recentHigh, entry + 3.0 * risk)
+
+        rrVal = (tp - entry) / risk
+        rrOk = rrVal >= 2.0
+        rrSc = rrVal >= 4.0 ? 5 : rrVal >= 3.0 ? 4 : rrVal >= 2.0 ? 3 : 0
+
+        [entry, stop, tp, rrSc, rrOk and rrSc > 0]
+    else
+        // v5.0: Bearish stop placement — prefer OB bottom (which is the high)
+        // or FVG top (which is the top of the gap)
+        stopLevel = 0.0
+        if bearOB.found
+            stopLevel := bearOB.bottom
+        if bearFVG.found and (stopLevel == 0.0 or bearFVG.top < stopLevel)
+            stopLevel := bearFVG.top
+        if stopLevel == 0.0
+            stopLevel := ta.highest(high, compressionLookback)[1]
+
+        atrBuf = 0.1 * atr14
+        stop = stopLevel + atrBuf
+        entry = close
+
+        if stop <= entry
+            [entry, stop, entry, 0.0, false]
+
+        risk = stop - entry
+        if risk <= 0
+            [entry, stop, entry, 0.0, false]
+
+        recentLow = ta.lowest(low, 20)[1]
+        tp = math.min(recentLow, entry - 3.0 * risk)
+
+        rrVal = (entry - tp) / risk
+        rrOk = rrVal >= 2.0
+        rrSc = rrVal >= 4.0 ? 5 : rrVal >= 3.0 ? 4 : rrVal >= 2.0 ? 3 : 0
+
+        [entry, stop, tp, rrSc, rrOk and rrSc > 0]
+
+[bullEntry, bullStop, bullTP, bullRrScore, bullRrOk] = computeEntry(true)
+[bearEntry, bearStop, bearTP, bearRrScore, bearRrOk] = computeEntry(false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v5.0 SCORE FUSION — Composite Entry Score
+// ═══════════════════════════════════════════════════════════════════════════
+// Combines SMC (0-30) + BBAWE (0-20) + Trend (0-20) + RR (0-30) = 100 max
+
+computeComposite(bool isLong) =>
+    trendOk = isLong ? bullTrend : bearTrend
+    trendSc = trendOk ? trendWeight : 0
+
+    smcOk = isLong ? bullSMCScore > 0 : bearSMCScore > 0
+    smcSc = isLong ? bullSMCScore : bearSMCScore
+
+    bbaweOk = isLong ? bullBBAWEScore > 0 : bearBBAWEScore > 0
+    bbaweSc = isLong ? bullBBAWEScore : bearBBAWEScore
+
+    rrOk  = isLong ? bullRrOk : bearRrOk
+    rrSc  = isLong ? (bullRrOk ? bullRrScore : 0) : (bearRrOk ? bearRrScore : 0)
+    // v5.0: Scale RR score (0-5 raw) to 0-30 range
+    rrScaled = rrSc > 0 ? math.round(rrSc / 5.0 * rrWeight) : 0
+
+    rsiOk = isLong ? (na(rsi14) ? true : rsi14 < entryRsiMax) : (na(rsi14) ? true : rsi14 > entryRsiMin)
+
+    composite = trendSc + smcSc + bbaweSc + rrScaled
+
+    // v5.0: Must have at least one SMC pattern AND trend context AND valid RR AND RSI
+    allPass = trendOk and smcOk and rrOk and rsiOk and composite >= tierBThresh
+
+    tier = composite >= tierAThresh ? "A" :
+           composite >= tierBThresh ? "B" : "C"
+
+    [composite, tier, allPass]
+
+[bullScore, bullTier, bullSignal] = computeComposite(true)
+[bearScore, bearTier, bearSignal] = computeComposite(false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POSITION SIZING FUNCTION (v4.0) — risk-based dynamic sizing
+// ═══════════════════════════════════════════════════════════════════════════
+
+computePositionSize(float stopPrice, bool isLong, float corrMult) =>
+    stopDistAbs = isLong
+      ? math.max(close - stopPrice, 1e-12)
+      : math.max(stopPrice - close, 1e-12)
+    stopDistPct = close > 0 ? stopDistAbs / close : 0
+
+    basePct = stopDistPct > 0 ? riskPerTrade / stopDistPct * 100 : 0
+    maxPct  = stopDistPct > 0 ? maxPortfolioRisk / stopDistPct * 100 : 0
+    cappedPct = math.min(basePct, maxPct)
+    finalPct = cappedPct * corrMult
+
+    math.max(finalPct, 0.0)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POSITION SIZING COMPUTATION (v4.0 correlation + v5.0 tier discount)
+// ═══════════════════════════════════════════════════════════════════════════
+
+var float corrDensity = 0.0
+corrDensity := corrDensity * 0.9
+if bullSignal or bearSignal
+    corrDensity += 1.0
+
+correlationMult = corrDensity > correlationMaxSignals
+  ? math.max(0.25, correlationMaxSignals / math.max(corrDensity, 0.01))
+  : 1.0
+
+// v5.0: Tier B = half size (moderate conviction)
+bullTierMult = bullTier == "B" ? 0.5 : 1.0
+bearTierMult = bearTier == "B" ? 0.5 : 1.0
+
+bullPositionPct = computePositionSize(bullStop, true, correlationMult) * bullTierMult
+bearPositionPct = computePositionSize(bearStop, false, correlationMult) * bearTierMult
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRADE STATE MANAGEMENT (var — persists across bars)
+// ═══════════════════════════════════════════════════════════════════════════
+
+var float trailStop      = na
+var float highestFav     = na
+var float entryPrice     = na
+var float initialStop    = na
+var float entryRisk      = na
+var bool  trailArmed     = false
+var int   direction      = 0  // 1=long, -1=short
+var int   barsInTrade    = 0
+var float maxFavR        = 0.0
+
+// ── v4.0 Risk Management State ──
+var float peakEquity          = 0.0
+var bool  ddCircuitBroken     = false
+var int   barsSinceLastLoss   = 999
+var float entryPricePreReset  = na
+var int   dirPreReset         = 0
+var bool  checkForLoss        = false
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRADE MANAGEMENT — Update trail each bar
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Reset state when flat
+if strategy.position_size == 0
+
+    // v4.0: check for loss on the trade that just closed
+    if checkForLoss
+        if (dirPreReset == 1 and close < entryPricePreReset) or (dirPreReset == -1 and close > entryPricePreReset)
+            barsSinceLastLoss := 0
+        checkForLoss := false
+
+    entryPricePreReset := entryPrice
+    dirPreReset        := direction
+
+    trailStop   := na
+    highestFav  := na
+    entryPrice  := na
+    initialStop := na
+    entryRisk   := na
+    trailArmed  := false
+    direction   := 0
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+// Track position when in trade
+inLong  = strategy.position_size > 0
+inShort = strategy.position_size < 0
+
+// Detect new entry
+justEnteredLong  = inLong  and direction != 1
+justEnteredShort = inShort and direction != -1
+
+if justEnteredLong
+    entryPrice  := close
+    initialStop := bullStop
+    entryRisk   := entryPrice - initialStop
+    trailStop   := initialStop
+    highestFav  := entryPrice
+    trailArmed  := false
+    direction   := 1
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+if justEnteredShort
+    entryPrice  := close
+    initialStop := bearStop
+    entryRisk   := initialStop - entryPrice
+    trailStop   := initialStop
+    highestFav  := entryPrice
+    trailArmed  := false
+    direction   := -1
+    barsInTrade := 0
+    maxFavR     := 0.0
+
+// Update active trade
+if direction != 0
+    barsInTrade += 1
+    float favR = 0.0
+
+    if direction == 1
+        highestFav := math.max(highestFav, high)
+        if entryRisk > 0
+            favR := (highestFav - entryPrice) / entryRisk
+    else
+        highestFav := math.min(highestFav, low)
+        if entryRisk > 0
+            favR := (entryPrice - highestFav) / entryRisk
+
+    maxFavR := math.max(maxFavR, favR)
+
+    // Breakeven (DISABLED by default — kills the tail)
+    if favR >= breakevenAtR
+        if direction == 1
+            trailStop := math.max(trailStop, entryPrice)
+        else
+            trailStop := math.min(trailStop, entryPrice)
+
+    // Arm trail at activation R
+    if favR >= trailActivateAtR
+        trailArmed := true
+
+    if trailArmed
+        newTrail = direction == 1
+          ? highestFav - trailAtrMult * atr14
+          : highestFav + trailAtrMult * atr14
+        if direction == 1
+            trailStop := math.max(trailStop, newTrail)
+        else
+            trailStop := math.min(trailStop, newTrail)
+
+    // NEVER loosen the stop
+    if direction == 1
+        trailStop := math.max(trailStop, trailStop[1])
+    else
+        trailStop := math.min(trailStop, trailStop[1])
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXIT CONDITIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Trail/stop hit
+trailHitLong  = direction == 1 and low  <= trailStop
+trailHitShort = direction == -1 and high >= trailStop
+
+// Exhaustion — inline computation (same as v4.0)
+//
+// RSI divergence: price higher high, RSI lower high (long) or opposite (short)
+rsiDivLong   = direction == 1 and rsi14 > 68 and rsi14 < rsi14[3] and high > high[3]
+rsiDivShort  = direction == -1 and rsi14 < 32 and rsi14 > rsi14[3] and low < low[3]
+rsiDivEx     = rsiDivLong or rsiDivShort
+rsiDivScore  = rsiDivEx ? 0.25 : 0.0
+
+// Volume climax: 2.5x volMA, wide range, rejection close
+volExSpike   = volMa > 0 and volume >= 2.5 * volMa
+volExWide    = atr14 > 0 and (high - low) >= 1.5 * atr14
+volExRejLong = direction == 1 and closePos < 0.45
+volExRejShort = direction == -1 and closePos > 0.55
+volEx        = volExSpike and volExWide and (volExRejLong or volExRejShort)
+volExScore   = volEx ? 0.20 : 0.0
+
+// Overextension: price displaced > 3 ATR from MA7
+overExtLong  = direction == 1 and displacement >= 3.0
+overExtShort = direction == -1 and displacement <= -3.0
+overExt      = overExtLong or overExtShort
+overExtScore = overExt ? 0.20 : 0.0
+
+// Bollinger return: was outside band, now returning inside
+bbRetLong  = direction == 1 and bbUpper > close and close[1] > bbUpper[1]
+bbRetShort = direction == -1 and bbLower < close and close[1] < bbLower[1]
+bbRet      = bbRetLong or bbRetShort
+bbRetScore = bbRet ? 0.20 : 0.0
+
+// Body collapse: 3 large directional bodies → doji
+bcBodyOk = bodyRatio < 0.3
+bcB1Long  = direction == 1 and close[1] > open[1] and bodyRatio[1] >= 0.6
+bcB2Long  = direction == 1 and close[2] > open[2] and bodyRatio[2] >= 0.6
+bcB3Long  = direction == 1 and close[3] > open[3] and bodyRatio[3] >= 0.6
+bcB1Short = direction == -1 and close[1] < open[1] and bodyRatio[1] >= 0.6
+bcB2Short = direction == -1 and close[2] < open[2] and bodyRatio[2] >= 0.6
+bcB3Short = direction == -1 and close[3] < open[3] and bodyRatio[3] >= 0.6
+bcSeqLong  = bcB1Long and bcB2Long and bcB3Long
+bcSeqShort = bcB1Short and bcB2Short and bcB3Short
+bcSeq      = bcSeqLong or bcSeqShort
+bcScore    = bcBodyOk and bcSeq ? 0.15 : 0.0
+
+exhAggScore = rsiDivScore + volExScore + overExtScore + bbRetScore + bcScore
+exitExhaustion = useExhaustion and exhAggScore >= exhaustThreshold
+
+// Time stop
+exitTime = barsInTrade >= maxBars
+
+// Execute exits
+if inLong and (trailHitLong or exitExhaustion or exitTime)
+    strategy.close("Long",
+      comment = trailHitLong ? "Trail" : exitExhaustion ? str.tostring(exhAggScore, "#.##") : "Time")
+
+if inShort and (trailHitShort or exitExhaustion or exitTime)
+    strategy.close("Short",
+      comment = trailHitShort ? "Trail" : exitExhaustion ? str.tostring(exhAggScore, "#.##") : "Time")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v4.0 DRAWDOWN CIRCUIT BREAKER & COOLDOWN
+// ═══════════════════════════════════════════════════════════════════════════
+
+if barstate.isfirst
+    peakEquity := strategy.equity
+
+peakEquity := math.max(peakEquity, strategy.equity)
+
+float currentDD = peakEquity > 0 ? (peakEquity - strategy.equity) / peakEquity * 100 : 0
+
+float ddReArmLevel = maxDrawdownPct * ddRecoveryPct / 100
+ddCircuitBroken := currentDD >= maxDrawdownPct or (ddCircuitBroken and currentDD > ddReArmLevel)
+
+if (inLong and (trailHitLong or exitExhaustion or exitTime)) or (inShort and (trailHitShort or exitExhaustion or exitTime))
+    checkForLoss := true
+
+if strategy.position_size == 0
+    barsSinceLastLoss := math.min(barsSinceLastLoss + 1, 99999)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTRY EXECUTION (v5.0 — SMC + BBAWE fusion)
+// ═══════════════════════════════════════════════════════════════════════════
+
+canEnter = strategy.position_size == 0
+riskGatesOk = not ddCircuitBroken and barsSinceLastLoss >= cooldownBars
+
+if canEnter and bullSignal and bullTier != "C" and riskGatesOk
+    strategy.entry("Long", strategy.long,
+      qty = bullPositionPct,
+      comment = str.tostring(bullScore, "#") + " " + bullTier)
+    strategy.exit("Long TP/SL", "Long",
+      limit = bullTP,
+      stop  = bullStop)
+
+if canEnter and bearSignal and bearTier != "C" and riskGatesOk
+    strategy.entry("Short", strategy.short,
+      qty = bearPositionPct,
+      comment = str.tostring(bearScore, "#") + " " + bearTier)
+    strategy.exit("Short TP/SL", "Short",
+      limit = bearTP,
+      stop  = bearStop)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VISUAL OVERLAYS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── MA Ribbon ──
+plot(showMAs ? ma7  : na, "MA7",  color.new(#2962FF, 0), 1)
+plot(showMAs ? ma25 : na, "MA25", color.new(#FF6D00, 0), 2)
+plot(showMAs ? ma99 : na, "MA99", color.new(#9E9E9E, 0), 1)
+
+// ── Trend Background ──
+bgcolor(bullTrend ? color.new(#00C853, 92) : bearTrend ? color.new(#FF1744, 92) : na,
+  title = "Trend Background")
+
+// ── v5.0 SMC Zone Boxes ──
+if showSMCZones and bullOB.found
+    box.new(bar_index, bullOB.top, bar_index + 5, bullOB.bottom,
+      border_color = color.new(#00E676, 70), bgcolor = color.new(#00E676, 92),
+      border_width = 1, text = "OB+" + str.tostring(bullOB.score, "#"),
+      text_color = color.white, text_size = size.small)
+
+if showSMCZones and bearOB.found
+    box.new(bar_index, bearOB.top, bar_index + 5, bearOB.bottom,
+      border_color = color.new(#FF1744, 70), bgcolor = color.new(#FF1744, 92),
+      border_width = 1, text = "OB-" + str.tostring(bearOB.score, "#"),
+      text_color = color.white, text_size = size.small)
+
+if showSMCZones and bullFVG.found
+    box.new(bar_index, bullFVG.top, bar_index + 3, bullFVG.bottom,
+      border_color = color.new(#448AFF, 70), bgcolor = color.new(#448AFF, 92),
+      border_width = 1, text = "FVG", text_color = color.white, text_size = size.small)
+
+if showSMCZones and bearFVG.found
+    box.new(bar_index, bearFVG.top, bar_index + 3, bearFVG.bottom,
+      border_color = color.new(#FF6D00, 70), bgcolor = color.new(#FF6D00, 92),
+      border_width = 1, text = "FVG", text_color = color.white, text_size = size.small)
+
+// ── Signal Arrows ──
+if showSignals
+    if canEnter and riskGatesOk and bullSignal and bullTier == "A"
+        label.new(bar_index, low, "▲" + str.tostring(bullScore, "#"),
+          color = color.green, textcolor = color.white, style = label.style_label_up,
+          yloc = yloc.belowbar, size = size.small)
+    if canEnter and riskGatesOk and bullSignal and bullTier == "B"
+        label.new(bar_index, low, "▲" + str.tostring(bullScore, "#"),
+          color = color.new(#00C853, 50), textcolor = color.green, style = label.style_label_up,
+          yloc = yloc.belowbar, size = size.small)
+
+    if canEnter and riskGatesOk and bearSignal and bearTier == "A"
+        label.new(bar_index, high, "▼" + str.tostring(bearScore, "#"),
+          color = color.red, textcolor = color.white, style = label.style_label_down,
+          yloc = yloc.abovebar, size = size.small)
+    if canEnter and riskGatesOk and bearSignal and bearTier == "B"
+        label.new(bar_index, high, "▼" + str.tostring(bearScore, "#"),
+          color = color.new(#FF1744, 50), textcolor = color.red, style = label.style_label_down,
+          yloc = yloc.abovebar, size = size.small)
+
+// ── v5.0: Liquidity Sweep Markers ──
+if showSignals and bullLiqSweep
+    label.new(bar_index, low, "LS", color = color.new(#00E5FF, 50),
+      textcolor = color.white, style = label.style_label_up,
+      yloc = yloc.belowbar, size = size.tiny)
+if showSignals and bearLiqSweep
+    label.new(bar_index, high, "LS", color = color.new(#FF6D00, 50),
+      textcolor = color.white, style = label.style_label_down,
+      yloc = yloc.abovebar, size = size.tiny)
+
+// ── v5.0: CHoCH Markers ──
+if showSignals and bullCHoCH
+    label.new(bar_index, low, "CHoCH", color = color.new(#76FF03, 50),
+      textcolor = color.white, style = label.style_label_up,
+      yloc = yloc.belowbar, size = size.tiny)
+if showSignals and bearCHoCH
+    label.new(bar_index, high, "CHoCH", color = color.new(#FF1744, 50),
+      textcolor = color.white, style = label.style_label_down,
+      yloc = yloc.abovebar, size = size.tiny)
+
+// ── Trail Stop Line ──
+plot(showStops and inLong ? trailStop : na, "Trail Long",
+  color = color.green, style = plot.style_linebr, linewidth = 1)
+plot(showStops and inShort ? trailStop : na, "Trail Short",
+  color = color.red, style = plot.style_linebr, linewidth = 1)
+
+// ── Entry/Exit Markers ──
+plotshape(inLong and direction[1] != 1 ? close : na, "Entry Long",
+  style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small)
+plotshape(inShort and direction[1] != -1 ? close : na, "Entry Short",
+  style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v5.0 INFO PANEL (right side)
+// ═══════════════════════════════════════════════════════════════════════════
+
+var infoTable = table.new(position.top_right, 3, 19,
+  border_width = 1, border_color = color.new(#9E9E9E, 50),
+  bgcolor = color.new(#1A1A2E, 85))
+
+if barstate.islast
+    // Header
+    table.cell(infoTable, 0, 0, "ICR SMC BBAWE v5.0", text_color = color.new(#00E5FF, 90), text_size = size.small)
+    table.cell(infoTable, 1, 0, syminfo.ticker, text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 0, timeframe.period, text_color = color.gray, text_size = size.small)
+
+    // ── v5.0 Composite Scores ──
+    table.cell(infoTable, 0, 2, "── Scores v5.0 ──", text_color = color.new(#00E5FF, 70), text_size = size.small)
+    table.cell(infoTable, 1, 2, "", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 2, "", text_color = color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 3, "Bull Score", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 3, str.tostring(bullScore, "#"),
+      text_color = bullTier == "A" ? color.green : bullTier == "B" ? color.yellow : color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 3, bullTier, text_color = color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 4, "Bear Score", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 4, str.tostring(bearScore, "#"),
+      text_color = bearTier == "A" ? color.red : bearTier == "B" ? color.yellow : color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 4, bearTier, text_color = color.gray, text_size = size.small)
+
+    // ── v5.0 SMC Breakdown ──
+    table.cell(infoTable, 0, 6, "── SMC v5.0 ──", text_color = color.new(#00E676, 70), text_size = size.small)
+    table.cell(infoTable, 1, 6, "", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 6, "", text_color = color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 7, "OB", text_color = color.gray, text_size = size.small)
+    obText = bullOB.found ? "B" + str.tostring(bullOB.score, "#") : bearOB.found ? "S" + str.tostring(bearOB.score, "#") : "—"
+    obColor = bullOB.found ? color.green : bearOB.found ? color.red : color.gray
+    table.cell(infoTable, 1, 7, obText, text_color = obColor, text_size = size.small)
+
+    table.cell(infoTable, 0, 8, "FVG", text_color = color.gray, text_size = size.small)
+    fvgText = bullFVG.found ? "B" + str.tostring(bullFVG.score, "#") : bearFVG.found ? "S" + str.tostring(bearFVG.score, "#") : "—"
+    fvgColor = bullFVG.found ? color.green : bearFVG.found ? color.red : color.gray
+    table.cell(infoTable, 1, 8, fvgText, text_color = fvgColor, text_size = size.small)
+
+    table.cell(infoTable, 0, 9, "Liq Sweep", text_color = color.gray, text_size = size.small)
+    liqText = bullLiqSweep ? "B" + str.tostring(bullLiqSweepScore, "#") : bearLiqSweep ? "S" + str.tostring(bearLiqSweepScore, "#") : "—"
+    liqColor = bullLiqSweep ? color.green : bearLiqSweep ? color.red : color.gray
+    table.cell(infoTable, 1, 9, liqText, text_color = liqColor, text_size = size.small)
+
+    table.cell(infoTable, 0, 10, "CHoCH", text_color = color.gray, text_size = size.small)
+    chText = bullCHoCH ? "B" + str.tostring(bullCHoCHScore, "#") : bearCHoCH ? "S" + str.tostring(bearCHoCHScore, "#") : "—"
+    chColor = bullCHoCH ? color.green : bearCHoCH ? color.red : color.gray
+    table.cell(infoTable, 1, 10, chText, text_color = chColor, text_size = size.small)
+
+    // SMC composite
+    table.cell(infoTable, 0, 11, "SMC Total", text_color = color.gray, text_size = size.small)
+    smcSc = math.max(bullSMCScore, bearSMCScore)
+    table.cell(infoTable, 1, 11, str.tostring(smcSc, "#") + "/" + str.tostring(smcWeight, "#"),
+      text_color = smcSc >= 20 ? color.green : smcSc >= 10 ? color.yellow : color.gray, text_size = size.small)
+
+    // ── v5.0 BBAWE Breakdown ──
+    table.cell(infoTable, 0, 12, "── BBAWE v5.0 ──", text_color = color.new(#448AFF, 70), text_size = size.small)
+    table.cell(infoTable, 1, 12, "", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 12, "", text_color = color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 13, "BB Squeeze / AO", text_color = color.gray, text_size = size.small)
+    squeezeText = inSqueeze ? "SQUEEZE" : squeezeFiring ? "FIRING!" : "—"
+    aoText = aoCrossUp ? "Z+" : aoCrossDown ? "Z-" : aoBullSaucer ? "S+" : aoBearSaucer ? "S-" : "—"
+    table.cell(infoTable, 1, 13, squeezeText + " " + aoText,
+      text_color = squeezeFiring or aoCrossUp or aoCrossDown ? color.yellow : color.gray, text_size = size.small)
+
+    table.cell(infoTable, 0, 14, "BBAWE Score", text_color = color.gray, text_size = size.small)
+    bbaweSc = math.max(bullBBAWEScore, bearBBAWEScore)
+    table.cell(infoTable, 1, 14, str.tostring(bbaweSc, "#") + "/" + str.tostring(bbaweWeight, "#"),
+      text_color = bbaweSc >= 15 ? color.yellow : bbaweSc >= 10 ? color.white : color.gray, text_size = size.small)
+
+    // ── v4.0 Risk Management ──
+    table.cell(infoTable, 0, 15, "── Risk v4.0 ──", text_color = color.new(#FFD600, 70), text_size = size.small)
+    table.cell(infoTable, 1, 15, "", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 2, 15, "", text_color = color.gray, text_size = size.small)
+
+    ddColor = ddCircuitBroken ? color.red : currentDD > maxDrawdownPct * 0.7 ? color.yellow : color.green
+    table.cell(infoTable, 0, 16, "Drawdown", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 16, str.tostring(currentDD, "#.#") + "%",
+      text_color = ddColor, text_size = size.small)
+    table.cell(infoTable, 2, 16, ddCircuitBroken ? "BROKEN" : "OK",
+      text_color = ddCircuitBroken ? color.red : color.green, text_size = size.small)
+
+    cdColor = barsSinceLastLoss >= cooldownBars ? color.green : color.red
+    table.cell(infoTable, 0, 17, "Cooldown", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 17, str.tostring(barsSinceLastLoss, "#") + "b",
+      text_color = cdColor, text_size = size.small)
+    table.cell(infoTable, 2, 17, barsSinceLastLoss >= cooldownBars ? "Ready" : str.tostring(cooldownBars - barsSinceLastLoss, "#") + "b left",
+      text_color = cdColor, text_size = size.small)
+
+    corrColor = correlationMult >= 0.9 ? color.green : correlationMult >= 0.5 ? color.yellow : color.red
+    table.cell(infoTable, 0, 18, "Signal Density", text_color = color.gray, text_size = size.small)
+    table.cell(infoTable, 1, 18, str.tostring(corrDensity, "#.##"),
+      text_color = corrColor, text_size = size.small)
+    table.cell(infoTable, 2, 18, "x" + str.tostring(correlationMult, "#.##"),
+      text_color = corrColor, text_size = size.small)
