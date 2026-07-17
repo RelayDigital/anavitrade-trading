@@ -1,13 +1,15 @@
 import { and, eq } from "drizzle-orm";
 import {
-  cexConnections, asterAgentAccounts, executionJobs, orderEvents, navSnapshots,
+  cexConnections, asterAgentAccounts, executionJobs, orderEvents,
   tradeIntents, liveAccounts,
 } from "../../drizzle/schema";
 import { getDb, writeAuditLog } from "../db";
 import { sha256Hex } from "../cex/signing";
 import { decryptCexCredentials } from "../cex/store";
 import { createCexClient } from "../cex/factory";
-import { CexExecutionAdapter } from "../cex/adapter";
+/* CexExecutionAdapter no longer imported — Worker no longer submits CEX orders.
+ * The VPS execution server polls risk-approved jobs and submits orders from its
+ * static-IP machine. */
 import { AsterExecutionAdapter } from "../aster/adapter";
 import { AsterApiClient } from "../aster/client";
 import { getAsterConfig } from "../aster/config";
@@ -199,84 +201,12 @@ async function fanOutCex(
       limitPrice: intent.limitPrice ?? null, updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
-    // Submit with retry
-    await enqueue(conn.id, async () => {
-      // Pre-submit check: verify the job is still queued (DB-backed guard against
-      // double-submission after a Worker restart that clears the in-memory queue).
-      const [freshJob] = await db.select({ status: executionJobs.status })
-        .from(executionJobs).where(eq(executionJobs.id, job.id)).limit(1);
-      if (!freshJob || freshJob.status !== "queued") {
-        throw new Error(`JOB_ALREADY_PROCESSED:${freshJob?.status ?? "missing"}`);
-      }
-
-      let attempts = 0;
-      const maxAttempts = 3;
-      const backoff = [1000, 2000, 4000];
-      let lastError: Error | undefined;
-
-      while (attempts < maxAttempts) {
-        try {
-          attempts++;
-          const adapter = new CexExecutionAdapter(conn.id);
-          const receipt = await adapter.submitOrder(job.id, {
-            symbol: intent.symbol, side: intent.side, type: intent.orderType,
-            quantity, price: intent.limitPrice ?? undefined,
-            timeInForce: intent.orderType === "LIMIT" ? "GTC" : undefined,
-            newClientOrderId: idem,
-            leverage: decision.leverage,
-            stopLossPrice: intent.stopLossPrice ?? undefined,
-            takeProfitPrice: intent.takeProfitPrice ?? undefined,
-            clientOrderId: idem,
-          });
-
-          await db.update(executionJobs).set({
-            status: receipt.status === "filled" ? "filled" : "submitted",
-            orderId: receipt.orderId, submittedAt: Date.now(),
-            ...(receipt.status === "filled" ? { filledAt: Date.now() } : {}),
-            updatedAt: Date.now(),
-          } as any).where(eq(executionJobs.id, job.id));
-
-          await db.insert(orderEvents).values({
-            executionJobId: job.id, provider: "cex", eventType: receipt.status,
-            payloadJson: JSON.stringify({ raw: receipt.raw ?? {}, attempt: attempts }),
-          } as any);
-
-          // NAV snapshot best-effort
-          try {
-            const creds2 = await decryptCexCredentials(conn);
-            const client2 = createCexClient(conn.exchange, creds2);
-            const bal = await client2.validateAndReadBalance();
-            await db.insert(navSnapshots).values({
-              userId: conn.userId, provider: "cex",
-              accountEquityUsd: bal.equityUsd.toFixed(2),
-              availableBalanceUsd: bal.availableUsd.toFixed(2), source: "provider_sync",
-            } as any);
-          } catch { /* best-effort */ }
-
-          await writeAuditLog(conn.userId, "EXEC_ORDER_SUBMITTED",
-            `intent:${intentId}; cex:${receipt.orderId}; ${conn.exchange}; attempt:${attempts}`);
-          return;
-        } catch (e: any) {
-          lastError = e;
-          if (attempts < maxAttempts) {
-            const delay = backoff[attempts - 1];
-            console.warn(`[dispatch] CEX attempt ${attempts}/${maxAttempts} failed for job ${job.id}, retrying in ${delay}ms: ${e?.message}`);
-            await new Promise(r => setTimeout(r, delay));
-          }
-        }
-      }
-
-      await db.update(executionJobs).set({
-        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: Date.now(),
-      } as any).where(eq(executionJobs.id, job.id));
-      await db.insert(orderEvents).values({
-        executionJobId: job.id, provider: "cex", eventType: "rejected",
-        payloadJson: JSON.stringify({ error: String(lastError?.message).slice(0, 300), attempts }),
-      } as any);
-      await writeAuditLog(conn.userId, "EXEC_ORDER_FAILED",
-        `intent:${intentId}; ${String(lastError?.message).slice(0, 120)}; attempts:${attempts}`);
-    });
-
+    // CEX order submission is handled by the VPS execution server.
+    // The Worker only risk-approves, sizes, and queues the job.
+    // The VPS polls /api/internal/risk-approved-jobs for queued+riskApproved
+    // jobs and submits orders from its static-IP machine.
+    await writeAuditLog(conn.userId, "EXEC_RISK_APPROVED",
+      `intent:${intentId}; cex:${conn.exchange}; job:${job.id}; notional:${notionalUsd.toFixed(2)}; leverage:${decision.leverage}`);
     results.push({ userId: conn.userId, exchange: conn.exchange, jobId: job.id, status: "queued" });
   }
 

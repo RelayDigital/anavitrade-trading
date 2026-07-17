@@ -513,6 +513,64 @@ app.get("/api/internal/pending-intents", async (c) => {
   } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
 });
 
+/**
+ * Return risk-approved CEX execution_jobs that are queued and ready for VPS execution.
+ * Joins with cexConnections (encrypted credentials) and tradeIntents (stopLoss, takeProfit, etc.)
+ * so the VPS has everything it needs without separate API calls.
+ *
+ * This is the primary VPS poll endpoint — it replaces polling raw pending-intents.
+ * Every job returned here has already passed decideExecution() on the Worker.
+ */
+app.get("/api/internal/risk-approved-jobs", async (c) => {
+  const authErr = requireInternalAuth(c, c.env);
+  if (authErr) return authErr;
+  try {
+    setDbEnv(c.env);
+    const { getDb } = await import("./db");
+    const { executionJobs, cexConnections, tradeIntents } = await import("../drizzle/schema");
+    const { and, eq } = await import("drizzle-orm");
+    const db = getDb();
+
+    const jobs = await db.select({
+      jobId: executionJobs.id,
+      tradeIntentId: executionJobs.tradeIntentId,
+      userId: executionJobs.userId,
+      cexConnectionId: executionJobs.cexConnectionId,
+      symbol: executionJobs.symbol,
+      side: executionJobs.side,
+      orderType: executionJobs.orderType,
+      notionalUsd: executionJobs.notionalUsd,
+      quantity: executionJobs.quantity,
+      leverage: executionJobs.leverage,
+      limitPrice: executionJobs.limitPrice,
+      idempotencyKey: executionJobs.idempotencyKey,
+      // Connection fields for VPS credential decryption
+      connId: cexConnections.id,
+      connExchange: cexConnections.exchange,
+      connEncryptedApiKey: cexConnections.encryptedApiKey,
+      connEncryptedApiSecret: cexConnections.encryptedApiSecret,
+      connEncryptedPassphrase: cexConnections.encryptedPassphrase,
+      connKillSwitchActive: cexConnections.killSwitchActive,
+      connLabel: cexConnections.label,
+      // Intent fields for protective orders
+      intentStopLossPrice: tradeIntents.stopLossPrice,
+      intentTakeProfitPrice: tradeIntents.takeProfitPrice,
+      intentTargetLeverage: tradeIntents.targetLeverage,
+    })
+      .from(executionJobs)
+      .innerJoin(cexConnections, eq(executionJobs.cexConnectionId, cexConnections.id))
+      .innerJoin(tradeIntents, eq(executionJobs.tradeIntentId, tradeIntents.id))
+      .where(and(
+        eq(executionJobs.provider, "cex"),
+        eq(executionJobs.status, "queued"),
+        eq(executionJobs.riskApproved, true),
+      ))
+      .limit(50);
+
+    return c.json({ jobs });
+  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+});
+
 /** Active CEX connections with encrypted credentials (VPS decrypts locally). */
 app.get("/api/internal/active-connections", async (c) => {
   const authErr = requireInternalAuth(c, c.env);
