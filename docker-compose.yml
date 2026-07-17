@@ -1,19 +1,21 @@
-version: "3.9"
-
 services:
   execution:
     build: .
     container_name: anavitrade-execution
     restart: unless-stopped
     ports:
-      - "9090:9090"
-    env_file: .env
+      - "${EXECUTION_HEALTH_BIND_ADDRESS:-127.0.0.1}:${EXECUTION_HEALTH_PORT:-9090}:9090"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in the Compose environment}@redis:6379/0"
     volumes:
       - ./models:/app/models:ro
       - ./data:/app/data
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/health"]
       interval: 30s
@@ -27,26 +29,31 @@ services:
         max-file: "5"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine
     container_name: anavitrade-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in the Compose environment}"
     volumes:
       - redis-data:/data
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+        --appendonly yes --requirepass "$$REDIS_PASSWORD"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.5.0
     container_name: anavitrade-prometheus
     restart: unless-stopped
     ports:
-      - "9091:9090"
+      - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9091}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -55,24 +62,27 @@ services:
       - "--storage.tsdb.retention.time=90d"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.1.0
     container_name: anavitrade-grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana:/etc/grafana/provisioning:ro
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in the Compose environment}"
     depends_on:
       - prometheus
 
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.9.1
     container_name: anavitrade-node-exporter
     restart: unless-stopped
-    ports:
-      - "9100:9100"
     command:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"

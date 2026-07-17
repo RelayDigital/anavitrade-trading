@@ -5,6 +5,7 @@ import { useState } from "react";
 import HeroWidget from "@/components/HeroWidget";
 import TypewriterHeading from "@/components/TypewriterHeading";
 import { trpc } from "@/lib/trpc";
+import { formatSignedPercent, UNAVAILABLE } from "@/components/performancePresentation";
 
 /* ─── HERO ───
    Extracted verbatim from Home.tsx. The user loves this section — do NOT
@@ -90,7 +91,7 @@ export default function HeroSection() {
               className="text-lg leading-relaxed max-w-lg mb-10"
               style={{ color: "oklch(0.72 0.02 240)" }}
             >
-              Receive <span className="text-electric font-medium">institutional-grade</span> trade signals from our quantitative engine — or let it execute automatically on your behalf. Two tiers, one platform, zero custody.
+              Review scored trade signals from our quantitative engine, or configure execution on a supported venue when execution is available and explicitly enabled.
             </motion.p>
 
             <motion.div
@@ -117,26 +118,26 @@ export default function HeroSection() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1, duration: 0.8 }}
-              className="flex gap-10 mt-14 pt-8"
+              className="grid grid-cols-3 gap-3 sm:gap-10 mt-14 pt-8"
               style={{ borderTop: "1px solid oklch(1 0 0 / 0.06)" }}
             >
-              <div>
-                <p className="text-[1.75rem] font-heading font-medium tracking-[-0.02em]" style={{ color: "oklch(0.98 0.004 220)" }}>
-                  {stats?.totalSignals != null ? `${Number(stats.totalSignals).toLocaleString()}+` : "808+"}
+              <div className="min-w-0">
+                <p className="text-xl sm:text-[1.75rem] font-heading font-medium break-words" style={{ color: "oklch(0.98 0.004 220)" }}>
+                  {stats?.totalSignals != null ? Number(stats.totalSignals).toLocaleString() : UNAVAILABLE}
                 </p>
                 <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>Signals Scored</p>
               </div>
-              <div>
-                <p className="text-[1.75rem] font-heading font-medium tracking-[-0.02em] gold-shimmer-text">
-                  {demoStats?.totalReturnPct != null ? `+${Number(demoStats.totalReturnPct).toFixed(1)}%` : "+133.7%"}
+              <div className="min-w-0">
+                <p className="text-xl sm:text-[1.75rem] font-heading font-medium break-words gold-shimmer-text">
+                  {Number(demoStats?.tradeCount ?? 0) > 0 ? formatSignedPercent(demoStats?.totalReturnPct) : UNAVAILABLE}
                 </p>
-                <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>July Return (Tier A)</p>
+                <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>Modeled July Scenario</p>
               </div>
-              <div>
-                <p className="text-[1.75rem] font-heading font-medium tracking-[-0.02em]" style={{ color: "oklch(0.98 0.004 220)" }}>
-                  {demoStats?.bestPnlPct != null ? `+${Number(demoStats.bestPnlPct).toFixed(1)}%` : "+38.9%"}
+              <div className="min-w-0">
+                <p className="text-xl sm:text-[1.75rem] font-heading font-medium break-words" style={{ color: "oklch(0.98 0.004 220)" }}>
+                  {Number(demoStats?.tradeCount ?? 0) > 0 ? formatSignedPercent(demoStats?.bestPnlPct) : UNAVAILABLE}
                 </p>
-                <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>Best July Signal</p>
+                <p className="text-xs mt-1" style={{ color: "oklch(0.6 0.02 240)" }}>Largest Modeled Move</p>
               </div>
             </motion.div>
 
@@ -147,7 +148,7 @@ export default function HeroSection() {
               transition={{ delay: 1.2, duration: 0.6 }}
               className="text-[10px] text-muted-foreground/40 mt-4 text-left"
             >
-              Simulated performance based on real signals. Past results don't guarantee future ones.
+              Modeled historical scenario based on recorded signals. Past results do not predict future performance.
             </motion.p>
           </motion.div>
 

@@ -14,6 +14,11 @@ import {
   Info,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  formatSignedPercent,
+  SCORING_PRESENTATION,
+  UNAVAILABLE,
+} from "@/components/performancePresentation";
 
 // ── Stat card ──────────────────────────────────────────────────────────────────
 function StatCard({
@@ -114,11 +119,10 @@ export default function HistoricalPerformance() {
   const { data: statusData } = trpc.signals.scraperStatus.useQuery();
   const { data: perf } = trpc.signals.performance.useQuery();
 
-  // Derived live values with fallbacks
-  const totalSignals = perf?.totalSignals?.toLocaleString() ?? "...";
-  const medianMaxProfit = perf?.medianMaxProfit != null ? `${perf.medianMaxProfit.toFixed(1)}%` : "...";
-  const fourHMedian = perf?.fourHMedian != null ? `${perf.fourHMedian.toFixed(1)}%` : "...";
-  const confluenceMedian = perf?.confluenceMedian != null ? `${perf.confluenceMedian.toFixed(1)}%` : "...";
+  const totalSignals = perf?.totalSignals?.toLocaleString() ?? UNAVAILABLE;
+  const medianReportedMove = formatSignedPercent(perf?.medianMaxProfit);
+  const fourHMedian = formatSignedPercent(perf?.fourHMedian);
+  const confluenceMedian = formatSignedPercent(perf?.confluenceMedian);
 
   // Outcome-validated breakdowns
   const byTf = perf?.byTimeframe ?? {};
@@ -127,8 +131,8 @@ export default function HistoricalPerformance() {
     (a, b) => parseFloat(byInd[b].avgPnl) - parseFloat(byInd[a].avgPnl),
   );
   const maxIndAvgPnl = indicatorNames.length > 0
-    ? Math.max(...indicatorNames.map((n) => parseFloat(byInd[n].avgPnl)), 100)
-    : 130;
+    ? Math.max(...indicatorNames.map((n) => parseFloat(byInd[n].avgPnl)), 1)
+    : 1;
   const topTwoInd = new Set(indicatorNames.slice(0, 2));
   const lastRun = perf?.lastScraperRun;
 
@@ -146,14 +150,15 @@ export default function HistoricalPerformance() {
             <div>
               <h1 className="text-2xl font-bold text-white">Historical Performance</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Signal analysis based on {totalSignals} top-performing signals{perf?.validationStatus === "unvalidated" ? " (outcomes unvalidated)" : ""} — April 1 to July 5, 2026
+                Analysis of {totalSignals} provider records
+                {perf?.validationStatus === "unvalidated" ? " with unvalidated outcomes" : ""}. Favorable-move fields are not realized account returns.
               </p>
             </div>
             <Badge
               variant="outline"
               className="border-primary/40 text-primary bg-primary/10 text-xs"
             >
-              Live market data
+              API-reported data
             </Badge>
           </div>
         </div>
@@ -164,25 +169,25 @@ export default function HistoricalPerformance() {
             icon={BarChart3}
             label="Signals Analyzed"
             value={totalSignals}
-            sub={`Tier A: ${perf?.tierA ?? "..."} · B: ${perf?.tierB ?? "..."} · C: ${perf?.tierC ?? "..."}`}
+            sub={`Tier A: ${perf?.tierA ?? UNAVAILABLE} · B: ${perf?.tierB ?? UNAVAILABLE} · C: ${perf?.tierC ?? UNAVAILABLE}`}
           />
           <StatCard
             icon={TrendingUp}
-            label="Median MaxProfit"
-            value={medianMaxProfit}
+            label="Median Reported Favorable Move"
+            value={medianReportedMove}
             sub="Across all timeframes"
             gold
           />
           <StatCard
             icon={Zap}
-            label="4h Median Profit"
+            label="4h Median Reported Move"
             value={fourHMedian}
-            sub={`n=${byTf["4h"]?.count?.toLocaleString() ?? "..."} signals`}
+            sub={`n=${byTf["4h"]?.count?.toLocaleString() ?? UNAVAILABLE} signals`}
             gold
           />
           <StatCard
             icon={Award}
-            label="Best 3-Indicator"
+            label="3-Indicator Median Move"
             value={confluenceMedian}
             sub="Median with confluence"
             gold
@@ -253,7 +258,7 @@ export default function HistoricalPerformance() {
                 {indicatorNames.length > 0
                   ? `${indicatorNames.reduce((sum, n) => sum + byInd[n].count, 0)} historical signals`
                   : "..."}{" "}
-                ({perf?.validationStatus === "unvalidated" ? "unvalidated — using maxProfit estimates" : "outcome-validated"}).
+                ({perf?.validationStatus === "unvalidated" ? "unvalidated provider-reported favorable movement" : "outcome-validated"}).
               </TooltipContent>
             </Tooltip>
           </div>
@@ -297,7 +302,7 @@ export default function HistoricalPerformance() {
                           style={{ width: `${pct}%`, backgroundColor: color }}
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-white">
-                          {avgPnl.toFixed(0)}%
+                          {formatSignedPercent(avgPnl, 0)}
                         </span>
                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
                           n={ind.count} | WR {ind.winRate}%
@@ -307,14 +312,14 @@ export default function HistoricalPerformance() {
                   );
                 })
               ) : (
-                <p className="text-xs text-muted-foreground">Loading indicator data...</p>
+                <p className="text-xs text-muted-foreground">{UNAVAILABLE}</p>
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-4">
               {indicatorNames.length >= 2
                 ? `★ ${indicatorNames[0]} and ${indicatorNames[1]} receive a quality bonus in the scoring algorithm.`
-                : "★ Top indicators receive a quality bonus in the scoring algorithm."}{" "}
-              Bars show average PnL %; win rate (WR) shown per indicator.
+                : "Indicator ranking is unavailable."}{" "}
+              Bars show average provider-reported movement; win rate (WR) is shown only when supplied by the API.
             </p>
           </Card>
         </div>
@@ -322,112 +327,63 @@ export default function HistoricalPerformance() {
         {/* Algo rules */}
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-base font-semibold text-white">Algo Selection Rules</h2>
+            <h2 className="text-base font-semibold text-white">Pre-Entry Scoring Inputs</h2>
             <Badge variant="outline" className="border-white/10 text-xs text-muted-foreground">
-              Applied to every scrape run
+              {SCORING_PRESENTATION.maxScore}-point model
             </Badge>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <RuleCard
-              number="R1"
-              title="Timeframe — 4h Preferred"
-              description="4h signals have the best risk-adjusted profile: large moves with manageable 4h–3d duration. 4h receives the highest timeframe score in the algo."
-              color="oklch(0.82 0.16 85)"
-              data={`4h median ${fourHMedian} (n=${byTf["4h"]?.count?.toLocaleString() ?? "..."} signals)`}
-            />
-            <RuleCard
-              number="R2"
-              title="Indicator Priority on 4h"
-              description="MACD and Stochastic are empirically the strongest indicators on 4h. They receive a quality bonus in scoring. Ichimoku is weakest on 4h — it's better suited to 1w."
-              color="oklch(0.60 0.22 220)"
-              data={indicatorNames.length > 0
-                ? indicatorNames.slice(0, 5).map((n) => `${n} ${parseFloat(byInd[n].avgPnl).toFixed(1)}%`).join(" > ")
-                : "MACD 116.3% > Stochastic 110.1% > CCI 97.2%"}
-            />
-            <RuleCard
-              number="R3"
-              title="Confluence is the Strongest Edge"
-              description={`When 3+ independent indicators fire Buy on the same coin+period simultaneously, the median profit jumps to ${confluenceMedian} — a significant lift over single-indicator signals.`}
-              color="#3b82f6"
-              data={`3 indicators: ${confluenceMedian} median profit`}
-            />
-            <RuleCard
-              number="R4"
-              title="Momentum is a Bonus, Not a Gate"
-              description={`Counter-intuitive: negative 24h momentum signals have median ${perf?.negPct24Median?.toFixed(1) ?? "..."}% — nearly identical to positive ones. Pct24 is used as a bonus score only, never as a hard filter.`}
-              color="#8b5cf6"
-              data={`Negative Pct24 median: ${perf?.negPct24Median?.toFixed(1) ?? "..."}% (not penalized)`}
-            />
-            <RuleCard
-              number="R5"
-              title="Profit Speed Determines Tier"
-              description="MaxProfit / Duration in hours. 4h P90 = 4.6%/h. Fast movers (>4.6%/h) are ideal for automated execution. Slow signals (>3 days to peak) are better for manual signal delivery."
-              color="#f97316"
-              data="4h P90 = 4.6%/h | P75 = 2.1%/h | median = 0.8%/h"
-            />
-            <RuleCard
-              number="R6"
-              title="Hard Gate: MaxProfit > 0"
-              description={`${perf?.rejectedPct?.toFixed(1) ?? "..."}% of Buy signals have MaxProfit = 0 — price never moved after the signal fired. These are definitionally worthless and are rejected before scoring.`}
-              color="#ef4444"
-              data={`${perf?.rejectedPct?.toFixed(1) ?? "..."}% of all Buy signals rejected at gate (n=${perf?.rejectedCount?.toLocaleString() ?? "..."})`}
-            />
+            {SCORING_PRESENTATION.sections.map((section, index) => (
+              <RuleCard
+                key={section.label}
+                number={`S${index + 1}`}
+                title={section.label}
+                description={section.description}
+                color={["oklch(0.82 0.16 85)", "oklch(0.60 0.22 220)", "#8b5cf6"][index]}
+                data={`Up to ${section.points} points before entry`}
+              />
+            ))}
           </div>
         </div>
 
         {/* Scoring breakdown */}
         <div>
-          <h2 className="text-base font-semibold text-white mb-4">Scoring System (0–100)</h2>
+          <h2 className="text-base font-semibold text-white mb-4">
+            Scoring System (0–{SCORING_PRESENTATION.maxScore}, Pre-Entry)
+          </h2>
           <Card className="border-border bg-card">
             <CardContent className="p-5">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                  { label: "A. Realized Outcome", pts: "35 pts", desc: "MaxProfit % — the only objective ground truth", color: "oklch(0.82 0.16 85)" },
-                  { label: "B. Profit Speed", pts: "25 pts", desc: "MaxProfit ÷ Duration hours (%/h)", color: "oklch(0.60 0.22 220)" },
-                  { label: "C. Confluence", pts: "20 pts", desc: "Distinct indicators agreeing on same coin+period", color: "#3b82f6" },
-                  { label: "D. Timeframe", pts: "15 pts", desc: "4h boosted — best risk-adjusted profile", color: "#8b5cf6" },
-                  { label: "E. Indicator Quality", pts: "5 pts", desc: "MACD/Stochastic bonus on 4h only", color: "#f97316" },
-                  { label: "F. Momentum Bonus", pts: "5 pts", desc: "Pct24 > 10% = +5 pts, > 3% = +3 pts", color: "#ec4899" },
-                ].map((item) => (
+                {SCORING_PRESENTATION.sections.map((section, index) => {
+                  const color = ["oklch(0.82 0.16 85)", "oklch(0.60 0.22 220)", "#8b5cf6"][index];
+                  return (
                   <div
-                    key={item.label}
+                    key={section.label}
                     className="flex items-start gap-3 p-3 rounded-lg bg-secondary/60 border border-border"
                   >
                     <div
                       className="flex-shrink-0 w-12 h-12 rounded-lg flex items-center justify-center text-xs font-bold"
-                      style={{ backgroundColor: `${item.color}20`, color: item.color }}
+                      style={{ backgroundColor: `${color}20`, color }}
                     >
-                      {item.pts}
+                      {section.points} pts
                     </div>
                     <div>
-                      <p className="text-xs font-semibold text-white">{item.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{item.desc}</p>
+                      <p className="text-xs font-semibold text-white">{section.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{section.description}</p>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               <Separator className="bg-secondary my-4" />
-              <div className="flex items-center gap-6 text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-gold" />
-                  <span className="text-white font-medium">Tier A</span>
-                  <span className="text-muted-foreground">≥ 65 pts</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-primary" />
-                  <span className="text-white font-medium">Tier B</span>
-                  <span className="text-muted-foreground">≥ 40 pts</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-muted-foreground" />
-                  <span className="text-white font-medium">Tier C</span>
-                  <span className="text-muted-foreground">≥ 20 pts</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-[#374151]" />
-                  <span className="text-muted-foreground">Rejected</span>
-                  <span className="text-muted-foreground">&lt; 20 pts</span>
-                </div>
+              <div className="flex flex-wrap items-center gap-6 text-xs">
+                {SCORING_PRESENTATION.tiers.map(({ tier, minimum }) => (
+                  <div key={tier} className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${tier === "A" ? "bg-gold" : tier === "B" ? "bg-primary" : "bg-muted-foreground"}`} />
+                    <span className="text-white font-medium">Tier {tier}</span>
+                    <span className="text-muted-foreground">≥ {minimum} pts</span>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>

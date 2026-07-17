@@ -34,19 +34,29 @@
  *   ENCRYPTION_KEY         — same key as Worker for local credential decryption
  *   PORT                   — metrics / health server (default 9090)
  *   POLL_INTERVAL_MS       — intent polling interval (default 5000)
- *   EXECUTION_MODE         — "testnet" | "production" | "disabled" (default "testnet")
+ *   EXECUTION_MODE         — "testnet" | "production" | "disabled" (default "disabled")
  */
 
 import * as crypto from "crypto";
+import { fileURLToPath } from "node:url";
 import { createCexClient } from "../cex/factory";
-import type { CexOrderRequest, CexOrderResult } from "../cex/clientTypes";
+import { assertAutomatedExecutionSupported } from "../cex/registry";
+import type {
+  CexClient,
+  CexCredentials,
+  CexOrderRequest,
+  CexOrderResult,
+  ExchangeEnvironment,
+} from "../cex/clientTypes";
+import { CexProtectionError } from "../cex/clientTypes";
+import { parseExecutionMode, reconcileExactOrder, type ExecutionMode } from "./outcomes";
 
 // ─── Types for internal API responses ────────────────────────────────────────
 
 /** A risk-approved execution job returned by GET /api/internal/risk-approved-jobs.
  *  Includes pre-computed sizing from the Worker, encrypted credentials
  *  (decrypted on VPS only), and intent details for protective orders. */
-interface RiskApprovedJob {
+export interface RiskApprovedJob {
   jobId: number;
   tradeIntentId: number;
   userId: number;
@@ -59,6 +69,11 @@ interface RiskApprovedJob {
   leverage: number | null;
   limitPrice: string | null;
   idempotencyKey: string;
+  orderId?: string | null;
+  leaseToken: string;
+  leaseAttempt: number;
+  leaseExpiresAt: number;
+  leaseAction: "submit" | "reconcile";
   // Connection fields (encrypted — VPS decrypts locally)
   connId: number;
   connExchange: string;
@@ -78,31 +93,28 @@ interface KillState {
   perConnectionKills: Record<number, boolean>;
 }
 
-/**
- * Tracks an order submitted to exchange that hasn't filled yet.
- * Stores decrypted credentials to avoid re-fetching on each fill poll.
- *
- * SECURITY: Decrypted API keys live in the process heap for up to
- * `MAX_ORDER_POLLS * POLL_INTERVAL_MS` (~5 minutes by default). The VPS
- * is a dedicated private machine, so this is acceptable for MVP. For
- * production hardening, replace with Redis-backed ephemeral storage or
- * re-fetch credentials per-fill-poll from the Worker API.
- */
-interface InFlightOrder {
-  idempotencyKey: string;
-  orderId: string;
-  exchange: string;
-  symbol: string;
-  userId: number;
-  cexConnectionId: number;
-  tradeIntentId: number;
-  submittedAt: number;
-  pollCount: number;
-  apiKey: string;
-  apiSecret: string;
-  passphrase: string | undefined;
-  testnet: boolean;
-}
+export type ExecutionReportStatus =
+  | "submitted"
+  | "filled"
+  | "protection_pending"
+  | "protected"
+  | "failed"
+  | "cancelled"
+  | "unresolved";
+
+export type ExecutionReport = {
+  reportId: string;
+  jobId: number;
+  leaseToken: string;
+  leaseAttempt: number;
+  status: ExecutionReportStatus;
+  orderId?: string;
+  errorCode?: string;
+  stopLossOrderId?: string;
+  takeProfitOrderId?: string;
+  compensationState?: "completed" | "failed";
+  compensationOrderId?: string;
+};
 
 // ─── Config ────────────────────────────────────────────────────────────────
 
@@ -112,14 +124,21 @@ const {
   ENCRYPTION_KEY,
   PORT = "9090",
   POLL_INTERVAL_MS = "5000",
-  EXECUTION_MODE = "testnet",
+  EXECUTION_MODE = "disabled",
 } = process.env;
 
+const executionMode = parseExecutionMode(EXECUTION_MODE);
+
+const isDirectExecution = process.argv[1] !== undefined
+  && fileURLToPath(import.meta.url) === process.argv[1];
+
 const REQUIRED = ["WORKER_URL", "INTERNAL_SECRET", "ENCRYPTION_KEY"];
-for (const key of REQUIRED) {
-  if (!process.env[key]) {
-    console.error(`[exec-server] FATAL: ${key} is not set`);
-    process.exit(1);
+if (isDirectExecution) {
+  for (const key of REQUIRED) {
+    if (!process.env[key]) {
+      console.error(`[exec-server] FATAL: ${key} is not set`);
+      process.exit(1);
+    }
   }
 }
 
@@ -134,6 +153,55 @@ function normaliseSide(side: string): "BUY" | "SELL" {
 
 function normaliseOrderType(t: string): "MARKET" | "LIMIT" {
   return t.toUpperCase() === "LIMIT" ? "LIMIT" : "MARKET";
+}
+
+const BOUNDED_ERROR_CODES = new Set([
+  "connection_kill_switch",
+  "invalid_notional",
+  "zero_quantity",
+  "duplicate_in_flight",
+  "unsupported_exchange",
+  "exchange_rejected",
+  "order_submission_failed",
+  "duplicate_order_unresolved",
+  "fill_not_confirmed",
+  "exchange_reconcile_error",
+  "protection_failed_compensated",
+  "protection_failed_uncompensated",
+  "protection_contract_missing",
+  "execution_error",
+]);
+
+export function boundedExecutionErrorCode(value: unknown, fallback = "execution_error"): string {
+  const candidate = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  return BOUNDED_ERROR_CODES.has(candidate) ? candidate : fallback;
+}
+
+export function buildExecutionReportId(
+  jobId: number,
+  leaseAttempt: number,
+  status: ExecutionReportStatus,
+  orderId?: string | null,
+  errorCode?: string | null,
+  details?: Pick<ExecutionReport, "stopLossOrderId" | "takeProfitOrderId" | "compensationState" | "compensationOrderId">,
+): string {
+  const outcome = JSON.stringify({
+    jobId,
+    leaseAttempt,
+    status,
+    orderId: orderId ?? null,
+    errorCode: errorCode ?? null,
+    stopLossOrderId: details?.stopLossOrderId ?? null,
+    takeProfitOrderId: details?.takeProfitOrderId ?? null,
+    compensationState: details?.compensationState ?? null,
+    compensationOrderId: details?.compensationOrderId ?? null,
+  });
+  return `execution-${crypto.createHash("sha256").update(outcome).digest("hex")}`;
 }
 
 // ─── Shared crypto (delegates to the extracted module at runtime) ──────────
@@ -155,6 +223,61 @@ async function decryptKey(ciphertext: string, encryptionKey: string): Promise<st
     return new TextDecoder().decode(decrypted);
   }
   throw new Error("WebCrypto.subtle not available — need Node 20+");
+}
+
+export type EncryptedExecutionCredentials = {
+  apiKey: string;
+  apiSecret: string;
+  passphrase?: string | null;
+};
+
+export type ExecutionJobPreparationDependencies = {
+  decryptKey: (ciphertext: string, encryptionKey: string) => Promise<string>;
+  createClient: (exchange: string, credentials: CexCredentials) => CexClient;
+};
+
+export type ExecutionJobPreparation =
+  | { status: "disabled"; mode: "disabled" }
+  | {
+    status: "ready";
+    mode: Exclude<ExecutionMode, "disabled">;
+    environment: ExchangeEnvironment;
+    apiKey: string;
+    apiSecret: string;
+    passphrase: string | undefined;
+    client: CexClient;
+  };
+
+/**
+ * Validate mode and exchange capability before materializing any credential
+ * or exchange client. Dependencies make this ordering directly testable.
+ */
+export async function prepareExecutionJob(
+  modeValue: unknown,
+  exchange: string,
+  encrypted: EncryptedExecutionCredentials,
+  encryptionKey: string,
+  dependencies: ExecutionJobPreparationDependencies = {
+    decryptKey,
+    createClient: createCexClient,
+  },
+): Promise<ExecutionJobPreparation> {
+  const mode = parseExecutionMode(modeValue);
+  if (mode === "disabled") return { status: "disabled", mode };
+
+  const environment: ExchangeEnvironment = mode;
+  assertAutomatedExecutionSupported(exchange, environment);
+
+  const apiKey = await dependencies.decryptKey(encrypted.apiKey, encryptionKey);
+  const apiSecret = await dependencies.decryptKey(encrypted.apiSecret, encryptionKey);
+  const passphrase = encrypted.passphrase
+    ? await dependencies.decryptKey(encrypted.passphrase, encryptionKey)
+    : undefined;
+  const credentials: CexCredentials = { apiKey, apiSecret, environment };
+  if (passphrase !== undefined) credentials.passphrase = passphrase;
+  const client = dependencies.createClient(exchange, credentials);
+
+  return { status: "ready", mode, environment, apiKey, apiSecret, passphrase, client };
 }
 
 // ─── Internal API client ───────────────────────────────────────────────────
@@ -196,7 +319,43 @@ let ordersRejected = 0;
 let ordersTracked = 0;
 let errorsTotal = 0;
 let lastError: string | null = null;
+let jobsClaimed = 0;
+let staleLeasesReclaimed = 0;
+let lastSuccessfulPollAt = 0;
 let serverStart = Date.now();
+
+export function renderExecutionMetrics(): string {
+  const lines = [
+    "# HELP execution_polls_total Total execution poll cycles.",
+    "# TYPE execution_polls_total counter",
+    `execution_polls_total ${pollCount}`,
+    "# HELP execution_poll_duration_seconds Duration of the latest execution poll cycle.",
+    "# TYPE execution_poll_duration_seconds gauge",
+    `execution_poll_duration_seconds ${lastPollDuration / 1000}`,
+    "# HELP execution_claimed_jobs_total Total submit and reconcile leases claimed.",
+    "# TYPE execution_claimed_jobs_total counter",
+    `execution_claimed_jobs_total ${jobsClaimed}`,
+    "# HELP execution_submissions_total Total exchange submission attempts.",
+    "# TYPE execution_submissions_total counter",
+    `execution_submissions_total ${ordersSubmitted}`,
+    "# HELP execution_fills_total Total exchange orders reconciled as filled.",
+    "# TYPE execution_fills_total counter",
+    `execution_fills_total ${ordersFilled}`,
+    "# HELP execution_failures_total Total execution-service errors.",
+    "# TYPE execution_failures_total counter",
+    `execution_failures_total ${errorsTotal}`,
+    "# HELP execution_stale_leases_reclaimed_total Total leases reclaimed after a prior attempt.",
+    "# TYPE execution_stale_leases_reclaimed_total counter",
+    `execution_stale_leases_reclaimed_total ${staleLeasesReclaimed}`,
+    "# HELP execution_inflight_orders Current orders awaiting reconciliation.",
+    "# TYPE execution_inflight_orders gauge",
+    `execution_inflight_orders ${ordersTracked}`,
+    "# HELP execution_last_success_timestamp_seconds Unix timestamp of the last successful poll cycle.",
+    "# TYPE execution_last_success_timestamp_seconds gauge",
+    `execution_last_success_timestamp_seconds ${lastSuccessfulPollAt ? lastSuccessfulPollAt / 1000 : 0}`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
 
 const server = http.createServer((req, res) => {
   if (req.url === "/health" && req.method === "GET") {
@@ -204,470 +363,420 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       status: healthy ? "ok" : "starting",
       uptime: Math.floor((Date.now() - serverStart) / 1000),
-      mode: EXECUTION_MODE,
+      mode: executionMode,
       pollCount,
       ordersSubmitted,
       ordersFilled,
       ordersRejected,
       ordersTracked,
       errorsTotal,
-      lastError,
+      degraded: lastError !== null,
       lastPollDuration,
     }));
+    return;
+  }
+  if (req.url === "/metrics" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" });
+    res.end(renderExecutionMetrics());
     return;
   }
   res.writeHead(404);
   res.end();
 });
 
-server.listen(Number(PORT), () => {
-  console.log(`[exec-server] Health/metrics server on :${PORT}`);
-});
-
-// ─── In-flight order tracking ──────────────────────────────────────────────
-
-/** Orders that were submitted but not yet confirmed filled. */
-const inFlightOrders = new Map<string, InFlightOrder>();
-
-// ─── Main poll loop ────────────────────────────────────────────────────────
-
-async function poll() {
-  const start = Date.now();
-  pollCount++;
-
-  try {
-    // 1. Fetch kill state
-    const killState = await internalGet<KillState>("/api/internal/kill-state");
-    if (killState.globalKill) {
-      console.log("[exec-server] Global kill active — skipping poll cycle");
-      await pollForFills();
-      return;
-    }
-
-    // 2. Fetch risk-approved jobs (Worker already ran decideExecution)
-    const { jobs } = await internalGet<{ jobs: RiskApprovedJob[] }>("/api/internal/risk-approved-jobs");
-    if (!jobs || jobs.length === 0) {
-      await pollForFills();
-      return;
-    }
-
-    console.log(`[exec-server] Processing ${jobs.length} risk-approved job(s)`);
-
-    // 3. Process each risk-approved job
-    for (const job of jobs) {
-      // Defense-in-depth: double-check per-connection kill switch
-      if (killState.perConnectionKills[job.connId]) {
-        console.log(`[exec-server] Job #${job.jobId}: connection #${job.connId} killed — skipping`);
-        continue;
-      }
-
-      if (job.connKillSwitchActive) {
-        console.log(`[exec-server] Job #${job.jobId}: connection #${job.connId} kill-switch active — skipping`);
-        continue;
-      }
-
-      // Validate pre-computed sizing from the Worker
-      const notionalStr = job.notionalUsd;
-      const notionalUsd = notionalStr ? parseFloat(notionalStr) : 0;
-      if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
-        await internalPost("/api/internal/report-execution", {
-          tradeIntentId: job.tradeIntentId,
-          userId: job.userId,
-          cexConnectionId: job.cexConnectionId,
-          provider: job.connExchange,
-          symbol: job.symbol,
-          side: job.side,
-          orderType: job.orderType,
-          status: "skipped",
-          errorMessage: "invalid_notional",
-          idempotencyKey: job.idempotencyKey,
-        });
-        errorsTotal++;
-        continue;
-      }
-
-      const quantity = job.quantity;
-      if (!quantity || parseFloat(quantity) <= 0) {
-        await internalPost("/api/internal/report-execution", {
-          tradeIntentId: job.tradeIntentId,
-          userId: job.userId,
-          cexConnectionId: job.cexConnectionId,
-          provider: job.connExchange,
-          symbol: job.symbol,
-          side: job.side,
-          orderType: job.orderType,
-          notionalUsd: notionalStr,
-          status: "skipped",
-          errorMessage: "zero_quantity",
-          idempotencyKey: job.idempotencyKey,
-        });
-        errorsTotal++;
-        continue;
-      }
-
-      const leverage = job.leverage ?? job.intentTargetLeverage ?? 3;
-
-      try {
-        // Decrypt credentials locally — NEVER sent over the wire
-        const apiKey = await decryptKey(job.connEncryptedApiKey, ENCRYPTION_KEY!);
-        const apiSecret = await decryptKey(job.connEncryptedApiSecret, ENCRYPTION_KEY!);
-        const passphrase = job.connEncryptedPassphrase
-          ? await decryptKey(job.connEncryptedPassphrase, ENCRYPTION_KEY!)
-          : undefined;
-
-        // ── Duplicate detection ──────────────────────────────────────────
-        if (inFlightOrders.has(job.idempotencyKey)) {
-          console.log(`[exec-server] Job #${job.jobId}: duplicate idempotencyKey already in-flight — skipping`);
-          continue;
-        }
-
-        console.log(`[exec-server] Job #${job.jobId}: ${job.side} ${job.quantity} ${job.symbol} via ${job.connExchange} (conn #${job.connId}) [mode=${EXECUTION_MODE}] [notional=$${notionalUsd.toFixed(2)}]`);
-
-        // ── EXECUTION_MODE guard ────────────────────────────────────────
-        if (EXECUTION_MODE === "disabled") {
-          await internalPost("/api/internal/report-execution", {
-            tradeIntentId: job.tradeIntentId,
-            userId: job.userId,
-            cexConnectionId: job.cexConnectionId,
-            provider: job.connExchange,
-            symbol: job.symbol,
-            side: job.side,
-            orderType: job.orderType,
-            notionalUsd: notionalStr,
-            quantity,
-            leverage,
-            limitPrice: job.limitPrice ?? undefined,
-            status: "queued",
-            errorMessage: "EXECUTION_MODE=disabled",
-            idempotencyKey: job.idempotencyKey,
-          });
-          continue;
-        }
-
-        // ── Build CEX client ────────────────────────────────────────────
-        const isTestnet = EXECUTION_MODE === "testnet";
-        const client = createCexClient(job.connExchange, {
-          apiKey,
-          apiSecret,
-          passphrase,
-          testnet: isTestnet,
-        });
-
-        // ── Set leverage (best-effort) ───────────────────────────────────
-        if (leverage > 0) {
-          try { await client.setLeverage(job.symbol, leverage); } catch { /* non-fatal */ }
-        }
-
-        // ── Submit order using Worker's pre-approved sizing ──────────────
-        const orderReq: CexOrderRequest = {
-          symbol: job.symbol,
-          side: normaliseSide(job.side),
-          type: normaliseOrderType(job.orderType),
-          quantity,
-          price: job.limitPrice ?? undefined,
-          leverage,
-          stopLossPrice: job.intentStopLossPrice ?? undefined,
-          takeProfitPrice: job.intentTakeProfitPrice ?? undefined,
-          clientOrderId: job.idempotencyKey,
-        };
-
-        let orderResult: CexOrderResult;
-        try {
-          orderResult = await client.placeOrder(orderReq);
-          console.log(`[exec-server] Order submitted: ${orderResult.orderId} -> ${orderResult.status}`);
-        } catch (e: any) {
-          const errMsg = e?.message?.slice(0, 300) ?? "order_submission_failed";
-          console.error(`[exec-server] Order submission failed for job #${job.jobId}: ${errMsg}`);
-
-          if (isDuplicateError(errMsg)) {
-            await reconcileDuplicateV2(
-              job, apiKey, apiSecret, passphrase, isTestnet, notionalStr, quantity, leverage, errMsg,
-            );
-            continue;
-          }
-
-          ordersRejected++;
-          ordersSubmitted++;
-
-          await internalPost("/api/internal/report-execution", {
-            tradeIntentId: job.tradeIntentId,
-            userId: job.userId,
-            cexConnectionId: job.cexConnectionId,
-            provider: job.connExchange,
-            symbol: job.symbol,
-            side: job.side,
-            orderType: job.orderType,
-            notionalUsd: notionalStr,
-            quantity,
-            leverage,
-            limitPrice: job.limitPrice ?? undefined,
-            status: "rejected",
-            errorMessage: errMsg,
-            idempotencyKey: job.idempotencyKey,
-          });
-          errorsTotal++;
-          lastError = errMsg;
-          continue;
-        }
-
-        // ── Update local state BEFORE reporting to Worker ───────────────
-        ordersSubmitted++;
-
-        if (orderResult.status === "filled") {
-          ordersFilled++;
-          console.log(`[exec-server] Job #${job.jobId} filled immediately: ${orderResult.orderId}`);
-        }
-
-        // Track all non-rejected orders for fill polling
-        inFlightOrders.set(job.idempotencyKey, {
-          idempotencyKey: job.idempotencyKey,
-          orderId: orderResult.orderId,
-          exchange: job.connExchange,
-          symbol: job.symbol,
-          userId: job.userId,
-          cexConnectionId: job.cexConnectionId,
-          tradeIntentId: job.tradeIntentId,
-          submittedAt: Date.now(),
-          pollCount: 0,
-          apiKey,
-          apiSecret,
-          passphrase,
-          testnet: isTestnet,
-        });
-        ordersTracked = inFlightOrders.size;
-
-        // ── Report result to Worker (best-effort; local state is already saved) ──
-        try {
-          await internalPost("/api/internal/report-execution", {
-            tradeIntentId: job.tradeIntentId,
-            userId: job.userId,
-            cexConnectionId: job.cexConnectionId,
-            provider: job.connExchange,
-            symbol: job.symbol,
-            side: job.side,
-            orderType: job.orderType,
-            notionalUsd: notionalStr,
-            quantity,
-            leverage,
-            limitPrice: job.limitPrice ?? undefined,
-            orderId: orderResult.orderId,
-            status: orderResult.status,
-            idempotencyKey: job.idempotencyKey,
-          });
-        } catch (reportErr: any) {
-          console.warn(`[exec-server] Report-back POST failed for ${orderResult.orderId} (local state saved, poll will recover): ${(reportErr as any)?.message?.slice(0, 100)}`);
-          errorsTotal++;
-          lastError = (reportErr as any)?.message ?? String(reportErr);
-        }
-      } catch (e: any) {
-        errorsTotal++;
-        lastError = e?.message ?? String(e);
-        console.error(`[exec-server] Error processing job #${job.jobId} conn #${job.connId}:`, e?.message);
-      }
-    }
-
-    // 4. Poll for fills on in-flight orders
-    await pollForFills();
-
-    lastPollDuration = Date.now() - start;
-  } catch (e: any) {
-    errorsTotal++;
-    lastError = e?.message ?? String(e);
-    console.error("[exec-server] Poll error:", e?.message);
-    lastPollDuration = Date.now() - start;
-  }
+if (isDirectExecution) {
+  server.listen(Number(PORT), () => {
+    console.log(`[exec-server] Health/metrics server on :${PORT}`);
+  });
 }
 
-/** Error message patterns that indicate a duplicate / already-existing order. */
+// ─── Lease-aware poller ────────────────────────────────────────────────────
+
+type LeaseOwnedOrder = {
+  jobId: number;
+  idempotencyKey: string;
+  orderId: string;
+  exchange: string;
+  symbol: string;
+  userId: number;
+  cexConnectionId: number;
+  tradeIntentId: number;
+  submittedAt: number;
+  pollCount: number;
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string | undefined;
+  environment: ExchangeEnvironment;
+  leaseToken: string;
+  leaseAttempt: number;
+  leaseExpiresAt: number;
+  leaseAction: "submit" | "reconcile";
+};
+
+const leaseInFlightOrders = new Map<number, LeaseOwnedOrder>();
+
+type ExecutionPollResponse = { jobs: RiskApprovedJob[] };
+
+export type ExecutionPollDependencies = {
+  mode?: ExecutionMode;
+  get?: <T>(path: string) => Promise<T>;
+  post?: (path: string, body: unknown) => Promise<unknown>;
+  prepareJob?: typeof prepareExecutionJob;
+  state?: Map<number, LeaseOwnedOrder>;
+  now?: () => number;
+};
+
+function reportBody(
+  job: Pick<RiskApprovedJob, "jobId" | "leaseToken" | "leaseAttempt">,
+  status: ExecutionReportStatus,
+  orderId?: string | null,
+  errorCode?: string | null,
+  details?: Pick<ExecutionReport, "stopLossOrderId" | "takeProfitOrderId" | "compensationState" | "compensationOrderId">,
+): ExecutionReport {
+  const body: ExecutionReport = {
+    reportId: buildExecutionReportId(job.jobId, job.leaseAttempt, status, orderId, errorCode, details),
+    jobId: job.jobId,
+    leaseToken: job.leaseToken,
+    leaseAttempt: job.leaseAttempt,
+    status,
+  };
+  if (orderId) body.orderId = orderId;
+  if (errorCode) body.errorCode = boundedExecutionErrorCode(errorCode);
+  if (details?.stopLossOrderId) body.stopLossOrderId = details.stopLossOrderId;
+  if (details?.takeProfitOrderId) body.takeProfitOrderId = details.takeProfitOrderId;
+  if (details?.compensationState) body.compensationState = details.compensationState;
+  if (details?.compensationOrderId) body.compensationOrderId = details.compensationOrderId;
+  return body;
+}
+
+async function reportOutcome(
+  post: (path: string, body: unknown) => Promise<unknown>,
+  job: Pick<RiskApprovedJob, "jobId" | "leaseToken" | "leaseAttempt">,
+  status: ExecutionReportStatus,
+  orderId?: string | null,
+  errorCode?: string | null,
+  details?: Pick<ExecutionReport, "stopLossOrderId" | "takeProfitOrderId" | "compensationState" | "compensationOrderId">,
+): Promise<void> {
+  await post("/api/internal/report-execution", reportBody(job, status, orderId, errorCode, details));
+}
+
+function hasLease(job: Partial<RiskApprovedJob>): job is Pick<RiskApprovedJob, "jobId" | "leaseToken" | "leaseAttempt" | "leaseExpiresAt" | "leaseAction"> {
+  return Number.isInteger(job.jobId)
+    && typeof job.leaseToken === "string" && job.leaseToken.length > 0
+    && Number.isInteger(job.leaseAttempt)
+    && Number.isFinite(job.leaseExpiresAt)
+    && (job.leaseAction === "submit" || job.leaseAction === "reconcile");
+}
+
 function isDuplicateError(message: string): boolean {
   const lower = message.toLowerCase();
-  return (
-    lower.includes("duplicate order") ||
-    lower.includes("order already exists") ||
-    lower.includes("already placed") ||
-    lower.includes("duplicate client order id") ||
-    lower.includes("client order id already") ||
-    lower.includes("order would immediately reduce")
-  );
+  return lower.includes("duplicate order")
+    || lower.includes("order already exists")
+    || lower.includes("already placed")
+    || lower.includes("duplicate client order id")
+    || lower.includes("client order id already")
+    || lower.includes("order would immediately reduce");
 }
 
-/**
- * When the exchange rejects with a "duplicate order" error, query the
- * exchange for existing position state instead of treating it as rejected.
- *
- * - If a position exists -> report as filled (the original order completed).
- * - If no position  -> track in inFlightOrders for fill polling.
- */
-async function reconcileDuplicateV2(
-  job: RiskApprovedJob,
-  apiKey: string,
-  apiSecret: string,
-  passphrase: string | undefined,
-  testnet: boolean,
-  notionalStr: string | null,
-  quantity: string,
-  leverage: number,
-  errMsg: string,
-): Promise<void> {
-  const idemKey = job.idempotencyKey;
-  console.log(`[exec-server] Reconciling duplicate for ${idemKey} on ${job.connExchange}:${job.symbol}`);
-
-  const syntheticOrderId = `reconciled:${idemKey}`;
-  let foundPosition = false;
-
+async function bestEffortReport(
+  post: (path: string, body: unknown) => Promise<unknown>,
+  job: Pick<RiskApprovedJob, "jobId" | "leaseToken" | "leaseAttempt">,
+  status: ExecutionReportStatus,
+  orderId?: string | null,
+  errorCode?: string | null,
+  details?: Pick<ExecutionReport, "stopLossOrderId" | "takeProfitOrderId" | "compensationState" | "compensationOrderId">,
+): Promise<boolean> {
   try {
-    const client = createCexClient(job.connExchange, { apiKey, apiSecret, passphrase, testnet });
-    const positions = await client.getPositions(job.symbol);
-    const position = positions.find((p) => p.symbol === job.symbol);
-
-    if (position && Math.abs(position.sizeSigned) > 0) {
-      foundPosition = true;
-      ordersFilled++;
-      ordersSubmitted++;
-
-      // Track briefly so pollForFills can confirm, then auto-remove
-      inFlightOrders.set(idemKey, {
-        idempotencyKey: idemKey,
-        orderId: syntheticOrderId,
-        exchange: job.connExchange,
-        symbol: job.symbol,
-        userId: job.userId,
-        cexConnectionId: job.cexConnectionId,
-        tradeIntentId: job.tradeIntentId,
-        submittedAt: Date.now(),
-        pollCount: MAX_ORDER_POLLS - 1, // near-expired so poll cleans up fast
-        apiKey,
-        apiSecret,
-        passphrase,
-        testnet,
-      });
-      ordersTracked = inFlightOrders.size;
-
-      await internalPost("/api/internal/report-execution", {
-        tradeIntentId: job.tradeIntentId,
-        userId: job.userId,
-        cexConnectionId: job.cexConnectionId,
-        provider: job.connExchange,
-        symbol: job.symbol,
-        side: job.side,
-        orderType: job.orderType,
-        notionalUsd: notionalStr,
-        quantity,
-        leverage,
-        limitPrice: job.limitPrice ?? undefined,
-        orderId: syntheticOrderId,
-        status: "filled",
-        errorMessage: `reconciled_duplicate: ${errMsg.slice(0, 100)}`,
-        idempotencyKey: idemKey,
-      });
-      console.log(`[exec-server] Duplicate reconciled as filled: ${job.symbol} size=${position.sizeSigned}`);
-      return;
-    }
-  } catch (e: any) {
-    console.warn(`[exec-server] Position check during reconciliation failed: ${e?.message?.slice(0, 100)}`);
+    await reportOutcome(post, job, status, orderId, errorCode, details);
+    return true;
+  } catch (error: any) {
+    errorsTotal++;
+    lastError = error?.message ?? String(error);
+    console.warn(`[exec-server] Report-back failed for job #${job.jobId}: ${String(lastError).slice(0, 120)}`);
+    return false;
   }
+}
 
-  // No position found — order may still be pending (LIMIT order resting).
-  // Track for fill polling so we don't lose it.
-  ordersSubmitted++;
-
-  inFlightOrders.set(idemKey, {
-    idempotencyKey: idemKey,
-    orderId: syntheticOrderId,
+function leaseOwnedOrder(
+  job: RiskApprovedJob,
+  prepared: Extract<ExecutionJobPreparation, { status: "ready" }>,
+  orderId: string,
+  now: number,
+  previous?: LeaseOwnedOrder,
+): LeaseOwnedOrder {
+  return {
+    jobId: job.jobId,
+    idempotencyKey: job.idempotencyKey,
+    orderId,
     exchange: job.connExchange,
     symbol: job.symbol,
     userId: job.userId,
     cexConnectionId: job.cexConnectionId,
     tradeIntentId: job.tradeIntentId,
-    submittedAt: Date.now(),
-    pollCount: 0,
-    apiKey,
-    apiSecret,
-    passphrase,
-    testnet,
-  });
-  ordersTracked = inFlightOrders.size;
-
-  console.log(`[exec-server] Duplicate order reconciled, tracking for fill: ${job.symbol}${foundPosition ? " (position found)" : ""}`);
+    submittedAt: previous?.submittedAt ?? now,
+    pollCount: previous?.pollCount ?? 0,
+    apiKey: prepared.apiKey,
+    apiSecret: prepared.apiSecret,
+    passphrase: prepared.passphrase,
+    environment: prepared.environment,
+    leaseToken: job.leaseToken,
+    leaseAttempt: job.leaseAttempt,
+    leaseExpiresAt: job.leaseExpiresAt,
+    leaseAction: job.leaseAction,
+  };
 }
 
-/**
- * Check in-flight orders for fills by reading positions from the exchange.
- * Reports filled status back to the Worker and removes from tracking.
- */
-async function pollForFills() {
-  if (inFlightOrders.size === 0) return;
+async function processLeaseSubmit(
+  job: RiskApprovedJob,
+  killState: KillState,
+  mode: Exclude<ExecutionMode, "disabled">,
+  post: (path: string, body: unknown) => Promise<unknown>,
+  prepareJob: typeof prepareExecutionJob,
+  state: Map<number, LeaseOwnedOrder>,
+  now: () => number,
+): Promise<void> {
+  if (!hasLease(job) || job.leaseAction !== "submit") return;
+  if (killState.perConnectionKills[job.connId] || job.connKillSwitchActive) {
+    await bestEffortReport(post, job, "failed", null, "connection_kill_switch");
+    return;
+  }
 
-  const start = Date.now();
-  let filledCount = 0;
+  const notional = job.notionalUsd ? Number(job.notionalUsd) : 0;
+  if (!Number.isFinite(notional) || notional <= 0) {
+    errorsTotal++;
+    await bestEffortReport(post, job, "failed", null, "invalid_notional");
+    return;
+  }
+  const quantity = job.quantity;
+  if (!quantity || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+    errorsTotal++;
+    await bestEffortReport(post, job, "failed", null, "zero_quantity");
+    return;
+  }
+  if ([...state.values()].some((order) => order.jobId === job.jobId || order.idempotencyKey === job.idempotencyKey)) {
+    await bestEffortReport(post, job, "failed", null, "duplicate_in_flight");
+    return;
+  }
 
-  for (const [key, order] of inFlightOrders) {
-    if (order.pollCount >= MAX_ORDER_POLLS) {
-      console.log(`[exec-server] Fill poll exhausted for ${order.orderId} (${order.pollCount} polls) — dropping`);
-      inFlightOrders.delete(key);
-      ordersTracked = inFlightOrders.size;
-      continue;
+  try {
+    const prepared = await prepareJob(
+      mode,
+      job.connExchange,
+      { apiKey: job.connEncryptedApiKey, apiSecret: job.connEncryptedApiSecret, passphrase: job.connEncryptedPassphrase },
+      ENCRYPTION_KEY ?? "",
+    );
+    if (prepared.status === "disabled") return;
+    const leverage = job.leverage ?? job.intentTargetLeverage ?? 3;
+    if (leverage > 0) {
+      try { await prepared.client.setLeverage(job.symbol, leverage); } catch { /* best effort */ }
     }
+    const request: CexOrderRequest = {
+      symbol: job.symbol,
+      side: normaliseSide(job.side),
+      type: normaliseOrderType(job.orderType),
+      quantity,
+      price: job.limitPrice ?? undefined,
+      leverage,
+      stopLossPrice: job.intentStopLossPrice ?? undefined,
+      takeProfitPrice: job.intentTakeProfitPrice ?? undefined,
+      clientOrderId: job.idempotencyKey,
+    };
 
-    order.pollCount++;
-
+    let result: CexOrderResult;
     try {
-      const client = createCexClient(order.exchange, {
-        apiKey: order.apiKey,
-        apiSecret: order.apiSecret,
-        passphrase: order.passphrase,
-        testnet: order.testnet,
-      });
-
-      const positions = await client.getPositions(order.symbol);
-      const position = positions.find((p) => p.symbol === order.symbol);
-
-      if (position && Math.abs(position.sizeSigned) > 0) {
-        // Position exists — order is filled
-        await internalPost("/api/internal/report-execution", {
-          tradeIntentId: order.tradeIntentId,
-          userId: order.userId,
-          cexConnectionId: order.cexConnectionId,
-          provider: order.exchange,
-          symbol: order.symbol,
-          side: position.sizeSigned > 0 ? "BUY" : "SELL",
-          orderType: "MARKET",
-          status: "filled",
-          orderId: order.orderId,
-          idempotencyKey: order.idempotencyKey,
-        });
-
-        inFlightOrders.delete(key);
-        ordersTracked = inFlightOrders.size;
-        ordersFilled++;
-        filledCount++;
-        console.log(`[exec-server] Order ${order.orderId} for ${order.symbol} confirmed filled (${order.pollCount} polls)`);
+      result = await prepared.client.placeOrder(request);
+    } catch (error: any) {
+      if (error instanceof CexProtectionError) {
+        const stopLoss = error.outcome.protection.stopLoss;
+        const takeProfit = error.outcome.protection.takeProfit;
+        const compensationState = error.outcome.compensation.state;
+        const emergencyClose = error.outcome.compensation.emergencyClose;
+        ordersSubmitted++;
+        ordersRejected++;
+        errorsTotal++;
+        await bestEffortReport(
+          post,
+          job,
+          "failed",
+          error.outcome.entryOrderId,
+          compensationState === "completed"
+            ? "protection_failed_compensated"
+            : "protection_failed_uncompensated",
+          {
+            stopLossOrderId: stopLoss.status === "accepted" ? stopLoss.orderId : undefined,
+            takeProfitOrderId: takeProfit.status === "accepted" ? takeProfit.orderId : undefined,
+            compensationState,
+            compensationOrderId: emergencyClose.status === "accepted" ? emergencyClose.orderId : undefined,
+          },
+        );
+        return;
       }
-    } catch (e: any) {
-      console.warn(`[exec-server] Fill poll error for ${order.orderId} (${order.symbol}): ${e?.message?.slice(0, 100)}`);
+      const message = String(error?.message ?? "order_submission_failed").slice(0, 300);
+      if (isDuplicateError(message)) {
+        ordersSubmitted++;
+        errorsTotal++;
+        // A duplicate response does not prove that the entry or its protection
+        // exists. Stop automatic retries and require exact operational repair.
+        await bestEffortReport(post, job, "failed", null, "duplicate_order_unresolved");
+        return;
+      }
+      ordersSubmitted++;
+      ordersRejected++;
+      errorsTotal++;
+      lastError = message;
+      await bestEffortReport(post, job, "failed", null, "order_submission_failed");
+      return;
     }
-  }
 
-  if (filledCount > 0) {
-    console.log(`[exec-server] Fill poll: ${filledCount} filled, ${inFlightOrders.size} still tracking (${Date.now() - start}ms)`);
+    ordersSubmitted++;
+    if (result.status === "rejected") {
+      ordersRejected++;
+      await bestEffortReport(post, job, "failed", result.orderId, "exchange_rejected");
+      return;
+    }
+    if (result.protection?.status === "protected") {
+      ordersFilled++;
+      await bestEffortReport(post, job, "protected", result.orderId, null, {
+        stopLossOrderId: result.protection.stopLossOrderId,
+        takeProfitOrderId: result.protection.takeProfitOrderId,
+      });
+      return;
+    }
+
+    // Enabled automated adapters must return durable protection identifiers.
+    ordersRejected++;
+    errorsTotal++;
+    await bestEffortReport(post, job, "failed", result.orderId, "protection_contract_missing");
+    return;
+  } catch (error: any) {
+    errorsTotal++;
+    lastError = error?.message ?? String(error);
+    await bestEffortReport(post, job, "failed", null, "unsupported_exchange");
   }
 }
 
-async function sha256(input: string): Promise<string> {
-  const subtle = (globalThis as any).crypto?.subtle;
-  if (subtle) {
-    const buf = await subtle.digest("SHA-256", new TextEncoder().encode(input));
-    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+async function processLeaseReconcile(
+  job: RiskApprovedJob,
+  mode: Exclude<ExecutionMode, "disabled">,
+  post: (path: string, body: unknown) => Promise<unknown>,
+  prepareJob: typeof prepareExecutionJob,
+  state: Map<number, LeaseOwnedOrder>,
+  now: () => number,
+): Promise<void> {
+  if (!hasLease(job) || job.leaseAction !== "reconcile") return;
+  const previous = state.get(job.jobId);
+  const orderId = job.orderId ?? previous?.orderId;
+  if (!orderId) {
+    await bestEffortReport(post, job, "unresolved", null, "fill_not_confirmed");
+    return;
   }
-  // Fallback for older Node
-  return crypto.createHash("sha256").update(input).digest("hex");
+
+  try {
+    const prepared = await prepareJob(
+      mode,
+      job.connExchange,
+      { apiKey: job.connEncryptedApiKey, apiSecret: job.connEncryptedApiSecret, passphrase: job.connEncryptedPassphrase },
+      ENCRYPTION_KEY ?? "",
+    );
+    if (prepared.status === "disabled") return;
+    const current = leaseOwnedOrder(job, prepared, orderId, now(), previous);
+    current.pollCount++;
+    state.set(job.jobId, current);
+    if (current.pollCount > MAX_ORDER_POLLS) {
+      await bestEffortReport(post, job, "unresolved", orderId, "fill_not_confirmed");
+      state.delete(job.jobId);
+      ordersTracked = state.size;
+      return;
+    }
+
+    const exact = await reconcileExactOrder(prepared.client, {
+      symbol: job.symbol,
+      orderId,
+      clientOrderId: job.idempotencyKey,
+    });
+    const exactStatus = exact.status === "matched" ? String(exact.order.status ?? "").toUpperCase() : "";
+    if (exact.status === "matched" && exactStatus === "FILLED") {
+      if (await bestEffortReport(post, job, "filled", orderId)) {
+        state.delete(job.jobId);
+        ordersFilled++;
+        ordersTracked = state.size;
+      }
+      return;
+    }
+    if (exact.status === "matched" && ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"].includes(exactStatus)) {
+      await bestEffortReport(post, job, "failed", orderId, "exchange_rejected");
+      state.delete(job.jobId);
+      ordersTracked = state.size;
+      return;
+    }
+    await bestEffortReport(post, job, "unresolved", orderId, "fill_not_confirmed");
+  } catch (error: any) {
+    errorsTotal++;
+    lastError = error?.message ?? String(error);
+    await bestEffortReport(post, job, "unresolved", orderId, "exchange_reconcile_error");
+  }
+}
+
+export async function runExecutionPoll(dependencies: ExecutionPollDependencies = {}): Promise<void> {
+  const start = Date.now();
+  pollCount++;
+  const mode = dependencies.mode ?? executionMode;
+  const get = dependencies.get ?? internalGet;
+  const post = dependencies.post ?? internalPost;
+  const state = dependencies.state ?? leaseInFlightOrders;
+  const prepareJob = dependencies.prepareJob ?? prepareExecutionJob;
+  const now = dependencies.now ?? (() => Date.now());
+  let cycleSucceeded = false;
+
+  try {
+    const killState = await get<KillState>("/api/internal/kill-state");
+    if (killState.globalKill) {
+      console.log("[exec-server] Global kill active — skipping poll cycle");
+      cycleSucceeded = true;
+      return;
+    }
+    // Disabled mode must not claim submit or reconcile leases.
+    if (mode === "disabled") {
+      cycleSucceeded = true;
+      return;
+    }
+
+    const submitResponse = await get<ExecutionPollResponse>("/api/internal/risk-approved-jobs?action=submit");
+    jobsClaimed += submitResponse.jobs?.length ?? 0;
+    staleLeasesReclaimed += (submitResponse.jobs ?? []).filter((job) => job.leaseAttempt > 1).length;
+    for (const job of submitResponse.jobs ?? []) {
+      await processLeaseSubmit(job, killState, mode, post, prepareJob, state, now);
+    }
+    const reconcileResponse = await get<ExecutionPollResponse>("/api/internal/risk-approved-jobs?action=reconcile");
+    jobsClaimed += reconcileResponse.jobs?.length ?? 0;
+    staleLeasesReclaimed += (reconcileResponse.jobs ?? []).filter((job) => job.leaseAttempt > 1).length;
+    for (const job of reconcileResponse.jobs ?? []) {
+      await processLeaseReconcile(job, mode, post, prepareJob, state, now);
+    }
+    ordersTracked = state.size;
+    cycleSucceeded = true;
+  } catch (error: any) {
+    errorsTotal++;
+    lastError = error?.message ?? String(error);
+    console.error("[exec-server] Poll error:", lastError);
+  } finally {
+    lastPollDuration = Date.now() - start;
+    if (cycleSucceeded) {
+      lastSuccessfulPollAt = now();
+      lastError = null;
+    }
+  }
+}
+
+async function poll() {
+  await runExecutionPoll();
 }
 
 // ─── Bootstrap ─────────────────────────────────────────────────────────────
 
 async function main() {
   console.log(`[exec-server] Starting...`);
-  console.log(`[exec-server] Mode: ${EXECUTION_MODE}`);
+  console.log(`[exec-server] Mode: ${executionMode}`);
   console.log(`[exec-server] Worker: ${WORKER_URL}`);
   console.log(`[exec-server] Poll interval: ${POLL_INTERVAL_MS}ms`);
 
@@ -696,7 +805,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = () => {
     console.log("[exec-server] Shutting down...");
-    console.log(`[exec-server] In-flight at shutdown: ${inFlightOrders.size} orders`);
+    console.log(`[exec-server] In-flight at shutdown: ${leaseInFlightOrders.size} orders`);
     healthy = false;
     process.exit(0);
   };
@@ -704,10 +813,12 @@ async function main() {
   process.on("SIGINT", shutdown);
 }
 
-main().catch((e) => {
-  console.error("[exec-server] Fatal:", e?.message);
-  process.exit(1);
-});
+if (isDirectExecution) {
+  main().catch((e) => {
+    console.error("[exec-server] Fatal:", e?.message);
+    process.exit(1);
+  });
+}
 
 /* ── Kline Pipeline (VPS → Worker → D1 → Analysis Engine) ────────────────
  * Fetches klines from Binance on VPS (no geo-block), pushes to Worker for
@@ -719,17 +830,48 @@ const KLINE_BARS = 200;
 const KLINE_TIMEFRAME = "4h";
 const KLINES_CHUNK = 85;
 
-async function fetchBinanceKlines(symbol: string, interval: string, limit: number): Promise<any[]> {
+export interface BinanceKline {
+  symbol: string;
+  timeframe: string;
+  timestamp: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+export function parseBinanceKlines(symbol: string, interval: string, payload: unknown): BinanceKline[] {
+  if (!Array.isArray(payload)) throw new Error("Invalid Binance kline payload");
+
+  return payload.map((row) => {
+    if (!Array.isArray(row)
+      || row.length < 6
+      || typeof row[0] !== "number"
+      || !Number.isFinite(row[0])
+      || typeof row[1] !== "string"
+      || typeof row[2] !== "string"
+      || typeof row[3] !== "string"
+      || typeof row[4] !== "string"
+      || typeof row[5] !== "string") {
+      throw new Error("Invalid Binance kline payload");
+    }
+
+    return {
+      symbol, timeframe: interval,
+      timestamp: row[0], open: row[1], high: row[2], low: row[3], close: row[4], volume: row[5],
+    };
+  });
+}
+
+async function fetchBinanceKlines(symbol: string, interval: string, limit: number): Promise<BinanceKline[]> {
   const params = new URLSearchParams({ symbol, interval, limit: String(limit) });
   const headers: Record<string, string> = {};
   const apiKey = (process.env.BINANCE_API_KEY ?? "").trim();
   if (apiKey) headers["X-MBX-APIKEY"] = apiKey;
   const res = await fetch(`${BINANCE_URL}/fapi/v1/klines?${params}`, { headers });
   if (!res.ok) throw new Error(`Binance ${res.status} for ${symbol}`);
-  return (await res.json()).map((k: any) => ({
-    symbol, timeframe: interval,
-    timestamp: k[0], open: k[1], high: k[2], low: k[3], close: k[4], volume: k[5],
-  }));
+  return parseBinanceKlines(symbol, interval, await res.json());
 }
 
 async function fetchTopSymbols(limit: number): Promise<string[]> {
@@ -752,30 +894,50 @@ async function fetchTopSymbols(limit: number): Promise<string[]> {
   }
 }
 
-async function runKlinePipeline() {
+export type KlinePipelineDependencies = {
+  fetchTopSymbols?: (limit: number) => Promise<string[]>;
+  fetchKlines?: (symbol: string, interval: string, limit: number) => Promise<BinanceKline[]>;
+  seedKlines?: (klines: BinanceKline[]) => Promise<unknown>;
+  triggerAnalysis?: () => Promise<unknown>;
+  wait?: (ms: number) => Promise<void>;
+};
+
+export async function runKlinePipeline(dependencies: KlinePipelineDependencies = {}) {
   const start = Date.now();
   console.log("[kline-pipeline] Starting...");
+  const fetchSymbols = dependencies.fetchTopSymbols ?? fetchTopSymbols;
+  const fetchKlines = dependencies.fetchKlines ?? fetchBinanceKlines;
+  const seedKlines = dependencies.seedKlines ?? (async (klines: BinanceKline[]) => {
+    await internalPost("/api/internal/seed-klines", { klines });
+  });
+  const triggerAnalysis = dependencies.triggerAnalysis ?? (async () => {
+    if (!process.env.ADMIN_API_KEY) return;
+    await fetch(`${WORKER_URL}/api/analysis/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin-api-key": process.env.ADMIN_API_KEY },
+    }).catch(() => {});
+  });
+  const wait = dependencies.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   try {
-    const symbols = await fetchTopSymbols(KLINE_PAIRS);
+    const symbols = await fetchSymbols(KLINE_PAIRS);
     let total = 0;
     for (const symbol of symbols) {
       try {
-        const klines = await fetchBinanceKlines(symbol, KLINE_TIMEFRAME, KLINE_BARS);
+        const klines = await fetchKlines(symbol, KLINE_TIMEFRAME, KLINE_BARS);
         for (let i = 0; i < klines.length; i += KLINES_CHUNK) {
           const chunk = klines.slice(i, i + KLINES_CHUNK);
-          await internalPost("/api/internal/seed-klines", { klines: chunk });
+          await seedKlines(chunk);
           total += chunk.length;
         }
-      } catch (e) { /* individual symbol failure is non-fatal */ }
-      await new Promise(r => setTimeout(r, 200));
+      } catch { /* individual symbol failure is non-fatal */ }
+      await wait(200);
+    }
+    if (total === 0) {
+      console.log(`[kline-pipeline] Done: 0 klines in ${Date.now() - start}ms — skipping analysis`);
+      return;
     }
     console.log(`[kline-pipeline] Done: ${total} klines in ${Date.now() - start}ms — triggering analysis`);
-    if (process.env.ADMIN_API_KEY) {
-      await fetch(`${WORKER_URL}/api/analysis/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin-api-key": process.env.ADMIN_API_KEY! },
-      }).catch(() => {});
-    }
+    await triggerAnalysis();
   } catch (e: any) {
     console.error("[kline-pipeline] Error:", e?.message);
     errorsTotal++;

@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "node"],
     "paths": {
       "@/*": ["../*"],
       "@shared/*": ["../../shared/*"]
@@ -15,5 +15,5 @@
     "baseUrl": "."
   },
   "include": ["./**/*.ts", "../../shared/**/*.ts"],
-  "exclude": ["./execution/server.ts"]
+  "exclude": ["./**/*.test.ts"]
 }

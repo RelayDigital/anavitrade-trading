@@ -21,6 +21,19 @@ export const users = sqliteTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+export const authSessions = sqliteTable("auth_sessions", {
+  sessionIdDigest: text().primaryKey(),
+  userId: integer({ mode: "number" }).notNull(),
+  expiresAt: integer({ mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer({ mode: "timestamp_ms" }),
+  createdAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
+});
+
+export const authSessionsUserExpiryIdx = index("auth_sessions_user_expiry_idx")
+  .on(authSessions.userId, authSessions.expiresAt);
+
+export type AuthSession = typeof authSessions.$inferSelect;
+
 export const liveAccounts = sqliteTable("live_accounts", {
   id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
   userId: integer({ mode: "number" }).notNull(),
@@ -89,6 +102,8 @@ export const demoTrades = sqliteTable("demo_trades", {
   openedAt: integer({ mode: "timestamp_ms" }).notNull(),
   closedAt: integer({ mode: "timestamp_ms" }),
 });
+export const demoTradesAccountSignalIdx = uniqueIndex("demo_trades_account_signal_idx")
+  .on(demoTrades.demoAccountId, demoTrades.signalId);
 
 export type DemoTrade = typeof demoTrades.$inferSelect;
 export type InsertDemoTrade = typeof demoTrades.$inferInsert;
@@ -100,6 +115,8 @@ export const portfolioSnapshots = sqliteTable("portfolio_snapshots", {
   tradeCount: integer({ mode: "number" }).default(0).notNull(),
   snapshotAt: integer({ mode: "timestamp_ms" }).$default(() => new Date()).notNull(),
 });
+export const portfolioSnapshotsAccountTradeCountIdx = uniqueIndex("portfolio_snapshots_account_trade_count_idx")
+  .on(portfolioSnapshots.demoAccountId, portfolioSnapshots.tradeCount);
 
 export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
 export type InsertPortfolioSnapshot = typeof portfolioSnapshots.$inferInsert;
@@ -327,6 +344,12 @@ export const executionJobs = sqliteTable("execution_jobs", {
   submittedAt: integer({ mode: "number" }),
   filledAt: integer({ mode: "number" }),
   cancelledAt: integer({ mode: "number" }),
+  leaseToken: text(),
+  leaseOwner: text(),
+  leaseExpiresAt: integer({ mode: "number" }),
+  leaseAttempt: integer({ mode: "number" }).default(0).notNull(),
+  leaseAction: text(),
+  leasePreviousStatus: text(),
   updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
 });
 
@@ -336,6 +359,10 @@ export type InsertExecutionJob = typeof executionJobs.$inferInsert;
 /** Composite unique index: one job per (user, idempotencyKey) prevents duplicate mirrors. */
 export const executionJobIdempotencyIdx = uniqueIndex("execution_jobs_idempotency_idx")
   .on(executionJobs.userId, executionJobs.idempotencyKey);
+export const executionJobClaimEligibilityIdx = index("execution_jobs_claim_eligibility_idx")
+  .on(executionJobs.provider, executionJobs.riskApproved, executionJobs.status, executionJobs.leaseAttempt, executionJobs.queuedAt);
+export const executionJobLeaseExpiryIdx = index("execution_jobs_lease_expiry_idx")
+  .on(executionJobs.status, executionJobs.leaseAction, executionJobs.leaseExpiresAt);
 
 /** Performance indexes for coinlegs_signals — filtered queries, Top Bangers, tier-based profit queries. */
 export const coinlegsTierSignalDateIdx = index("coinlegs_tier_signal_date_idx")
@@ -350,12 +377,33 @@ export const orderEvents = sqliteTable("order_events", {
   executionJobId: integer({ mode: "number" }).notNull(),
   provider: text().default("aster").notNull(),
   eventType: text().notNull(),
+  exchangeOrderId: text(),
   payloadJson: text(),
   occurredAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
 });
 
 export type OrderEvent = typeof orderEvents.$inferSelect;
 export type InsertOrderEvent = typeof orderEvents.$inferInsert;
+
+export const executionReports = sqliteTable("execution_reports", {
+  reportId: text().primaryKey(),
+  executionJobId: integer({ mode: "number" }).notNull(),
+  leaseAttempt: integer({ mode: "number" }).notNull(),
+  status: text().notNull(),
+  orderId: text(),
+  errorCode: text(),
+  stopLossOrderId: text(),
+  takeProfitOrderId: text(),
+  compensationState: text(),
+  compensationOrderId: text(),
+  createdAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+});
+
+export const executionReportsJobIdx = index("execution_reports_job_idx")
+  .on(executionReports.executionJobId, executionReports.leaseAttempt);
+
+export type ExecutionReport = typeof executionReports.$inferSelect;
+export type InsertExecutionReport = typeof executionReports.$inferInsert;
 
 export const navSnapshots = sqliteTable("nav_snapshots", {
   id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),

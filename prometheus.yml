@@ -4,6 +4,7 @@ global:
 
 scrape_configs:
   - job_name: "execution-server"
+    metrics_path: "/metrics"
     static_configs:
       - targets: ["execution:9090"]
 

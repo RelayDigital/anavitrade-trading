@@ -1,11 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
-import { cexConnections, liveAccounts } from "../../drizzle/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { cexConnections, liveAccounts, navSnapshots } from "../../drizzle/schema";
 import {
   decryptKey, encryptKey, getDb, getOrCreateLiveAccount, writeAuditLog,
 } from "../db";
-import { getExchange, isLiveExchange } from "./registry";
+import { assertAutomatedExecutionSupported, getExchange, isLiveExchange } from "./registry";
 import { createCexClient } from "./factory";
-import type { CexCredentials } from "./clientTypes";
+import type { CexBalance, CexCredentials, ExchangeEnvironment } from "./clientTypes";
 
 export type CexConnectionView = {
   id: number;
@@ -245,6 +245,190 @@ export type UnifiedBalanceSummary = {
   activeCount: number;
 };
 
+type CexNavConnection = Pick<typeof cexConnections.$inferSelect,
+  "id" | "exchange" | "label" | "killSwitchActive">;
+
+type StoredCexNavConnection = CexNavConnection & Pick<typeof cexConnections.$inferSelect,
+  "encryptedApiKey" | "encryptedApiSecret" | "encryptedPassphrase">;
+
+export type CexNavRefreshFailureCode =
+  | "CEX_NAV_REFRESH_NO_ACTIVE_CONNECTIONS"
+  | "CEX_NAV_REFRESH_CONNECTION_FAILED"
+  | "CEX_NAV_REFRESH_INVALID_TOTALS";
+
+/** A refresh error that callers must treat as an unsafe/missing CEX NAV. */
+export class CexNavRefreshError extends Error {
+  readonly name = "CexNavRefreshError";
+
+  constructor(
+    readonly code: CexNavRefreshFailureCode,
+    detail?: string,
+  ) {
+    super(detail ? `${code}:${detail}` : code);
+  }
+}
+
+export type CexNavSnapshotForPersistence = {
+  userId: number;
+  provider: "cex";
+  source: "provider_sync";
+  accountEquityUsd: string;
+  availableBalanceUsd: string;
+  snapshotAt: number;
+  linkedExchanges: Array<{ exchange: string; label: string | null; error: false }>;
+  connectionEquities: Array<{ connectionId: number; equityUsd: string }>;
+};
+
+export type CexNavRefreshDependencies = {
+  loadActiveConnections?: (userId: number) => Promise<CexNavConnection[]>;
+  readBalance?: (connection: CexNavConnection, environment: ExchangeEnvironment) => Promise<CexBalance>;
+  persist?: (snapshot: CexNavSnapshotForPersistence) => Promise<void>;
+};
+
+export type CexNavRefreshOptions = {
+  environment?: ExchangeEnvironment;
+  /** Automated dispatch must assert capabilities before any credential is materialized. */
+  requireAutomatedExecution?: boolean;
+  dependencies?: CexNavRefreshDependencies;
+};
+
+async function loadActiveCexConnections(userId: number): Promise<StoredCexNavConnection[]> {
+  const db = getDb();
+  return db.select().from(cexConnections)
+    .where(and(eq(cexConnections.userId, userId), eq(cexConnections.status, "active")));
+}
+
+async function readCexBalance(
+  connection: CexNavConnection,
+  environment: ExchangeEnvironment,
+): Promise<CexBalance> {
+  const credentials = await decryptCexCredentials(connection as typeof cexConnections.$inferSelect);
+  credentials.environment = environment;
+  credentials.testnet = environment === "testnet";
+  return createCexClient(connection.exchange, credentials).validateAndReadBalance();
+}
+
+async function persistCexNavSnapshot(snapshot: CexNavSnapshotForPersistence): Promise<void> {
+  const db = getDb();
+  const statements: any[] = [db.update(liveAccounts).set({
+    lastTotalEquityUsd: snapshot.accountEquityUsd,
+    lastAvailableUsd: snapshot.availableBalanceUsd,
+    linkedExchangesJson: JSON.stringify(snapshot.linkedExchanges),
+    updatedAt: new Date(snapshot.snapshotAt),
+  } as any).where(eq(liveAccounts.userId, snapshot.userId))];
+
+  statements.push(db.insert(navSnapshots).values({
+    userId: snapshot.userId,
+    provider: snapshot.provider,
+    accountEquityUsd: snapshot.accountEquityUsd,
+    availableBalanceUsd: snapshot.availableBalanceUsd,
+    unrealizedPnlUsd: null,
+    realizedPnlUsd: null,
+    depositsUsd: null,
+    withdrawalsUsd: null,
+    snapshotAt: snapshot.snapshotAt,
+    source: snapshot.source,
+  } as any));
+
+  for (const connection of snapshot.connectionEquities) {
+    statements.push(db.update(cexConnections).set({
+      highWaterMark: sql`CASE
+        WHEN ${cexConnections.highWaterMark} IS NULL
+          OR CAST(${cexConnections.highWaterMark} AS REAL) < CAST(${connection.equityUsd} AS REAL)
+        THEN ${connection.equityUsd}
+        ELSE ${cexConnections.highWaterMark}
+      END`,
+      updatedAt: new Date(snapshot.snapshotAt),
+    } as any).where(eq(cexConnections.id, connection.connectionId)));
+  }
+
+  await (db as any).batch(statements);
+
+  await writeAuditLog(
+    snapshot.userId,
+    "CEX_BALANCE_SYNCED",
+    `equity:${snapshot.accountEquityUsd}; available:${snapshot.availableBalanceUsd}`,
+  );
+}
+
+/**
+ * Refresh and persist a unified CEX NAV only when every active connection was
+ * read successfully. This is deliberately separate from display-oriented
+ * balance reads: a partial aggregate must never look like a fresh risk NAV.
+ */
+export async function refreshCexNavSnapshot(
+  userId: number,
+  options: CexNavRefreshOptions = {},
+) {
+  const environment = options.environment ?? "production";
+  const dependencies = options.dependencies ?? {};
+  const loadConnections = dependencies.loadActiveConnections ?? loadActiveCexConnections;
+  const readBalance = dependencies.readBalance ?? readCexBalance;
+  const persist = dependencies.persist ?? persistCexNavSnapshot;
+  const connections = await loadConnections(userId);
+
+  if (connections.length === 0) {
+    throw new CexNavRefreshError("CEX_NAV_REFRESH_NO_ACTIVE_CONNECTIONS");
+  }
+
+  const results = await Promise.allSettled(connections.map(async (connection) => {
+    // This must precede decryption/client construction in automated dispatch.
+    if (options.requireAutomatedExecution) {
+      assertAutomatedExecutionSupported(connection.exchange, environment);
+    }
+    return { connection, balance: await readBalance(connection, environment) };
+  }));
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) {
+    const detail = failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
+    throw new CexNavRefreshError("CEX_NAV_REFRESH_CONNECTION_FAILED", detail.slice(0, 200));
+  }
+
+  const complete = results.map((result) => (result as PromiseFulfilledResult<{
+    connection: CexNavConnection;
+    balance: CexBalance;
+  }>).value);
+  const totalEquityUsd = complete.reduce((sum, result) => sum + result.balance.equityUsd, 0);
+  const totalAvailableUsd = complete.reduce((sum, result) => sum + result.balance.availableUsd, 0);
+  if (!Number.isFinite(totalEquityUsd) || totalEquityUsd <= 0
+    || !Number.isFinite(totalAvailableUsd) || totalAvailableUsd < 0) {
+    throw new CexNavRefreshError("CEX_NAV_REFRESH_INVALID_TOTALS");
+  }
+
+  const snapshotAt = Date.now();
+  const snapshot: CexNavSnapshotForPersistence = {
+    userId,
+    provider: "cex",
+    source: "provider_sync",
+    accountEquityUsd: totalEquityUsd.toFixed(2),
+    availableBalanceUsd: totalAvailableUsd.toFixed(2),
+    snapshotAt,
+    linkedExchanges: complete.map(({ connection }) => ({
+      exchange: connection.exchange,
+      label: connection.label,
+      error: false,
+    })),
+    connectionEquities: complete.map(({ connection, balance }) => ({
+      connectionId: connection.id,
+      equityUsd: balance.equityUsd.toFixed(2),
+    })),
+  };
+  await persist(snapshot);
+
+  return {
+    snapshotAt,
+    totalEquityUsd,
+    totalAvailableUsd,
+    balances: complete.map(({ connection, balance }) => ({
+      exchange: connection.exchange,
+      label: connection.label,
+      killSwitchActive: connection.killSwitchActive,
+      equityUsd: balance.equityUsd,
+      availableUsd: balance.availableUsd,
+    })),
+  };
+}
+
 /** Read live balance for EVERY active CEX connection. */
 export async function getAllCexBalances(userId: number): Promise<CexBalanceSnapshot[]> {
   const db = getDb();
@@ -295,20 +479,5 @@ export function getUnifiedSummary(balances: CexBalanceSnapshot[]): UnifiedBalanc
  * Also returns the snapshot for immediate use.
  */
 export async function syncUnifiedBalance(userId: number) {
-  const db = getDb();
-  const balances = await getAllCexBalances(userId);
-  const summary = getUnifiedSummary(balances);
-
-  await db.update(liveAccounts)
-    .set({
-      lastTotalEquityUsd: summary.totalEquityUsd.toFixed(2),
-      lastAvailableUsd: summary.totalAvailableUsd.toFixed(2),
-      linkedExchangesJson: JSON.stringify(balances.map(b => ({
-        exchange: b.exchange, label: b.label, error: b.error,
-      }))),
-      updatedAt: new Date(),
-    } as any)
-    .where(eq(liveAccounts.userId, userId));
-
-  return { balances, summary };
+  return refreshCexNavSnapshot(userId);
 }

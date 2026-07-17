@@ -6,7 +6,6 @@ import { createRoot } from "react-dom/client";
 import { WagmiProvider } from "wagmi";
 import { MotionConfig } from "framer-motion";
 import superjson from "superjson";
-import { COOKIE_NAME, UNAUTHED_ERR_MSG } from "@shared/const";
 import { TRPCClientError } from "@trpc/client";
 import { getLoginUrl } from "@/const";
 import { getApiBaseUrl } from "@/config";
@@ -73,20 +72,10 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: `${getApiBaseUrl()}/api/trpc`,
       transformer: superjson as any,
-      headers() {
-        try {
-          const raw = sessionStorage.getItem("manus-cookie");
-          if (raw) {
-            const prefix = `${COOKIE_NAME}=`;
-            const pair = raw.split(";").find((s) => s.trim().startsWith(prefix));
-            const token = pair?.trim().slice(prefix.length);
-            if (token) return { Authorization: `Bearer ${token}` };
-          }
-        } catch {}
-        return {};
-      },
       fetch(input, init) {
-        return fetch(input, { ...init, credentials: "include" });
+        const headers = new Headers(init?.headers);
+        headers.set("X-Client", "web");
+        return fetch(input, { ...init, headers, credentials: "include" });
       },
     }),
   ],

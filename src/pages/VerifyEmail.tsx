@@ -4,12 +4,17 @@ import { motion } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import { Mail, CheckCircle2, RefreshCw, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { consumeSensitiveQueryParams } from "./authQuery";
 
 export default function VerifyEmail() {
-  const [location] = useLocation();
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get("token");
-  const email = params.get("email");
+  useLocation();
+  const [{ token, email }] = useState(() => {
+    const values = consumeSensitiveQueryParams(["token"]);
+    return {
+      token: values.token,
+      email: new URLSearchParams(window.location.search).get("email"),
+    };
+  });
 
   const [verified, setVerified] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);

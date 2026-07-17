@@ -1,32 +1,37 @@
 import { Link } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowRight, Trophy, Clock, Award, Flame } from "lucide-react";
+import { ArrowRight, Activity, Clock, Award } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import TradeChartSnapshot from "@/components/TradeChartSnapshot";
 import SectionHeader from "../primitives/SectionHeader";
 import Reveal from "../primitives/Reveal";
-import AnimatedNumber from "../primitives/AnimatedNumber";
 import Explainer from "../primitives/Explainer";
 import { cappedDelay } from "../hooks/motion";
+import {
+  formatSignedPercent,
+  parseOptionalNumber,
+  SCORING_PRESENTATION,
+  UNAVAILABLE,
+} from "@/components/performancePresentation";
 
 const tierMeta: Record<string, { label: string; hint: string; color: string; bg: string; border: string }> = {
   A: {
-    label: "Top pick",
-    hint: "Tier A — our engine's highest-confidence signals.",
+    label: "Tier A",
+    hint: "Tier A is assigned from the pre-entry signal score.",
     color: "oklch(0.82 0.16 85)",
     bg: "oklch(0.82 0.16 85 / 0.12)",
     border: "oklch(0.82 0.16 85 / 0.35)",
   },
   B: {
-    label: "Strong",
-    hint: "Tier B — solid signals that passed our quality checks.",
+    label: "Tier B",
+    hint: "Tier B is assigned from the pre-entry signal score.",
     color: "oklch(0.72 0.18 145)",
     bg: "oklch(0.72 0.18 145 / 0.10)",
     border: "oklch(0.72 0.18 145 / 0.30)",
   },
   C: {
-    label: "Watch",
-    hint: "Tier C — lower-confidence signals our filter usually skips.",
+    label: "Tier C",
+    hint: "Tier C is assigned from the pre-entry signal score.",
     color: "oklch(0.65 0.12 220)",
     bg: "oklch(0.65 0.12 220 / 0.10)",
     border: "oklch(0.65 0.12 220 / 0.25)",
@@ -46,16 +51,16 @@ export default function RecentWins() {
   const [featured, ...feed] = bangers;
   const fTier = featured.qualityTier ?? "C";
   const fMeta = tierMeta[fTier] ?? tierMeta.C;
-  const fProfit = Number(featured.maxProfit ?? 0);
+  const featuredMove = parseOptionalNumber(featured.maxProfit);
 
   return (
     <section id="bangers" className="py-24 relative section-divider">
       <div className="container">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-12">
           <SectionHeader
-            eyebrow="Recent Wins"
-            title={<>Moves our engine<br className="hidden sm:block" /> actually caught</>}
-            subtitle="Real signals from our live feed — the strongest Buy calls from the past 7 days, picked by our quality filter. Nothing cherry-picked."
+            eyebrow="Recent Signal Moves"
+            title={<>Provider-reported<br className="hidden sm:block" /> favorable movement</>}
+            subtitle="Historical favorable movement reported by the signal provider after Buy signals. These values are not realized account returns."
           />
           <Reveal delay={0.1} className="shrink-0">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs" style={{ background: "oklch(0.72 0.18 145 / 0.10)", border: "1px solid oklch(0.72 0.18 145 / 0.25)", color: "oklch(0.74 0.18 145)" }}>
@@ -63,7 +68,7 @@ export default function RecentWins() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-70" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
               </span>
-              Updated just now
+              Provider-reported data
             </span>
           </Reveal>
         </div>
@@ -85,7 +90,7 @@ export default function RecentWins() {
               <div className="flex items-start justify-between mb-5">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <Trophy className="w-4 h-4" style={{ color: fMeta.color }} />
+                    <Activity className="w-4 h-4" style={{ color: fMeta.color }} />
                     <span className="text-xl font-heading font-bold text-foreground">
                       {featured.marketName.replace("USDT", "/USDT")}
                     </span>
@@ -100,9 +105,9 @@ export default function RecentWins() {
                 </div>
                 <div className="text-right">
                   <p className="text-4xl font-heading font-bold tabular" style={{ color: fMeta.color }}>
-                    <AnimatedNumber value={fProfit} prefix="+" suffix="%" decimals={1} />
+                    {formatSignedPercent(featuredMove)}
                   </p>
-                  <p className="text-[10px] text-muted-foreground/50">best result</p>
+                  <p className="text-[10px] text-muted-foreground/50">reported favorable move</p>
                 </div>
               </div>
 
@@ -121,8 +126,8 @@ export default function RecentWins() {
               <div className="flex items-center justify-between text-[11px] text-muted-foreground/70">
                 <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" />{featured.maxProfitDuration ?? "—"}</span>
                 <span className="inline-flex items-center gap-1">
-                  <Award className="w-3 h-3" />Score {featured.qualityScore ?? "—"}
-                  <Explainer text="Our 0–100 confidence rating for a signal. Higher means stronger confluence." label="Score" />
+                  <Award className="w-3 h-3" />Score {featured.qualityScore ?? UNAVAILABLE}
+                  <Explainer text={`Pre-entry score out of ${SCORING_PRESENTATION.maxScore}, based on indicator/timeframe, confluence, and entry-time momentum.`} label="Score" />
                 </span>
               </div>
             </div>
@@ -133,7 +138,7 @@ export default function RecentWins() {
             {feed.map((s, i) => {
               const tier = s.qualityTier ?? "C";
               const meta = tierMeta[tier] ?? tierMeta.C;
-              const profit = Number(s.maxProfit ?? 0);
+              const reportedMove = parseOptionalNumber(s.maxProfit);
               return (
                 <Reveal key={(s as any).rowKey ?? `${s.id}-${i}`} delay={cappedDelay(i, 0.07)} y={20}>
                   <div
@@ -156,7 +161,7 @@ export default function RecentWins() {
                       <div className="h-1 rounded-full overflow-hidden" style={{ background: "oklch(1 0 0 / 0.05)" }}>
                         <motion.div
                           initial={{ width: 0 }}
-                          whileInView={{ width: `${Math.min((profit / 40) * 100, 100)}%` }}
+                          whileInView={{ width: `${reportedMove === null ? 0 : Math.min(Math.max((reportedMove / 40) * 100, 0), 100)}%` }}
                           viewport={{ once: true }}
                           transition={{ duration: 1, delay: 0.2 + cappedDelay(i, 0.07), ease: [0.23, 1, 0.32, 1] }}
                           className="h-full rounded-full"
@@ -170,7 +175,7 @@ export default function RecentWins() {
                       </div>
                     </div>
                     <p className="text-2xl font-heading font-bold tabular shrink-0" style={{ color: meta.color }}>
-                      <AnimatedNumber value={profit} prefix="+" suffix="%" decimals={1} delay={i * 60} />
+                      {formatSignedPercent(reportedMove)}
                     </p>
                   </div>
                 </Reveal>
@@ -182,7 +187,7 @@ export default function RecentWins() {
         <Reveal delay={0.2} className="text-center mt-10">
           <Link href="/register">
             <button className="btn-hairline group h-[3.2rem] px-7 text-[0.9rem]">
-              <Flame className="w-4 h-4" />
+              <Activity className="w-4 h-4" />
               See the full live signal feed
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
             </button>

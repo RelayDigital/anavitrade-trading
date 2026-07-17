@@ -4,6 +4,7 @@ import type { Env } from "./_core/env";
 import { encryptKey as _encryptKey, decryptKey as _decryptKey } from "./cex/crypto";
 import {
   InsertUser, users,
+  authSessions,
   demoAccounts, demoTrades,
   portfolioSnapshots,
   liveAccounts, InsertLiveAccount,
@@ -14,6 +15,17 @@ import {
   type DemoAccount, type DemoTrade, type PortfolioSnapshot,
 } from "../drizzle/schema";
 import { nanoid } from "nanoid";
+import {
+  hashPassword,
+  verifyPasswordAndRehash,
+} from "./auth/password";
+import {
+  createOneTimeToken,
+  digestOneTimeToken,
+  getTokenPersistence,
+} from "./auth/tokens";
+
+export { hashPassword } from "./auth/password";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _env: Env | null = null;
@@ -59,39 +71,6 @@ export async function encryptKey(plaintext: string): Promise<string> {
 
 export async function decryptKey(ciphertext: string): Promise<string> {
   return _decryptKey(ciphertext, getEncryptionKeyOrThrow());
-}
-
-/* Web Crypto password hashing via PBKDF2 */
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(password), { name: "PBKDF2" }, false, ["deriveBits"]
-  );
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
-    keyMaterial, 256
-  );
-  const combined = new Uint8Array(16 + 32);
-  combined.set(salt, 0);
-  combined.set(new Uint8Array(hash), 16);
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const raw = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
-  const salt = raw.slice(0, 16);
-  const origHash = raw.slice(16);
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(password), { name: "PBKDF2" }, false, ["deriveBits"]
-  );
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
-    keyMaterial, 256
-  );
-  const newHash = new Uint8Array(hash);
-  if (origHash.length !== newHash.length) return false;
-  return origHash.every((v, i) => v === newHash[i]);
 }
 
 /* Audit log */
@@ -152,12 +131,33 @@ export async function getUserById(id: number) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function createAuthSession(
+  userId: number,
+  sessionIdDigest: string,
+  expiresAt: Date,
+) {
+  await getDb().insert(authSessions).values({ userId, sessionIdDigest, expiresAt } as any);
+}
+
+export async function getAuthSessionByDigest(sessionIdDigest: string) {
+  const result = await getDb().select().from(authSessions)
+    .where(eq(authSessions.sessionIdDigest, sessionIdDigest))
+    .limit(1);
+  return result[0];
+}
+
+export async function revokeAuthSessionByDigest(sessionIdDigest: string): Promise<void> {
+  await getDb().update(authSessions)
+    .set({ revokedAt: new Date() } as any)
+    .where(eq(authSessions.sessionIdDigest, sessionIdDigest));
+}
+
 export async function registerUser(input: { name: string; email: string; password: string }) {
   const db = getDb();
   const existing = await getUserByEmail(input.email);
   if (existing) throw new Error("EMAIL_EXISTS");
   const passwordHash = await hashPassword(input.password);
-  const verificationToken = nanoid(48);
+  const verificationToken = await createOneTimeToken();
   const verificationTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await db.insert(users).values({
     name: input.name,
@@ -165,8 +165,7 @@ export async function registerUser(input: { name: string; email: string; passwor
     passwordHash,
     loginMethod: "email",
     emailVerified: false,
-    verificationToken,
-    verificationTokenExpiresAt,
+    ...getTokenPersistence("verification", verificationToken.digest, verificationTokenExpiresAt).values,
     lastSignedIn: new Date(),
   } as any);
   const created = await getUserByEmail(input.email);
@@ -174,26 +173,29 @@ export async function registerUser(input: { name: string; email: string; passwor
   const localOpenId = `local:${created.id}`;
   await db.update(users).set({ openId: localOpenId } as any).where(eq(users.id, created.id));
   const finalUser = await getUserByEmail(input.email);
-  return { user: finalUser!, verificationToken };
+  return { user: finalUser!, verificationToken: verificationToken.rawToken };
 }
 
 export async function verifyUserPassword(email: string, password: string) {
   const user = await getUserByEmail(email);
   if (!user || !user.passwordHash) return null;
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) return null;
+  const verification = await verifyPasswordAndRehash(password, user.passwordHash);
+  if (!verification.valid) return null;
   const db = getDb();
-  await db.update(users).set({ lastSignedIn: new Date() } as any).where(eq(users.id, user.id));
+  if (verification.rehashedPassword) {
+    await db.update(users)
+      .set({ passwordHash: verification.rehashedPassword } as any)
+      .where(eq(users.id, user.id));
+  }
   return user;
 }
 
 export async function verifyEmailToken(token: string) {
-  const db = getDb();
-  const result = await db.select().from(users).where(eq(users.verificationToken, token)).limit(1);
-  if (!result.length) throw new Error("INVALID_TOKEN");
-  const user = result[0];
-  if (!user.verificationTokenExpiresAt || user.verificationTokenExpiresAt < new Date()) throw new Error("TOKEN_EXPIRED");
-  await db.update(users).set({ emailVerified: true, verificationToken: null, verificationTokenExpiresAt: null } as any).where(eq(users.id, user.id));
+  const digest = await digestOneTimeToken(token);
+  const userId = await consumeOneTimeTokenAtomically("verification", digest);
+  if (userId === null) throw new Error("INVALID_TOKEN");
+  const user = await getUserById(userId);
+  if (!user) throw new Error("INVALID_TOKEN");
   return user;
 }
 
@@ -201,31 +203,67 @@ export async function resendVerificationEmail(email: string) {
   const db = getDb();
   const user = await getUserByEmail(email);
   if (!user || user.emailVerified) return;
-  const verificationToken = nanoid(48);
+  const verificationToken = await createOneTimeToken();
   const verificationTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  await db.update(users).set({ verificationToken, verificationTokenExpiresAt } as any).where(eq(users.id, user.id));
-  return verificationToken;
+  await db.update(users)
+    .set(getTokenPersistence("verification", verificationToken.digest, verificationTokenExpiresAt).values as any)
+    .where(eq(users.id, user.id));
+  return { user, verificationToken: verificationToken.rawToken };
 }
 
 export async function createPasswordResetToken(email: string) {
   const db = getDb();
   const user = await getUserByEmail(email);
   if (!user) return null;
-  const resetToken = nanoid(48);
+  const resetToken = await createOneTimeToken();
   const resetTokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
-  await db.update(users).set({ resetToken, resetTokenExpiresAt } as any).where(eq(users.id, user.id));
-  return { user, resetToken };
+  await db.update(users)
+    .set(getTokenPersistence("reset", resetToken.digest, resetTokenExpiresAt).values as any)
+    .where(eq(users.id, user.id));
+  return { user, resetToken: resetToken.rawToken };
 }
 
 export async function resetPassword(token: string, newPassword: string) {
-  const db = getDb();
-  const result = await db.select().from(users).where(eq(users.resetToken, token)).limit(1);
-  if (!result.length) throw new Error("INVALID_TOKEN");
-  const user = result[0];
-  if (!user.resetTokenExpiresAt || user.resetTokenExpiresAt < new Date()) throw new Error("TOKEN_EXPIRED");
+  const digest = await digestOneTimeToken(token);
   const passwordHash = await hashPassword(newPassword);
-  await db.update(users).set({ passwordHash, resetToken: null, resetTokenExpiresAt: null } as any).where(eq(users.id, user.id));
+  const userId = await consumeOneTimeTokenAtomically("reset", digest, passwordHash);
+  if (userId === null) throw new Error("INVALID_TOKEN");
+  const user = await getUserById(userId);
+  if (!user) throw new Error("INVALID_TOKEN");
   return user;
+}
+
+/**
+ * The D1 UPDATE predicate is the one-time-token compare-and-swap boundary.
+ * A token is usable only while its current persisted digest and expiry match.
+ */
+async function consumeOneTimeTokenAtomically(
+  kind: "verification" | "reset",
+  digest: string,
+  passwordHash?: string,
+): Promise<number | null> {
+  const now = Date.now();
+  const query = kind === "verification"
+    ? `UPDATE users
+         SET emailVerified = 1, verificationToken = NULL, verificationTokenExpiresAt = NULL
+       WHERE verificationToken = ? AND verificationTokenExpiresAt > ?
+       RETURNING id`
+    : `UPDATE users
+         SET passwordHash = ?, resetToken = NULL, resetTokenExpiresAt = NULL
+       WHERE resetToken = ? AND resetTokenExpiresAt > ?
+       RETURNING id`;
+  const parameters = kind === "verification" ? [digest, now] : [passwordHash!, digest, now];
+  const result = await (getRawD1() as any).prepare(query).bind(...parameters).all();
+  const rows = result?.results ?? [];
+  return rows.length === 1 && typeof rows[0]?.id === "number" ? rows[0].id : null;
+}
+
+export async function updateUserProfile(userId: number, name: string): Promise<void> {
+  await getDb().update(users).set({ name } as any).where(eq(users.id, userId));
+}
+
+export async function updateUserPasswordHash(userId: number, passwordHash: string): Promise<void> {
+  await getDb().update(users).set({ passwordHash } as any).where(eq(users.id, userId));
 }
 
 /* Live Account Helpers */
@@ -354,36 +392,28 @@ export async function createDemoAccount(input: { username: string; email: string
   return { accessToken };
 }
 
-export const PUBLIC_DEMO_TOKEN = "anavitrade-public-demo-2026";
+/** Public selector only; it is not an account credential and cannot mutate state. */
+export const PUBLIC_DEMO_READ_KEY = "public";
 
-export async function getOrCreatePublicDemoAccount() {
+export async function getPublicDemoAccount(): Promise<DemoAccount | null> {
   const db = getDb();
-  const existing = await db.select().from(demoAccounts).where(eq(demoAccounts.accessToken, PUBLIC_DEMO_TOKEN)).limit(1);
-  if (existing.length > 0) return existing[0];
-  const now = new Date();
-  // Seed lastSyncedSignalId so the public demo only picks up future signals.
-  const [maxSignal] = await db.select({ maxId: sql`COALESCE(MAX(${coinlegsSignals.id}), 0)` as any })
-    .from(coinlegsSignals);
-  const seedSyncId = (maxSignal as any)?.maxId ?? 0;
-  await db.insert(demoAccounts).values({
-    username: "Investor Preview", email: "demo@anavitrade.com",
-    startingCapital: "10000.00", currentBalance: "10000.00",
-    accessToken: PUBLIC_DEMO_TOKEN, status: "active",
-    positionSizePct: "5.00", leverage: "3.00", strategyTier: "A",
-    pyramidingEnabled: false, pyramidMaxEntries: 3, pyramidScalePct: "0.50",
-    lastSyncedSignalId: seedSyncId,
-    createdAt: now, updatedAt: now,
-  } as any);
-  const created = await db.select().from(demoAccounts).where(eq(demoAccounts.accessToken, PUBLIC_DEMO_TOKEN)).limit(1);
-  return created[0];
+  const result = await db.select().from(demoAccounts)
+    .where(eq(demoAccounts.email, "demo@anavitrade.com"))
+    .limit(1);
+  return result.length > 0 ? result[0] : null;
 }
 
-export async function updateDemoAccountSettings(token: string, settings: {
+export async function getPublicDemoAccountForRead(readKey: string): Promise<DemoAccount | null> {
+  if (readKey !== PUBLIC_DEMO_READ_KEY) return null;
+  return getPublicDemoAccount();
+}
+
+export async function updateDemoAccountSettingsForUser(userId: number, settings: {
   positionSizePct?: number; leverage?: number; strategyTier?: "A" | "AB" | "ABC";
   pyramidingEnabled?: boolean; pyramidMaxEntries?: number; pyramidScalePct?: number;
 }) {
   const db = getDb();
-  const account = await getDemoAccountByToken(token);
+  const account = await getDemoAccountByUserId(userId);
   if (!account) throw new Error("Demo account not found");
   const updates: Record<string, unknown> = {};
   if (settings.positionSizePct !== undefined) updates.positionSizePct = String(settings.positionSizePct.toFixed(2));
@@ -400,16 +430,16 @@ export async function updateDemoAccountSettings(token: string, settings: {
 
 export async function getPublicDemoStats() {
   const db = getDb();
-  const account = await getOrCreatePublicDemoAccount();
-  const startingCapital = parseFloat(account.startingCapital);
-  const currentBalance = parseFloat(account.currentBalance);
-  const totalReturnPct = ((currentBalance - startingCapital) / startingCapital) * 100;
+  const account = await getPublicDemoAccount();
+  const startingCapital = account ? parseFloat(account.startingCapital) : 0;
+  const currentBalance = account ? parseFloat(account.currentBalance) : 0;
+  const totalReturnPct = startingCapital > 0 ? ((currentBalance - startingCapital) / startingCapital) * 100 : 0;
   const [{ tradeCount }] = await db.select({ tradeCount: sql`count(*)` })
-    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account.id), eq(demoTrades.status, 'closed')));
+    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account?.id ?? -1), eq(demoTrades.status, 'closed')));
   const [{ bestPnlPct }] = await db.select({ bestPnlPct: sql`MAX(CAST(${demoTrades.pnlPct} AS REAL))` })
-    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account.id), eq(demoTrades.status, 'closed')));
+    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account?.id ?? -1), eq(demoTrades.status, 'closed')));
   const [{ avgPnlPct }] = await db.select({ avgPnlPct: sql`AVG(CAST(${demoTrades.pnlPct} AS REAL))` })
-    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account.id), eq(demoTrades.status, 'closed')));
+    .from(demoTrades).where(and(eq(demoTrades.demoAccountId, account?.id ?? -1), eq(demoTrades.status, 'closed')));
   const julyStart = new Date("2026-07-01T00:00:00Z").getTime();
   const [{ tierAJulyCount }] = await db.select({ tierAJulyCount: sql`count(*)` })
     .from(coinlegsSignals).where(and(eq(coinlegsSignals.signal, 1), eq(coinlegsSignals.qualityTier, 'A'), gte(coinlegsSignals.signalDate, julyStart)));
@@ -436,9 +466,21 @@ export async function getPortfolioSnapshotsByAccountId(accountId: number) {
   return db.select().from(portfolioSnapshots).where(eq(portfolioSnapshots.demoAccountId, accountId)).orderBy(portfolioSnapshots.snapshotAt);
 }
 
-export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: number; tradesCreated: number; snapshotsWritten: number }> {
+/** Sync only the authenticated user's existing demo account; never bootstrap or fan out. */
+export async function syncSignalsToDemoAccount(userId: number): Promise<{ accountsProcessed: number; tradesCreated: number; snapshotsWritten: number }> {
+  const account = await getDemoAccountByUserId(userId);
+  if (!account || account.status !== "active") {
+    return { accountsProcessed: 0, tradesCreated: 0, snapshotsWritten: 0 };
+  }
+  return syncSignalsToDemoAccounts([account.id]);
+}
+
+export async function syncSignalsToDemoAccounts(scopedAccountIds?: number[]): Promise<{ accountsProcessed: number; tradesCreated: number; snapshotsWritten: number }> {
   const db = getDb();
-  const accounts = await db.select().from(demoAccounts).where(eq(demoAccounts.status, "active"));
+  const accountScope = scopedAccountIds
+    ? and(eq(demoAccounts.status, "active"), inArray(demoAccounts.id, scopedAccountIds))
+    : eq(demoAccounts.status, "active");
+  const accounts = await db.select().from(demoAccounts).where(accountScope);
   if (accounts.length === 0) return { accountsProcessed: 0, tradesCreated: 0, snapshotsWritten: 0 };
 
   // Batch: find the minimum lastSyncedSignalId and query all new signals once.
@@ -470,6 +512,17 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
     .where(inArray(demoTrades.demoAccountId, accountIds))
     .groupBy(demoTrades.demoAccountId);
   const existingCountMap = new Map(existingCountRows.map((r) => [r.demoAccountId, r.count]));
+  const existingSignalRows = await db.select({
+    demoAccountId: demoTrades.demoAccountId,
+    signalId: demoTrades.signalId,
+  }).from(demoTrades).where(inArray(demoTrades.demoAccountId, accountIds));
+  const existingSignalsByAccount = new Map<number, Set<number>>();
+  for (const row of existingSignalRows) {
+    if (row.signalId === null) continue;
+    const ids = existingSignalsByAccount.get(row.demoAccountId) ?? new Set<number>();
+    ids.add(row.signalId);
+    existingSignalsByAccount.set(row.demoAccountId, ids);
+  }
 
   // ── Batch query: Pre-fetch all demoTrades for pyramiding accounts ────────
   const pyramidingAccountIds = accounts
@@ -488,9 +541,6 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
 
   let tradesCreated = 0;
   let snapshotsWritten = 0;
-  const allTradeInsertRows: Array<Record<string, unknown>> = [];
-  const accountUpdates: Array<{ id: number; currentBalance: string; lastSyncedSignalId: number }> = [];
-  const snapshotRowChunks: Array<Array<{ demoAccountId: number; balance: string; tradeCount: number; snapshotAt: Date }>> = [];
 
   for (const account of accounts) {
     try {
@@ -515,9 +565,12 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
       let runningTradeCount = existingCountMap.get(account.id) ?? 0;
       const snapshotRows: Array<{ demoAccountId: number; balance: string; tradeCount: number; snapshotAt: Date }> = [];
       const accountTradeRows: Array<Record<string, unknown>> = [];
+      const existingSignalIds = existingSignalsByAccount.get(account.id) ?? new Set<number>();
 
       for (const signal of newSignals) {
         if (signal.id > maxSignalId) maxSignalId = signal.id;
+        if (existingSignalIds.has(signal.id)) continue;
+        existingSignalIds.add(signal.id);
         const maxProfitPct = parseFloat(signal.maxProfit ?? "0");
         const tradeStatus: "closed" | "open" = "closed";
 
@@ -590,40 +643,28 @@ export async function syncSignalsToDemoAccounts(): Promise<{ accountsProcessed: 
         snapshotRows.push({ demoAccountId: account.id, balance: String(currentBalance.toFixed(2)), tradeCount: runningTradeCount, snapshotAt: closedAt });
       }
 
+      const statements: any[] = [];
       if (accountTradeRows.length > 0) {
-        allTradeInsertRows.push(...accountTradeRows);
-        tradesCreated += accountTradeRows.length;
+        statements.push(db.insert(demoTrades).values(accountTradeRows as any).onConflictDoNothing());
       }
       if (currentBalance !== startingBalance || maxSignalId > lastId) {
-        accountUpdates.push({ id: account.id, currentBalance: String(currentBalance.toFixed(2)), lastSyncedSignalId: maxSignalId });
+        statements.push(db.update(demoAccounts).set({
+          currentBalance: String(currentBalance.toFixed(2)),
+          lastSyncedSignalId: maxSignalId,
+        } as any).where(eq(demoAccounts.id, account.id)));
       }
       if (snapshotRows.length > 0) {
-        snapshotRowChunks.push(snapshotRows);
+        statements.push(db.insert(portfolioSnapshots).values(snapshotRows as any).onConflictDoNothing());
+      }
+      if (statements.length > 0) {
+        // D1 batch is transactional. A retry observes either the complete
+        // account transition or none of it, while unique indexes absorb races.
+        await (db as any).batch(statements);
+        tradesCreated += accountTradeRows.length;
         snapshotsWritten += snapshotRows.length;
       }
     } catch (err: any) {
       console.error(`[SyncEngine] Error processing account ${account.id}:`, err?.message);
-    }
-  }
-
-  // Batch INSERT demoTrades in chunks of 50
-  const BATCH = 50;
-  for (let i = 0; i < allTradeInsertRows.length; i += BATCH) {
-    await db.insert(demoTrades).values(allTradeInsertRows.slice(i, i + BATCH) as any);
-  }
-
-  // Apply account updates
-  for (const upd of accountUpdates) {
-    await db.update(demoAccounts).set({
-      currentBalance: upd.currentBalance,
-      lastSyncedSignalId: upd.lastSyncedSignalId,
-    } as any).where(eq(demoAccounts.id, upd.id));
-  }
-
-  // Batch INSERT snapshots
-  for (const rows of snapshotRowChunks) {
-    for (let i = 0; i < rows.length; i += BATCH) {
-      await db.insert(portfolioSnapshots).values(rows.slice(i, i + BATCH) as any);
     }
   }
 

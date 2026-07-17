@@ -1,6 +1,8 @@
 import { useRef, useCallback } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Bell, Bot, Shield, Sparkles, Zap, Globe } from "lucide-react";
+import { Bell, Bot, Shield, Sparkles, Zap } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+import { formatSignedPercent, UNAVAILABLE } from "@/components/performancePresentation";
 import Reveal from "../primitives/Reveal";
 import Explainer from "../primitives/Explainer";
 import { cappedDelay } from "../hooks/motion";
@@ -23,6 +25,8 @@ type Benefit = {
 export default function HowItHelps() {
   const prefersReduced = useReducedMotion();
   const sectionRef = useRef<HTMLElement>(null);
+  const { data: signalStats } = trpc.signals.stats.useQuery();
+  const { data: demoStats } = trpc.demo.getPublicDemoStats.useQuery();
 
   const benefits: Benefit[] = [
     {
@@ -32,17 +36,17 @@ export default function HowItHelps() {
       tag: "You stay in control",
       accentColor: "oklch(0.60 0.22 220)",
       span: "half",
-      stat: { value: "35,000+", label: "signals / week" },
+      stat: { value: "User-directed", label: "signal review" },
     },
     {
       icon: <Bot className="w-5 h-5" />,
-      title: "Or it trades for you",
-      desc: "Connect your account and the engine does everything — how much to buy, when to take profit, and when to cut a loss. Hands-off.",
-      tag: "Zero effort",
+      title: "Configure connected execution",
+      desc: "On supported connections, you can explicitly enable order routing and configure sizing and exit controls. Availability depends on venue and account setup.",
+      tag: "User-enabled",
       gold: true,
       accentColor: "oklch(0.82 0.16 85)",
       span: "half",
-      stat: { value: "<50ms", label: "execution latency" },
+      stat: { value: "Configurable", label: "risk inputs" },
     },
     {
       icon: <Shield className="w-5 h-5" />,
@@ -60,12 +64,12 @@ export default function HowItHelps() {
     },
     {
       icon: <Zap className="w-5 h-5" />,
-      title: "Live 24/7 across 5 exchanges",
-      desc: "Binance, Coinbase, Kraken, Bybit, OKX — scanning every altcoin pair on every timeframe. Our engine never sleeps.",
-      tag: "Multi-exchange",
+      title: "Monitor supported markets",
+      desc: "Signal and execution availability varies by configured provider, venue, market, and account permissions.",
+      tag: "Provider-dependent",
       accentColor: "oklch(0.68 0.20 220)",
       span: "half",
-      stat: { value: "7×24", label: "uptime" },
+      stat: { value: "Variable", label: "market coverage" },
     },
   ];
 
@@ -103,18 +107,22 @@ export default function HowItHelps() {
               <Reveal y={16} delay={0.15}>
                 <div className="flex gap-6 p-4 rounded-xl" style={{ background: "oklch(1 0 0 / 0.03)", border: "1px solid oklch(1 0 0 / 0.06)" }}>
                   <div>
-                    <p className="text-xl font-heading font-bold text-foreground tabular">808+</p>
+                    <p className="text-xl font-heading font-bold text-foreground tabular">
+                      {signalStats?.totalSignals != null ? Number(signalStats.totalSignals).toLocaleString() : UNAVAILABLE}
+                    </p>
                     <p className="text-[11px] text-muted-foreground/60">Signals scored</p>
                   </div>
                   <div className="w-px" style={{ background: "oklch(1 0 0 / 0.06)" }} />
                   <div>
-                    <p className="text-xl font-heading font-bold text-foreground tabular">5+</p>
-                    <p className="text-[11px] text-muted-foreground/60">Exchanges</p>
+                    <p className="text-xl font-heading font-bold text-foreground tabular">Configured</p>
+                    <p className="text-[11px] text-muted-foreground/60">Provider coverage</p>
                   </div>
                   <div className="w-px" style={{ background: "oklch(1 0 0 / 0.06)" }} />
                   <div>
-                    <p className="text-xl font-heading font-bold gold-shimmer-text tabular">+133%</p>
-                    <p className="text-[11px] text-muted-foreground/60">Demo return</p>
+                    <p className="text-xl font-heading font-bold gold-shimmer-text tabular">
+                      {Number(demoStats?.tradeCount ?? 0) > 0 ? formatSignedPercent(demoStats?.totalReturnPct) : UNAVAILABLE}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/60">Modeled scenario</p>
                   </div>
                 </div>
               </Reveal>

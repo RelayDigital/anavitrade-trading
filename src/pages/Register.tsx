@@ -23,7 +23,6 @@ const PERKS = [
 
 export default function Register() {
   const [, navigate] = useLocation();
-  const utils = trpc.useUtils();
 
   // ?demo=true pre-selects demo mode (from "Start Demo Account" CTA)
   const params = new URLSearchParams(window.location.search);
@@ -36,16 +35,11 @@ export default function Register() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
 
-  // Step 1: create real account + auto-login (session cookie set by server)
+  // Registration starts email verification and intentionally does not authenticate.
   const register = trpc.auth.register.useMutation({
-    onSuccess: async () => {
-      await utils.auth.me.invalidate();
-      if (wantDemo) {
-        setStep("demo-capital");
-      } else {
-        toast.success("Account created! Welcome to Anavitrade.");
-        navigate("/dashboard");
-      }
+    onSuccess: (user) => {
+      toast.success("Account created. Check your inbox to verify your email.");
+      navigate(`/verify-email?email=${encodeURIComponent(user.email ?? form.email)}`);
     },
     onError: (e) => {
       const msg = e.message ?? "";
