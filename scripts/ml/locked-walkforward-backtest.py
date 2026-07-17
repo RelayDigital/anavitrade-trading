@@ -404,6 +404,24 @@ def _candidate_for_portfolio(candidate: Dict, probability: float, row_index: int
     }
 
 
+def _score_distribution(probabilities: np.ndarray, threshold: float) -> Dict:
+    """Return finite calibration diagnostics without changing any decisions."""
+    values = np.asarray(probabilities, dtype=np.float64)
+    if len(values) == 0 or not np.isfinite(values).all():
+        raise ValueError("score distribution requires non-empty finite probabilities")
+    unique_count = int(len(np.unique(np.round(values, 12))))
+    return {
+        "min": float(values.min()),
+        "p50": float(np.percentile(values, 50)),
+        "p95": float(np.percentile(values, 95)),
+        "p99": float(np.percentile(values, 99)),
+        "max": float(values.max()),
+        "uniqueCount": unique_count,
+        "qualifiedCount": int((values >= threshold).sum()),
+        "calibrationCollapsed": unique_count < 3,
+    }
+
+
 def run(args: argparse.Namespace) -> Dict:
     started = time.time()
     contract = load_contract(args.contract_model_dir)
@@ -499,6 +517,8 @@ def run(args: argparse.Namespace) -> Dict:
     partition_by_index.update({int(index): "validation" for index in validation_indices})
     partition_by_index.update({int(index): "test" for index in test_indices})
     validation_probability = calibrator.predict(validation_raw)
+    validation_distribution = _score_distribution(validation_probability, threshold)
+    test_distribution = _score_distribution(test_probabilities, threshold)
     probability_by_index = {
         **{int(index): float(value) for index, value in zip(validation_indices, validation_probability)},
         **{int(index): float(value) for index, value in zip(test_indices, test_probabilities)},
@@ -557,6 +577,15 @@ def run(args: argparse.Namespace) -> Dict:
             "validationAfterPurge": len(validation_indices), "test": len(test_indices),
             "testThresholdQualifiedBeforePortfolio": threshold_qualified,
             "testAccepted": len(accepted), "testRejectedByOverlapOrCap": len(rejected),
+        },
+        "calibration": {
+            "validationScores": validation_distribution,
+            "testScores": test_distribution,
+            "calibrationCollapsed": bool(
+                validation_distribution["calibrationCollapsed"]
+                or test_distribution["calibrationCollapsed"]
+            ),
+            "behaviorOnCollapse": "fail closed; fixed threshold unchanged and no raw-probability fallback",
         },
         "test": {"metrics": metrics, "acceptance": acceptance},
         "artifacts": {
