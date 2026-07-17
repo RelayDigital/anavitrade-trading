@@ -10,6 +10,10 @@ scripts/*.json
 __pycache__/
 .codex/
 .vercel
+.playwright-cli/
+output/
+.workstream*
+scripts/ml/tests/_test_*_tmp.py
 
 # ML training data (too large for GitHub — generated locally)
 scripts/data/training-data-*.json
