@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { resolveExecutionControl } from "@/lib/executionControl";
 import { toast } from "sonner";
 
 /**
@@ -37,7 +38,6 @@ export function useDashboardData() {
       ? "bg-amber-400"
       : "bg-muted-foreground";
 
-  // Kill switch mutations
   const toggleWeb3Kill = trpc.web3Wallet.toggleKillSwitch.useMutation({
     onSuccess: (d) => {
       toast.success(d.killSwitchActive ? "Kill switch activated." : "Kill switch deactivated.");
@@ -59,7 +59,6 @@ export function useDashboardData() {
     onError: () => toast.error("Failed to revoke wallet."),
   });
 
-  // Display mode
   const { data: displayModeData, refetch: refetchDisplayMode } = trpc.liveAccount.getDisplayMode.useQuery();
   const currentMode = displayModeData?.mode ?? "demo";
   const isDemoMode = currentMode === "demo";
@@ -72,29 +71,29 @@ export function useDashboardData() {
     onError: () => toast.error("Failed to switch display mode."),
   });
 
-  // Unified balance: aggregated across all connected CEX exchanges + cached on live_accounts
   const { data: unifiedBalance } = trpc.cex.getUnifiedBalance.useQuery(undefined, {
-    enabled: true, // always fetch — live dashboard needs it regardless of connection state
-    refetchInterval: 60_000, // refresh every minute
+    enabled: true,
+    refetchInterval: 60_000,
   });
 
-  const killActive = web3Connected
-    ? (web3Session?.killSwitchActive ?? false)
-    : (account?.killSwitchActive ?? false);
+  const executionControl = resolveExecutionControl({
+    asterConnected,
+    web3Connected,
+    asterKillSwitchActive: account?.killSwitchActive ?? false,
+    web3KillSwitchActive: web3Session?.killSwitchActive ?? false,
+  });
+  const killActive = executionControl.killSwitchActive;
 
   const handleKillSwitch = () => {
-    if (web3Connected) toggleWeb3Kill.mutate({ active: !killActive });
-    else if (asterConnected) toggleKill.mutate({ active: !killActive });
+    if (executionControl.target === "aster") toggleKill.mutate({ active: !killActive });
+    else if (executionControl.target === "web3") toggleWeb3Kill.mutate({ active: !killActive });
   };
 
   return {
-    // Raw data
     account,
     liveData,
     asterStatus,
     web3Session,
-
-    // Derived connection state
     asterConnected,
     asterPending,
     web3Connected,
@@ -103,16 +102,10 @@ export function useDashboardData() {
     statusColor,
     dotColor,
     killActive,
-
-    // Display mode
     currentMode,
     isDemoMode,
     setDisplayMode,
-
-    // Unified balance
     unifiedBalance,
-
-    // Mutations
     toggleWeb3Kill,
     toggleKill,
     revokeWeb3,

@@ -3,7 +3,7 @@
  * confirmation lag. Run with:  npx tsx src/server/analysis/exits/swing-stop.test.ts
  */
 
-import { test, report, assertEqual, assertOk, assertClose } from "./test-harness";
+import { test, report, assertEqual, assertOk } from "./test-harness";
 import { computeSwingInitialStop } from "./swing-stop";
 import { makeSeries } from "./test-candle-factory";
 
@@ -79,3 +79,5 @@ test("falls back to an ATR stop when no confirmed pivot is in range", () => {
   assertEqual(res.method, "atr_fallback");
   assertOk(res.stopPrice < 30, "fallback stop still below entry");
 });
+
+report();

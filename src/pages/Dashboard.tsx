@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { Sparkles, Zap, ZapOff } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { composeLivePortfolio } from "@/lib/livePortfolio";
 
 // Extracted hooks
 import { useDashboardData } from "@/hooks/useDashboardData";
@@ -93,18 +94,23 @@ export default function Dashboard() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
 
-  // ── Live portfolio data (from CEX unified balance + live account cache) ──
-  const liveSummary = unifiedBalance?.summary;
-  const liveBalanceUsd = liveSummary?.totalEquityUsd ?? parseFloat(liveData?.account?.lastTotalEquityUsd ?? "0");
+  // ── Live portfolio data (CEX balances plus the active Aster futures account) ──
+  const asterEquityUsd = parseFloat(liveData?.account?.lastTotalEquityUsd ?? "0");
+  const asterAvailableUsd = parseFloat(liveData?.account?.lastAvailableUsd ?? "0");
+  const livePortfolio = composeLivePortfolio({
+    cexBalances: unifiedBalance?.balances ?? [],
+    asterConnected,
+    asterEquityUsd: Number.isFinite(asterEquityUsd) ? asterEquityUsd : 0,
+    asterAvailableUsd: Number.isFinite(asterAvailableUsd) ? asterAvailableUsd : 0,
+  });
+  const liveBalanceUsd = livePortfolio.totalEquityUsd;
   const startingCapitalUsd = 0; // will track from first NAV snapshot once we have it
   const liveTotalPnl = startingCapitalUsd > 0 ? liveBalanceUsd - startingCapitalUsd : 0;
   const livePnlPct = startingCapitalUsd > 0 ? ((liveTotalPnl / startingCapitalUsd) * 100).toFixed(2) : "—";
 
-  // ── Portfolio data ──
-  // Live chart: build from unifiedBalance exchange snapshots
-  const liveChartData: { label: string; value: number }[] = (unifiedBalance?.balances ?? [])
-    .filter(b => b.equityUsd > 0)
-    .map(b => ({ label: b.exchange, value: b.equityUsd }));
+  const liveChartData: { label: string; value: number }[] = livePortfolio.balances
+    .filter((balance) => balance.equityUsd > 0)
+    .map((balance) => ({ label: balance.label ?? balance.exchange, value: balance.equityUsd }));
 
   const currentBalance = isDemoMode ? demoCurrentBalance : liveBalanceUsd;
   const totalPnl = isDemoMode ? demoTotalPnl : liveTotalPnl;

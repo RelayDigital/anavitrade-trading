@@ -181,3 +181,5 @@ test("summarizeRunnerExits books time exits as 0R losses", () => {
   assertOk(Math.abs(m.winRate - 1 / 3) < 1e-9);
   assertOk(Math.abs(m.profitFactor - 5) < 1e-9, `PF ${m.profitFactor}`); // 5 / 1
 });
+
+report();

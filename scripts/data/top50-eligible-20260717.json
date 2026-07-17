@@ -1,0 +1,19 @@
+{
+  "snapshotUtc": "2026-07-17T00:00:00Z",
+  "selection": "Top 50 Binance USD-M USDT perpetuals by current 24h quoteVolume, status TRADING, onboarded no later than 2026-01-14. Frozen before data download; current-universe survivorship bias is disclosed in the report.",
+  "source": "https://fapi.binance.com/fapi/v1/ticker/24hr and /fapi/v1/exchangeInfo",
+  "start": "2026-01-14",
+  "end": "2026-06-30",
+  "symbols": [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT", "AKEUSDT",
+    "ZECUSDT", "XRPUSDT", "ESPORTSUSDT", "DOGEUSDT", "ONDOUSDT",
+    "BNBUSDT", "USUSDT", "NEARUSDT", "LABUSDT", "1000PEPEUSDT",
+    "BANKUSDT", "WLDUSDT", "SUIUSDT", "ADAUSDT", "DEXEUSDT",
+    "PUMPUSDT", "KAITOUSDT", "ENAUSDT", "LINKUSDT", "XLMUSDT",
+    "HOMEUSDT", "TAOUSDT", "AAVEUSDT", "PAXGUSDT", "BCHUSDT",
+    "UNIUSDT", "BLUAIUSDT", "EVAAUSDT", "FLOCKUSDT", "AVAXUSDT",
+    "1000BONKUSDT", "LITUSDT", "LTCUSDT", "RAVEUSDT", "DOTUSDT",
+    "DODOXUSDT", "PENGUUSDT", "VIRTUALUSDT", "LDOUSDT", "ALLOUSDT",
+    "INJUSDT", "TACUSDT", "ARBUSDT", "TRUMPUSDT", "FILUSDT"
+  ]
+}

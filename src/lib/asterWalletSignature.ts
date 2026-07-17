@@ -17,6 +17,19 @@ export async function signAsterRegistrationTypedData(input: {
   if (!input.provider?.request) {
     throw new Error("Wallet provider is not available. Reconnect your wallet and try again.");
   }
+  if (
+    input.typedData.domain?.name !== "AsterSignTransaction"
+    || input.typedData.domain?.version !== "1"
+    || input.typedData.domain?.verifyingContract !== "0x0000000000000000000000000000000000000000"
+  ) {
+    throw new Error("Invalid Aster signature challenge.");
+  }
+  if (
+    input.typedData.primaryType !== "ApproveAgent"
+    || !Array.isArray(input.typedData.types?.ApproveAgent)
+  ) {
+    throw new Error("Invalid Aster signature challenge type.");
+  }
 
   const signature = await input.provider.request({
     method: "eth_signTypedData_v4",

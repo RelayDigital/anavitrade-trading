@@ -1,12 +1,19 @@
 import { and, eq } from "drizzle-orm";
 import {
   cexConnections, asterAgentAccounts, executionJobs, orderEvents,
-  tradeIntents, liveAccounts,
+  tradeIntents, liveAccounts, coinlegsSignals, mlInferences,
 } from "../../drizzle/schema";
 import { getDb, writeAuditLog } from "../db";
 import { sha256Hex } from "../cex/signing";
 import { decryptCexCredentials } from "../cex/store";
 import { createCexClient } from "../cex/factory";
+import { getKlines } from "../analysis/kline-repository";
+import { runInference, type Candle } from "../ml/inference-router";
+import {
+  evaluateDispatchGate, GATE_CONFIG, ML_THRESHOLD,
+  computeAtrPct, computeRsi14, isBullRegime,
+  type GateDecision, type GateDirection,
+} from "../signals/unified-engine";
 /* CexExecutionAdapter no longer imported — Worker no longer submits CEX orders.
  * The VPS execution server polls risk-approved jobs and submits orders from its
  * static-IP machine. */
@@ -116,6 +123,192 @@ async function loadIntent(intentId: number): Promise<TradeIntentInput | null> {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * DISPATCH GATE (PRD R1.1 / R1.3) – the single ordered decision layer
+ * every intent must clear BEFORE any per-connection fan-out / risk engine.
+ *
+ * Order: universe → tier → rsi extension → regime → ml. The existing
+ * decideExecution() risk engine still runs last, per-connection, unchanged.
+ * Scoring is mandatory: if inference (or the market data needed to score) is
+ * unreachable, the gate fails closed (gate_result='ml_unreachable').
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/** Fetch candles for a timeframe: D1 first, then Binance futures as fallback.
+ *  Returns [] when neither source yields data (→ gate fails closed). */
+async function fetchGateCandles(
+  symbol: string,
+  timeframe: string,
+  limit: number,
+): Promise<Candle[]> {
+  try {
+    const rows = await getKlines(symbol, timeframe, limit);
+    if (rows.length > 0) {
+      return rows.map((k) => ({
+        open: k.open, high: k.high, low: k.low,
+        close: k.close, volume: k.volume, time: k.timestamp,
+      }));
+    }
+  } catch { /* fall through to network fallback */ }
+
+  try {
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${timeframe}&limit=${limit}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const raw = (await res.json()) as any[];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((k: any[]) => ({
+      time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]),
+      low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+interface GateEvaluation {
+  decision: GateDecision;
+  mlScore: number | null;
+  mlRegime: string;
+  tierScore: number;
+  atrPct4h: number;
+  rsi14: number;
+  bullRegime: boolean;
+}
+
+/** Map an entry timeframe to the candle series used for the RSI gate. */
+function pickRsiCandles(
+  period: string,
+  k15: Candle[], k1h: Candle[], k4h: Candle[],
+): Candle[] {
+  if (period === "4h" || period === "1d" || period === "1w") return k4h;
+  if (period === "1h" || period === "2h") return k1h;
+  if (period === "15m" || period === "30m" || period === "5m") return k15;
+  return k4h;
+}
+
+/**
+ * Gather the scalars the pure gate needs (tier, ATR%, RSI, regime, ML score)
+ * and run the ordered gate. All IO is confined here; the decision logic itself
+ * lives in the pure evaluateDispatchGate() (unified-engine.ts / dispatch-gate.ts).
+ */
+async function runDispatchGate(
+  intentId: number,
+  intent: TradeIntentInput,
+): Promise<GateEvaluation> {
+  const db = getDb();
+  const direction: GateDirection = intent.side === "SELL" ? "short" : "long";
+
+  // ── Tier + entry timeframe from the originating coinlegs signal ──
+  let tierScore = 0;
+  let entryTf = "4h";
+  const [row] = await db.select().from(tradeIntents)
+    .where(eq(tradeIntents.id, intentId)).limit(1);
+  if (row?.source === "coinlegs" && row.externalSignalId) {
+    const sid = Number(row.externalSignalId);
+    if (Number.isFinite(sid) && sid !== 0) {
+      const [cs] = await db.select().from(coinlegsSignals)
+        .where(eq(coinlegsSignals.signalId, sid)).limit(1);
+      if (cs) {
+        tierScore = cs.qualityScore ?? 0;
+        entryTf = cs.period || "4h";
+      }
+    }
+    // The scraper only creates intents for Tier A signals; if the score row is
+    // unresolvable (e.g. synthetic dedup id), treat as Tier A by construction.
+    if (tierScore === 0) tierScore = GATE_CONFIG.tierAScore;
+  }
+
+  // ── Market data (D1 → Binance fallback) ──
+  const [k15, k1h, k4h, k4hExt] = await Promise.all([
+    fetchGateCandles(intent.symbol, "15m", 200),
+    fetchGateCandles(intent.symbol, "1h", 200),
+    fetchGateCandles(intent.symbol, "4h", 200),
+    fetchGateCandles(intent.symbol, "4h", 260),
+  ]);
+
+  // Enough 4h bars for ATR is the minimum bar to evaluate the universe gate.
+  const marketDataAvailable = k4h.length >= 15;
+
+  const atrPct4h = computeAtrPct(
+    k4h.map((c) => c.high), k4h.map((c) => c.low), k4h.map((c) => c.close),
+  );
+  const rsiCandles = pickRsiCandles(entryTf, k15, k1h, k4h);
+  const rsi14 = computeRsi14(rsiCandles.map((c) => c.close));
+  const bullRegime = isBullRegime((k4hExt.length >= k4h.length ? k4hExt : k4h).map((c) => c.close));
+
+  // ── ML score (mandatory; fail closed on any failure — R1.3) ──
+  let mlScore: number | null = null;
+  let mlRegime = "UNKNOWN";
+  let mlUnreachable = false;
+  try {
+    if (!marketDataAvailable) {
+      mlUnreachable = true;
+    } else {
+      const result = runInference({
+        symbol: intent.symbol,
+        direction,
+        klines15m: k15,
+        klines1h: k1h,
+        klines4h: k4h,
+      });
+      mlScore = result.proba;
+      mlRegime = result.regime;
+    }
+  } catch (e: any) {
+    mlUnreachable = true;
+    console.warn(`[dispatch-gate] inference unreachable for intent ${intentId} (${intent.symbol}): ${String(e?.message).slice(0, 160)}`);
+  }
+
+  const decision = evaluateDispatchGate({
+    symbol: intent.symbol,
+    direction,
+    tierScore,
+    atrPct4h,
+    rsi14,
+    bullRegime,
+    mlScore,
+    mlThreshold: ML_THRESHOLD,
+    mlUnreachable,
+    marketDataAvailable,
+  });
+
+  return { decision, mlScore, mlRegime, tierScore, atrPct4h, rsi14, bullRegime };
+}
+
+/** Persist every gate outcome (pass, paper, reject) to ml_inferences with the
+ *  failing gate name so the funnel is auditable (PRD R1.1). */
+async function persistGateInference(
+  intentId: number,
+  intent: TradeIntentInput,
+  ev: GateEvaluation,
+): Promise<void> {
+  const db = getDb();
+  const { decision } = ev;
+  const outcome = decision.approved ? "TRADE" : decision.paperOnly ? "PAPER" : "SKIP";
+  try {
+    await db.insert(mlInferences).values({
+      tradeIntentId: intentId,
+      symbol: intent.symbol,
+      direction: intent.side === "SELL" ? "short" : "long",
+      proba: ev.mlScore === null ? "n/a" : ev.mlScore.toFixed(6),
+      threshold: String(ML_THRESHOLD),
+      decision: outcome,
+      regime: ev.mlRegime,
+      featureVectorJson: JSON.stringify({
+        tierScore: ev.tierScore,
+        atrPct4h: Number(ev.atrPct4h.toFixed(4)),
+        rsi14: Number(ev.rsi14.toFixed(2)),
+        bullRegime: ev.bullRegime,
+        sizeFactor: decision.sizeFactor,
+        reason: decision.reason,
+      }),
+      gateResult: decision.gateResult,
+    } as any);
+  } catch (e: any) {
+    console.warn(`[dispatch-gate] failed to persist inference for intent ${intentId}: ${String(e?.message).slice(0, 160)}`);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * CEX FAN-OUT – mirrors the intent to every active CEX connection
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -124,6 +317,7 @@ async function fanOutCex(
   intentId: number,
   connections: Array<typeof cexConnections.$inferSelect>,
   preloaded: Awaited<ReturnType<typeof prefetchUserData>> | undefined,
+  sizeFactor = 1,
 ) {
   const db = getDb();
   const results: Array<{ userId: number; exchange: string; status: string; reason?: string; jobId?: number }> = [];
@@ -170,6 +364,10 @@ async function fanOutCex(
       const [account] = await db.select().from(liveAccounts).where(eq(liveAccounts.userId, conn.userId)).limit(1);
       const maxPct = parseFloat(account?.maxPositionSizePct ?? "10");
       if (notionalUsd <= 0) notionalUsd = sizeNotionalFromEquity(balance.availableUsd || balance.equityUsd, maxPct);
+
+      // Regime gate half-size (PRD R1.1 step 4): applied to the final notional
+      // so both requested-notional and equity-derived sizing are scaled.
+      notionalUsd = notionalUsd * sizeFactor;
 
       const priceHint = parseFloat(intent.limitPrice ?? "0");
       if (priceHint > 0) {
@@ -220,6 +418,7 @@ async function fanOutCex(
 async function fanOutAster(
   intent: TradeIntentInput,
   intentId: number,
+  sizeFactor = 1,
 ) {
   const db = getDb();
   const asterConfig = getAsterConfig();
@@ -317,6 +516,9 @@ async function fanOutAster(
         notionalUsd = sizeNotionalFromEquity(equity, maxPct);
       }
     } catch { /* fall through */ }
+
+    // Regime gate half-size (PRD R1.1 step 4).
+    notionalUsd = notionalUsd * sizeFactor;
 
     if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
       const reason = "no_requested_notional_or_equity_snapshot";
@@ -475,6 +677,22 @@ export async function createExecutionJobsForIntent(intentId: number) {
   const intent = await loadIntent(intentId);
   if (!intent) throw new Error("TRADE_INTENT_NOT_FOUND");
 
+  // ── Ordered dispatch gate (PRD R1.1 / R1.3) — runs ONCE per intent, before
+  //    any per-connection fan-out. Every outcome is persisted with its gate. ──
+  const gate = await runDispatchGate(intentId, intent);
+  await persistGateInference(intentId, intent, gate);
+
+  if (!gate.decision.approved) {
+    const { gateResult, paperOnly, reason } = gate.decision;
+    if (gateResult === "ml_unreachable") {
+      console.warn(`[dispatch-gate] FAIL-CLOSED intent ${intentId} ${intent.symbol}: ${reason} — no order dispatched`);
+    } else {
+      console.log(`[dispatch-gate] intent ${intentId} ${intent.symbol} -> ${gateResult}${paperOnly ? " (paper)" : ""}: ${reason}`);
+    }
+    return { intentId, gate: gateResult, paperOnly, jobs: [] as Array<Record<string, unknown>> };
+  }
+
+  const sizeFactor = gate.decision.sizeFactor;
   const connections = await db.select().from(cexConnections)
     .where(eq(cexConnections.status, "active"));
 
@@ -486,13 +704,13 @@ export async function createExecutionJobsForIntent(intentId: number) {
   const [cexResults, asterResults] = await Promise.all([
     Promise.allSettled(
       connections.map(async (conn) => {
-        const r = await fanOutCex(intent, intentId, [conn], preloaded);
+        const r = await fanOutCex(intent, intentId, [conn], preloaded, sizeFactor);
         return r[0] ?? { userId: conn.userId, exchange: conn.exchange, status: "error" as const };
       }),
     ),
     (async () => {
       try {
-        return await fanOutAster(intent, intentId);
+        return await fanOutAster(intent, intentId, sizeFactor);
       } catch (e: any) {
         return [{ userId: 0, provider: "aster" as const, status: "error" as const, reason: e?.message }];
       }

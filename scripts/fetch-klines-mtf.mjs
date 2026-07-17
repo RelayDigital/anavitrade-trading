@@ -226,8 +226,15 @@ async function main() {
   const outFile = args.includes('--out')
     ? args[args.indexOf('--out') + 1]
     : 'klines-mtf.json';
-  // Allow --out to be an absolute path or a filename relative to scripts/data.
-  const outPath = outFile.startsWith('/') ? outFile : join(outDir, outFile);
+  // --out resolution:
+  //   absolute path            → used as-is
+  //   path containing a slash   → resolved against the current working dir
+  //   bare filename             → placed in scripts/data
+  const outPath = outFile.startsWith('/')
+    ? outFile
+    : outFile.includes('/')
+      ? join(process.cwd(), outFile)
+      : join(outDir, outFile);
 
   console.log('═'.repeat(60));
   console.log(
