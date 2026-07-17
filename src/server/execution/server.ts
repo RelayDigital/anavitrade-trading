@@ -2,16 +2,31 @@
  * Standalone execution server for Anavitrade.
  *
  * Runs on a Hetzner VPS with static IPv4 for exchange API key IP whitelisting.
- * Polls the Cloudflare Worker for pending TradeIntents, decrypts credentials
- * locally, submits orders to CEXes, and reports fills back to the Worker.
+ * Polls the Cloudflare Worker for risk-approved execution_jobs (already validated
+ * by the Worker-side decideExecution()), decrypts credentials locally, submits
+ * orders to CEXes, and reports fills back to the Worker.
  *
  * Architecture:
  *   Worker (Edge)  ←HTTPS/x-internal-secret→  VPS (Hetzner Ashburn)
- *                                              ├─ Poll loop (every 5s)
+ *                                              ├─ Poll loop (every 5s) — risk-approved jobs
  *                                              ├─ CEX clients (binance.ts, bybit.ts, etc.)
  *                                              ├─ ONNX ML inference (CPU)
  *                                              ├─ Prometheus metrics (port 9090)
  *                                              └─ Emergency kill file
+ *
+ * RISK SAFETY: The VPS ONLY executes jobs that the Worker has already
+ * risk-approved via decideExecution(). It polls /api/internal/risk-approved-jobs
+ * which returns execution_jobs with riskApproved=true and status=queued.
+ * The VPS no longer calls decideExecution() or computes sizing — those are
+ * Worker responsibilities. This prevents the VPS from bypassing:
+ *   - Global kill switch
+ *   - Live-account status check
+ *   - Copytrade opt-in
+ *   - Daily-loss cap
+ *   - Portfolio exposure cap
+ *   - Max-leverage clamp
+ *   - Per-connection kill switch
+ *   - Circuit breaker
  *
  * Environment variables (.env):
  *   WORKER_URL             — Worker base URL (e.g. https://anavitrade-worker.workers.dev)
@@ -26,31 +41,36 @@ import * as crypto from "crypto";
 import { createCexClient } from "../cex/factory";
 import type { CexOrderRequest, CexOrderResult } from "../cex/clientTypes";
 
-// Types for internal API responses
-interface PendingIntent {
-  id: number;
-  source: string;
+// ─── Types for internal API responses ────────────────────────────────────────
+
+/** A risk-approved execution job returned by GET /api/internal/risk-approved-jobs.
+ *  Includes pre-computed sizing from the Worker, encrypted credentials
+ *  (decrypted on VPS only), and intent details for protective orders. */
+interface RiskApprovedJob {
+  jobId: number;
+  tradeIntentId: number;
+  userId: number;
+  cexConnectionId: number;
   symbol: string;
   side: string;
   orderType: string;
-  requestedNotionalUsd: string | null;
-  targetLeverage: number | null;
+  notionalUsd: string | null;
+  quantity: string | null;
+  leverage: number | null;
   limitPrice: string | null;
-  stopLossPrice: string | null;
-  takeProfitPrice: string | null;
-  thesis: string | null;
-  status: string;
-}
-
-interface EncryptedConnection {
-  id: number;
-  userId: number;
-  exchange: string;
-  encryptedApiKey: string;
-  encryptedApiSecret: string;
-  encryptedPassphrase: string | null;
-  killSwitchActive: boolean | number;
-  label: string | null;
+  idempotencyKey: string;
+  // Connection fields (encrypted — VPS decrypts locally)
+  connId: number;
+  connExchange: string;
+  connEncryptedApiKey: string;
+  connEncryptedApiSecret: string;
+  connEncryptedPassphrase: string | null;
+  connKillSwitchActive: boolean | number;
+  connLabel: string | null;
+  // Intent fields (protective orders)
+  intentStopLossPrice: string | null;
+  intentTakeProfitPrice: string | null;
+  intentTargetLeverage: number | null;
 }
 
 interface KillState {
@@ -105,8 +125,6 @@ for (const key of REQUIRED) {
 
 /** Maximum fill-poll cycles before giving up (60 x 5s = 5 min for MARKET, shorter for LIMIT). */
 const MAX_ORDER_POLLS = 60;
-/** Default position size as percentage of available balance when intent has no requestedNotionalUsd. */
-const DEFAULT_POSITION_PCT = 10;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -116,26 +134,6 @@ function normaliseSide(side: string): "BUY" | "SELL" {
 
 function normaliseOrderType(t: string): "MARKET" | "LIMIT" {
   return t.toUpperCase() === "LIMIT" ? "LIMIT" : "MARKET";
-}
-
-function computeQuantity(notionalUsd: number, price: number): string | null {
-  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
-  if (!Number.isFinite(price) || price <= 0) return null;
-  const qty = (notionalUsd / price).toFixed(6);
-  return Number(qty) > 0 ? qty : null;
-}
-
-/**
- * Fetch the current mark price for a symbol from Binance public API.
- * No auth required. Falls back to 0 if unavailable.
- */
-async function fetchTickerPrice(symbol: string): Promise<number> {
-  const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`);
-  if (res.ok) {
-    const data = (await res.json()) as { price?: string };
-    return parseFloat(data.price ?? "0");
-  }
-  return 0;
 }
 
 // ─── Shared crypto (delegates to the extracted module at runtime) ──────────
@@ -242,283 +240,233 @@ async function poll() {
     const killState = await internalGet<KillState>("/api/internal/kill-state");
     if (killState.globalKill) {
       console.log("[exec-server] Global kill active — skipping poll cycle");
-      return;
-    }
-
-    // 2. Fetch pending intents
-    const { intents } = await internalGet<{ intents: PendingIntent[] }>("/api/internal/pending-intents");
-    if (intents.length === 0) {
-      // Still poll for fills on in-flight orders even without new intents
       await pollForFills();
       return;
     }
 
-    // 3. Fetch active connections with encrypted credentials
-    const { connections } = await internalGet<{ connections: EncryptedConnection[] }>("/api/internal/active-connections");
-    if (connections.length === 0) {
-      console.log("[exec-server] No active connections — skipping", intents.length, "intents");
+    // 2. Fetch risk-approved jobs (Worker already ran decideExecution)
+    const { jobs } = await internalGet<{ jobs: RiskApprovedJob[] }>("/api/internal/risk-approved-jobs");
+    if (!jobs || jobs.length === 0) {
       await pollForFills();
       return;
     }
 
-    // 4. Process each intent
-    for (const intent of intents) {
-      // Check connection-level kill
-      const eligibleConns = connections.filter((c) => !killState.perConnectionKills[c.id]);
-      if (eligibleConns.length === 0) {
-        console.log(`[exec-server] Intent #${intent.id}: all connections killed — skipping`);
+    console.log(`[exec-server] Processing ${jobs.length} risk-approved job(s)`);
+
+    // 3. Process each risk-approved job
+    for (const job of jobs) {
+      // Defense-in-depth: double-check per-connection kill switch
+      if (killState.perConnectionKills[job.connId]) {
+        console.log(`[exec-server] Job #${job.jobId}: connection #${job.connId} killed — skipping`);
         continue;
       }
 
-      for (const conn of eligibleConns) {
-        try {
-          // Decrypt credentials locally — NEVER sent over the wire
-          const apiKey = await decryptKey(conn.encryptedApiKey, ENCRYPTION_KEY!);
-          const apiSecret = await decryptKey(conn.encryptedApiSecret, ENCRYPTION_KEY!);
-          const passphrase = conn.encryptedPassphrase
-            ? await decryptKey(conn.encryptedPassphrase, ENCRYPTION_KEY!)
-            : undefined;
+      if (job.connKillSwitchActive) {
+        console.log(`[exec-server] Job #${job.jobId}: connection #${job.connId} kill-switch active — skipping`);
+        continue;
+      }
 
-          const idempotencyKey = await sha256(`vps:${conn.userId}:${intent.id}:${conn.id}`);
+      // Validate pre-computed sizing from the Worker
+      const notionalStr = job.notionalUsd;
+      const notionalUsd = notionalStr ? parseFloat(notionalStr) : 0;
+      if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+        await internalPost("/api/internal/report-execution", {
+          tradeIntentId: job.tradeIntentId,
+          userId: job.userId,
+          cexConnectionId: job.cexConnectionId,
+          provider: job.connExchange,
+          symbol: job.symbol,
+          side: job.side,
+          orderType: job.orderType,
+          status: "skipped",
+          errorMessage: "invalid_notional",
+          idempotencyKey: job.idempotencyKey,
+        });
+        errorsTotal++;
+        continue;
+      }
 
-          // ── Duplicate detection ──────────────────────────────────────────
-          if (inFlightOrders.has(idempotencyKey)) {
-            console.log(`[exec-server] Intent #${intent.id}: duplicate idempotencyKey ${idempotencyKey} already in-flight — skipping submission, poll will handle`);
-            continue;
-          }
+      const quantity = job.quantity;
+      if (!quantity || parseFloat(quantity) <= 0) {
+        await internalPost("/api/internal/report-execution", {
+          tradeIntentId: job.tradeIntentId,
+          userId: job.userId,
+          cexConnectionId: job.cexConnectionId,
+          provider: job.connExchange,
+          symbol: job.symbol,
+          side: job.side,
+          orderType: job.orderType,
+          notionalUsd: notionalStr,
+          status: "skipped",
+          errorMessage: "zero_quantity",
+          idempotencyKey: job.idempotencyKey,
+        });
+        errorsTotal++;
+        continue;
+      }
 
-          console.log(`[exec-server] Intent #${intent.id}: ${intent.side} ${intent.symbol} via ${conn.exchange} (conn #${conn.id}) [mode=${EXECUTION_MODE}]`);
+      const leverage = job.leverage ?? job.intentTargetLeverage ?? 3;
 
-          // ── EXECUTION_MODE guard ────────────────────────────────────────
-          if (EXECUTION_MODE === "disabled") {
-            // Dry-run mode: report as queued without calling any exchange
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              notionalUsd: intent.requestedNotionalUsd ?? undefined,
-              quantity: undefined,
-              leverage: intent.targetLeverage ?? undefined,
-              limitPrice: intent.limitPrice ?? undefined,
-              status: "queued",
-              errorMessage: "EXECUTION_MODE=disabled",
-              idempotencyKey,
-            });
-            continue;
-          }
+      try {
+        // Decrypt credentials locally — NEVER sent over the wire
+        const apiKey = await decryptKey(job.connEncryptedApiKey, ENCRYPTION_KEY!);
+        const apiSecret = await decryptKey(job.connEncryptedApiSecret, ENCRYPTION_KEY!);
+        const passphrase = job.connEncryptedPassphrase
+          ? await decryptKey(job.connEncryptedPassphrase, ENCRYPTION_KEY!)
+          : undefined;
 
-          // ── Build CEX client ────────────────────────────────────────────
-          const isTestnet = EXECUTION_MODE === "testnet";
-          const client = createCexClient(conn.exchange, {
-            apiKey,
-            apiSecret,
-            passphrase,
-            testnet: isTestnet,
-          });
+        // ── Duplicate detection ──────────────────────────────────────────
+        if (inFlightOrders.has(job.idempotencyKey)) {
+          console.log(`[exec-server] Job #${job.jobId}: duplicate idempotencyKey already in-flight — skipping`);
+          continue;
+        }
 
-          // ── Sizing ──────────────────────────────────────────────────────
-          let notionalUsd = intent.requestedNotionalUsd
-            ? parseFloat(intent.requestedNotionalUsd)
-            : 0;
+        console.log(`[exec-server] Job #${job.jobId}: ${job.side} ${job.quantity} ${job.symbol} via ${job.connExchange} (conn #${job.connId}) [mode=${EXECUTION_MODE}] [notional=$${notionalUsd.toFixed(2)}]`);
 
-          if (notionalUsd <= 0) {
-            try {
-              const balance = await client.validateAndReadBalance();
-              const available = balance.availableUsd || balance.equityUsd;
-              if (available > 0) {
-                notionalUsd = available * (DEFAULT_POSITION_PCT / 100);
-                console.log(`[exec-server] Sized ${intent.symbol}: ${DEFAULT_POSITION_PCT}% of $${available.toFixed(2)} = $${notionalUsd.toFixed(2)}`);
-              }
-            } catch (e: any) {
-              console.warn(`[exec-server] Balance fetch failed for conn #${conn.id}: ${e?.message?.slice(0, 100)}`);
-            }
-          }
-
-          if (notionalUsd <= 0) {
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              status: "skipped",
-              errorMessage: "cannot_determine_notional",
-              idempotencyKey,
-            });
-            continue;
-          }
-
-          // ── Price for quantity calculation ──────────────────────────────
-          let price = intent.limitPrice ? parseFloat(intent.limitPrice) : 0;
-          if (price <= 0) {
-            price = await fetchTickerPrice(intent.symbol);
-          }
-
-          if (price <= 0) {
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              notionalUsd: notionalUsd.toFixed(2),
-              status: "skipped",
-              errorMessage: "unable_to_resolve_price",
-              idempotencyKey,
-            });
-            continue;
-          }
-
-          const quantity = computeQuantity(notionalUsd, price);
-          if (!quantity) {
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              notionalUsd: notionalUsd.toFixed(2),
-              status: "skipped",
-              errorMessage: "zero_quantity",
-              idempotencyKey,
-            });
-            continue;
-          }
-
-          // ── Submit order ────────────────────────────────────────────────
-          // Set leverage first (best-effort)
-          if (intent.targetLeverage) {
-            try { await client.setLeverage(intent.symbol, intent.targetLeverage); } catch { /* non-fatal */ }
-          }
-
-          const orderReq: CexOrderRequest = {
-            symbol: intent.symbol,
-            side: normaliseSide(intent.side),
-            type: normaliseOrderType(intent.orderType),
+        // ── EXECUTION_MODE guard ────────────────────────────────────────
+        if (EXECUTION_MODE === "disabled") {
+          await internalPost("/api/internal/report-execution", {
+            tradeIntentId: job.tradeIntentId,
+            userId: job.userId,
+            cexConnectionId: job.cexConnectionId,
+            provider: job.connExchange,
+            symbol: job.symbol,
+            side: job.side,
+            orderType: job.orderType,
+            notionalUsd: notionalStr,
             quantity,
-            price: intent.limitPrice ?? undefined,
-            leverage: intent.targetLeverage ?? undefined,
-            stopLossPrice: intent.stopLossPrice ?? undefined,
-            takeProfitPrice: intent.takeProfitPrice ?? undefined,
-            clientOrderId: idempotencyKey,
-          };
+            leverage,
+            limitPrice: job.limitPrice ?? undefined,
+            status: "queued",
+            errorMessage: "EXECUTION_MODE=disabled",
+            idempotencyKey: job.idempotencyKey,
+          });
+          continue;
+        }
 
-          let orderResult: CexOrderResult;
-          try {
-            orderResult = await client.placeOrder(orderReq);
-            console.log(`[exec-server] Order submitted: ${orderResult.orderId} -> ${orderResult.status}`);
-          } catch (e: any) {
-            const errMsg = e?.message?.slice(0, 300) ?? "order_submission_failed";
-            console.error(`[exec-server] Order submission failed for intent #${intent.id}: ${errMsg}`);
+        // ── Build CEX client ────────────────────────────────────────────
+        const isTestnet = EXECUTION_MODE === "testnet";
+        const client = createCexClient(job.connExchange, {
+          apiKey,
+          apiSecret,
+          passphrase,
+          testnet: isTestnet,
+        });
 
-            // If the exchange says "duplicate", reconcile rather than reject
-            if (isDuplicateError(errMsg)) {
-              await reconcileDuplicate(
-                idempotencyKey, conn.exchange, intent.symbol,
-                apiKey, apiSecret, passphrase, isTestnet,
-                intent, conn, notionalUsd, quantity, errMsg,
-              );
-              continue; // reconciliation already updated local state + reported
-            }
+        // ── Set leverage (best-effort) ───────────────────────────────────
+        if (leverage > 0) {
+          try { await client.setLeverage(job.symbol, leverage); } catch { /* non-fatal */ }
+        }
 
-            ordersRejected++;
-            ordersSubmitted++;
+        // ── Submit order using Worker's pre-approved sizing ──────────────
+        const orderReq: CexOrderRequest = {
+          symbol: job.symbol,
+          side: normaliseSide(job.side),
+          type: normaliseOrderType(job.orderType),
+          quantity,
+          price: job.limitPrice ?? undefined,
+          leverage,
+          stopLossPrice: job.intentStopLossPrice ?? undefined,
+          takeProfitPrice: job.intentTakeProfitPrice ?? undefined,
+          clientOrderId: job.idempotencyKey,
+        };
 
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              notionalUsd: notionalUsd.toFixed(2),
-              quantity,
-              leverage: intent.targetLeverage ?? undefined,
-              limitPrice: intent.limitPrice ?? undefined,
-              status: "rejected",
-              errorMessage: errMsg,
-              idempotencyKey,
-            });
-            errorsTotal++;
-            lastError = errMsg;
+        let orderResult: CexOrderResult;
+        try {
+          orderResult = await client.placeOrder(orderReq);
+          console.log(`[exec-server] Order submitted: ${orderResult.orderId} -> ${orderResult.status}`);
+        } catch (e: any) {
+          const errMsg = e?.message?.slice(0, 300) ?? "order_submission_failed";
+          console.error(`[exec-server] Order submission failed for job #${job.jobId}: ${errMsg}`);
+
+          if (isDuplicateError(errMsg)) {
+            await reconcileDuplicateV2(
+              job, apiKey, apiSecret, passphrase, isTestnet, notionalStr, quantity, leverage, errMsg,
+            );
             continue;
           }
 
-          // ── Update local state BEFORE reporting to Worker ───────────────
-          // CRITICAL: If the report-back POST fails, the order was already
-          // placed on the exchange. We must track it locally so fill polling
-          // can recover the state on the next cycle.
+          ordersRejected++;
           ordersSubmitted++;
 
-          if (orderResult.status === "filled") {
-            ordersFilled++;
-            console.log(`[exec-server] Intent #${intent.id} filled immediately: ${orderResult.orderId}`);
-          }
-
-          // Track all non-rejected orders for fill polling
-          inFlightOrders.set(idempotencyKey, {
-            idempotencyKey,
-            orderId: orderResult.orderId,
-            exchange: conn.exchange,
-            symbol: intent.symbol,
-            userId: conn.userId,
-            cexConnectionId: conn.id,
-            tradeIntentId: intent.id,
-            submittedAt: Date.now(),
-            pollCount: 0,
-            apiKey,
-            apiSecret,
-            passphrase,
-            testnet: isTestnet,
+          await internalPost("/api/internal/report-execution", {
+            tradeIntentId: job.tradeIntentId,
+            userId: job.userId,
+            cexConnectionId: job.cexConnectionId,
+            provider: job.connExchange,
+            symbol: job.symbol,
+            side: job.side,
+            orderType: job.orderType,
+            notionalUsd: notionalStr,
+            quantity,
+            leverage,
+            limitPrice: job.limitPrice ?? undefined,
+            status: "rejected",
+            errorMessage: errMsg,
+            idempotencyKey: job.idempotencyKey,
           });
-          ordersTracked = inFlightOrders.size;
-
-          // ── Report result to Worker (best-effort; local state is already saved) ──
-          try {
-            await internalPost("/api/internal/report-execution", {
-              tradeIntentId: intent.id,
-              userId: conn.userId,
-              cexConnectionId: conn.id,
-              provider: conn.exchange,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              notionalUsd: notionalUsd.toFixed(2),
-              quantity,
-              leverage: intent.targetLeverage ?? undefined,
-              limitPrice: intent.limitPrice ?? undefined,
-              orderId: orderResult.orderId,
-              status: orderResult.status,
-              idempotencyKey,
-            });
-          } catch (reportErr: any) {
-            // Report-back failed but local state is already saved.
-            // The pollForFills loop will pick up the inFlightOrders entry
-            // and report the fill status on the next cycle.
-            console.warn(`[exec-server] Report-back POST failed for ${orderResult.orderId} (local state saved, poll will recover): ${reportErr?.message?.slice(0, 100)}`);
-            errorsTotal++;
-            lastError = reportErr?.message ?? String(reportErr);
-          }
-        } catch (e: any) {
           errorsTotal++;
-          lastError = e?.message ?? String(e);
-          console.error(`[exec-server] Error processing intent #${intent.id} conn #${conn.id}:`, e?.message);
+          lastError = errMsg;
+          continue;
         }
+
+        // ── Update local state BEFORE reporting to Worker ───────────────
+        ordersSubmitted++;
+
+        if (orderResult.status === "filled") {
+          ordersFilled++;
+          console.log(`[exec-server] Job #${job.jobId} filled immediately: ${orderResult.orderId}`);
+        }
+
+        // Track all non-rejected orders for fill polling
+        inFlightOrders.set(job.idempotencyKey, {
+          idempotencyKey: job.idempotencyKey,
+          orderId: orderResult.orderId,
+          exchange: job.connExchange,
+          symbol: job.symbol,
+          userId: job.userId,
+          cexConnectionId: job.cexConnectionId,
+          tradeIntentId: job.tradeIntentId,
+          submittedAt: Date.now(),
+          pollCount: 0,
+          apiKey,
+          apiSecret,
+          passphrase,
+          testnet: isTestnet,
+        });
+        ordersTracked = inFlightOrders.size;
+
+        // ── Report result to Worker (best-effort; local state is already saved) ──
+        try {
+          await internalPost("/api/internal/report-execution", {
+            tradeIntentId: job.tradeIntentId,
+            userId: job.userId,
+            cexConnectionId: job.cexConnectionId,
+            provider: job.connExchange,
+            symbol: job.symbol,
+            side: job.side,
+            orderType: job.orderType,
+            notionalUsd: notionalStr,
+            quantity,
+            leverage,
+            limitPrice: job.limitPrice ?? undefined,
+            orderId: orderResult.orderId,
+            status: orderResult.status,
+            idempotencyKey: job.idempotencyKey,
+          });
+        } catch (reportErr: any) {
+          console.warn(`[exec-server] Report-back POST failed for ${orderResult.orderId} (local state saved, poll will recover): ${(reportErr as any)?.message?.slice(0, 100)}`);
+          errorsTotal++;
+          lastError = (reportErr as any)?.message ?? String(reportErr);
+        }
+      } catch (e: any) {
+        errorsTotal++;
+        lastError = e?.message ?? String(e);
+        console.error(`[exec-server] Error processing job #${job.jobId} conn #${job.connId}:`, e?.message);
       }
     }
 
-    // 5. Poll for fills on in-flight orders
+    // 4. Poll for fills on in-flight orders
     await pollForFills();
 
     lastPollDuration = Date.now() - start;
@@ -550,29 +498,27 @@ function isDuplicateError(message: string): boolean {
  * - If a position exists -> report as filled (the original order completed).
  * - If no position  -> track in inFlightOrders for fill polling.
  */
-async function reconcileDuplicate(
-  idempotencyKey: string,
-  exchange: string,
-  symbol: string,
+async function reconcileDuplicateV2(
+  job: RiskApprovedJob,
   apiKey: string,
   apiSecret: string,
   passphrase: string | undefined,
   testnet: boolean,
-  intent: PendingIntent,
-  conn: EncryptedConnection,
-  notionalUsd: number,
+  notionalStr: string | null,
   quantity: string,
+  leverage: number,
   errMsg: string,
 ): Promise<void> {
-  console.log(`[exec-server] Reconciling duplicate for ${idempotencyKey} on ${exchange}:${symbol}`);
+  const idemKey = job.idempotencyKey;
+  console.log(`[exec-server] Reconciling duplicate for ${idemKey} on ${job.connExchange}:${job.symbol}`);
 
-  const syntheticOrderId = `reconciled:${idempotencyKey}`;
+  const syntheticOrderId = `reconciled:${idemKey}`;
   let foundPosition = false;
 
   try {
-    const client = createCexClient(exchange, { apiKey, apiSecret, passphrase, testnet });
-    const positions = await client.getPositions(symbol);
-    const position = positions.find((p) => p.symbol === symbol);
+    const client = createCexClient(job.connExchange, { apiKey, apiSecret, passphrase, testnet });
+    const positions = await client.getPositions(job.symbol);
+    const position = positions.find((p) => p.symbol === job.symbol);
 
     if (position && Math.abs(position.sizeSigned) > 0) {
       foundPosition = true;
@@ -580,14 +526,14 @@ async function reconcileDuplicate(
       ordersSubmitted++;
 
       // Track briefly so pollForFills can confirm, then auto-remove
-      inFlightOrders.set(idempotencyKey, {
-        idempotencyKey,
+      inFlightOrders.set(idemKey, {
+        idempotencyKey: idemKey,
         orderId: syntheticOrderId,
-        exchange,
-        symbol,
-        userId: conn.userId,
-        cexConnectionId: conn.id,
-        tradeIntentId: intent.id,
+        exchange: job.connExchange,
+        symbol: job.symbol,
+        userId: job.userId,
+        cexConnectionId: job.cexConnectionId,
+        tradeIntentId: job.tradeIntentId,
         submittedAt: Date.now(),
         pollCount: MAX_ORDER_POLLS - 1, // near-expired so poll cleans up fast
         apiKey,
@@ -598,23 +544,23 @@ async function reconcileDuplicate(
       ordersTracked = inFlightOrders.size;
 
       await internalPost("/api/internal/report-execution", {
-        tradeIntentId: intent.id,
-        userId: conn.userId,
-        cexConnectionId: conn.id,
-        provider: exchange,
-        symbol,
-        side: intent.side,
-        orderType: intent.orderType,
-        notionalUsd: notionalUsd.toFixed(2),
+        tradeIntentId: job.tradeIntentId,
+        userId: job.userId,
+        cexConnectionId: job.cexConnectionId,
+        provider: job.connExchange,
+        symbol: job.symbol,
+        side: job.side,
+        orderType: job.orderType,
+        notionalUsd: notionalStr,
         quantity,
-        leverage: intent.targetLeverage ?? undefined,
-        limitPrice: intent.limitPrice ?? undefined,
+        leverage,
+        limitPrice: job.limitPrice ?? undefined,
         orderId: syntheticOrderId,
         status: "filled",
         errorMessage: `reconciled_duplicate: ${errMsg.slice(0, 100)}`,
-        idempotencyKey,
+        idempotencyKey: idemKey,
       });
-      console.log(`[exec-server] Duplicate reconciled as filled: ${symbol} size=${position.sizeSigned}`);
+      console.log(`[exec-server] Duplicate reconciled as filled: ${job.symbol} size=${position.sizeSigned}`);
       return;
     }
   } catch (e: any) {
@@ -625,14 +571,14 @@ async function reconcileDuplicate(
   // Track for fill polling so we don't lose it.
   ordersSubmitted++;
 
-  inFlightOrders.set(idempotencyKey, {
-    idempotencyKey,
+  inFlightOrders.set(idemKey, {
+    idempotencyKey: idemKey,
     orderId: syntheticOrderId,
-    exchange,
-    symbol,
-    userId: conn.userId,
-    cexConnectionId: conn.id,
-    tradeIntentId: intent.id,
+    exchange: job.connExchange,
+    symbol: job.symbol,
+    userId: job.userId,
+    cexConnectionId: job.cexConnectionId,
+    tradeIntentId: job.tradeIntentId,
     submittedAt: Date.now(),
     pollCount: 0,
     apiKey,
@@ -642,7 +588,7 @@ async function reconcileDuplicate(
   });
   ordersTracked = inFlightOrders.size;
 
-  console.log(`[exec-server] Duplicate order reconciled, tracking for fill: ${symbol}${foundPosition ? " (position found)" : ""}`);
+  console.log(`[exec-server] Duplicate order reconciled, tracking for fill: ${job.symbol}${foundPosition ? " (position found)" : ""}`);
 }
 
 /**
