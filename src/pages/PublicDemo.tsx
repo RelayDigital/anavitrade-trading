@@ -8,12 +8,12 @@ import {
 } from "recharts";
 import {
   TrendingUp, TrendingDown, DollarSign, Activity,
-  RefreshCw, Zap, Settings2, ChevronDown, ChevronUp,
+  Zap,
   BarChart2, Shield, Radio, Wifi, Clock, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "framer-motion";
 import TradeChartSnapshot from "@/components/TradeChartSnapshot";
+import { formatSignedPercent, UNAVAILABLE } from "@/components/performancePresentation";
 
 // Slide-in animation for new trade cards now lives in index.css (.trade-card-new)
 // — keeping it out of module scope preserves Fast Refresh / avoids dev reloads.
@@ -235,8 +235,8 @@ function LiveSignalFeed({ token }: { token: string }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border">
-              {["Pair", "Indicator", "TF", "Tier", "Price", "Max Profit", "Score", "Date"].map((h) => (
-                <th key={h} className={`py-2.5 px-3 text-xs text-muted-foreground font-medium ${h === "Price" || h === "Max Profit" || h === "Score" || h === "Date" ? "text-right" : "text-left"}`}>{h}</th>
+              {["Pair", "Indicator", "TF", "Tier", "Price", "Reported Favorable Move", "Score", "Date"].map((h) => (
+                <th key={h} className={`py-2.5 px-3 text-xs text-muted-foreground font-medium ${h === "Price" || h === "Reported Favorable Move" || h === "Score" || h === "Date" ? "text-right" : "text-left"}`}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -253,10 +253,10 @@ function LiveSignalFeed({ token }: { token: string }) {
                   ${parseFloat(s.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
                 </td>
                 <td className="py-2.5 px-3 text-right text-xs font-medium text-green-400">
-                  {s.maxProfit ? `+${parseFloat(s.maxProfit).toFixed(2)}%` : "—"}
+                  {formatSignedPercent(s.maxProfit, 2)}
                 </td>
                 <td className="py-2.5 px-3 text-right text-xs text-muted-foreground">
-                  {s.qualityScore != null ? s.qualityScore.toFixed(1) : "—"}
+                  {s.qualityScore != null ? s.qualityScore.toFixed(1) : UNAVAILABLE}
                 </td>
                 <td className="py-2.5 px-3 text-right text-xs text-muted-foreground whitespace-nowrap">
                   {s.signalDate ? (
@@ -284,7 +284,7 @@ function LiveSignalFeed({ token }: { token: string }) {
             </div>
             <div className="text-right">
               <div className="text-xs font-mono text-foreground">${parseFloat(s.price).toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>
-              {s.maxProfit && <div className="text-xs font-medium text-green-400">+{parseFloat(s.maxProfit).toFixed(2)}%</div>}
+              <div className="text-xs font-medium text-green-400">{formatSignedPercent(s.maxProfit, 2)}</div>
             </div>
           </div>
         ))}
@@ -293,152 +293,8 @@ function LiveSignalFeed({ token }: { token: string }) {
   );
 }
 
-// ── Settings panel ─────────────────────────────────────────────────────────
-function SettingsPanel({ token, account, onSaved }: {
-  token: string;
-  account: {
-    positionSizePct: string; leverage: string;
-    strategyTier: string; pyramidingEnabled: boolean;
-    pyramidMaxEntries: number; pyramidScalePct: string;
-  };
-  onSaved: () => void;
-}) {
-  const [posSize, setPosSize] = useState(parseFloat(account.positionSizePct));
-  const [leverage, setLeverage] = useState(parseFloat(account.leverage ?? "3.00"));
-  const [tier, setTier] = useState<"A" | "AB" | "ABC">(account.strategyTier as "A" | "AB" | "ABC");
-  const [pyramiding, setPyramiding] = useState(account.pyramidingEnabled);
-  const [maxEntries, setMaxEntries] = useState(account.pyramidMaxEntries);
-  const [scalePct, setScalePct] = useState(parseFloat(account.pyramidScalePct));
-
-  const updateSettings = trpc.demo.updateSettings.useMutation({
-    onSuccess: () => {
-      toast.success("Settings saved — re-sync to apply to trade history");
-      onSaved();
-    },
-    onError: (e) => toast.error(`Failed to save: ${e.message}`),
-  });
-
-  // Estimated July return preview
-  const estReturn = tier === "A"
-    ? (18 * posSize * leverage * 0.155).toFixed(1)
-    : tier === "AB"
-    ? (116 * posSize * leverage * 0.049).toFixed(1)
-    : (200 * posSize * leverage * 0.025).toFixed(1);
-
-  return (
-    <div className="glass-card border border-border rounded-xl p-6 space-y-6">
-      <h3 className="font-heading font-semibold text-foreground flex items-center gap-2">
-        <Settings2 className="w-4 h-4 text-primary" /> Strategy Settings
-      </h3>
-
-      {/* Strategy tier */}
-      <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wide font-medium block mb-2">Signal Tier Filter</label>
-        <div className="flex gap-2 flex-wrap">
-          {(["A", "AB", "ABC"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTier(t)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${tier === t ? "bg-primary/20 border-primary text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}
-            >
-              {t === "A" ? "Tier A Only" : t === "AB" ? "Tier A + B" : "All Tiers"}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground mt-1.5">
-          {tier === "A" ? "18 signals/month · avg +15.5% per signal · highest conviction only" :
-           tier === "AB" ? "116 signals/month · avg +4.9% per signal · broader coverage" :
-           "All signals including Tier C — higher volume, lower average quality"}
-        </p>
-      </div>
-
-      {/* Capital risk per trade */}
-      <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wide font-medium block mb-2">
-          Capital Risk per Trade — <span className="text-primary font-mono">{posSize.toFixed(1)}%</span>
-        </label>
-        <input
-          type="range" min={0.5} max={10} step={0.5} value={posSize}
-          onChange={(e) => setPosSize(parseFloat(e.target.value))}
-          className="w-full accent-primary"
-        />
-        <div className="flex justify-between text-xs text-muted-foreground mt-1">
-          <span>0.5% (conservative)</span><span>5% (default)</span><span>10% (aggressive)</span>
-        </div>
-      </div>
-
-      {/* Leverage */}
-      <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wide font-medium block mb-2">
-          Leverage — <span className="text-primary font-mono">{leverage.toFixed(1)}×</span>
-          <span className="ml-2 text-muted-foreground/60">Notional: {(posSize * leverage).toFixed(1)}% of portfolio per trade</span>
-        </label>
-        <input
-          type="range" min={1} max={10} step={0.5} value={leverage}
-          onChange={(e) => setLeverage(parseFloat(e.target.value))}
-          className="w-full accent-primary"
-        />
-        <div className="flex justify-between text-xs text-muted-foreground mt-1">
-          <span>1× (spot)</span><span>3× (default)</span><span>10× (high risk)</span>
-        </div>
-      </div>
-
-      {/* Estimated return preview */}
-      <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-        <p className="text-xs text-muted-foreground">
-          At <span className="text-primary font-mono font-semibold">{posSize.toFixed(1)}% risk × {leverage.toFixed(1)}× leverage</span> with {tier === "A" ? "Tier A" : tier === "AB" ? "Tier A+B" : "all"} signals:
-          estimated July return{" "}
-          <span className="text-green-400 font-mono font-semibold">+{estReturn}%</span>
-        </p>
-      </div>
-
-      {/* Pyramiding */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Pyramiding</label>
-          <button
-            onClick={() => setPyramiding(!pyramiding)}
-            className={`relative w-10 h-5 rounded-full transition-colors ${pyramiding ? "bg-primary" : "bg-white/10"}`}
-          >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${pyramiding ? "translate-x-5" : "translate-x-0.5"}`} />
-          </button>
-        </div>
-        {pyramiding && (
-          <div className="space-y-3 pl-2 border-l border-primary/20">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Max entries per asset — <span className="text-primary font-mono">{maxEntries}</span></label>
-              <input type="range" min={1} max={10} step={1} value={maxEntries}
-                onChange={(e) => setMaxEntries(parseInt(e.target.value))}
-                className="w-full accent-primary" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Scale factor per additional entry — <span className="text-primary font-mono">{scalePct.toFixed(0)}%</span></label>
-              <input type="range" min={10} max={100} step={5} value={scalePct}
-                onChange={(e) => setScalePct(parseFloat(e.target.value))}
-                className="w-full accent-primary" />
-              <p className="text-xs text-muted-foreground mt-1">Each additional entry on the same asset uses {scalePct.toFixed(0)}% of the previous entry size.</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <Button
-        onClick={() => updateSettings.mutate({
-          token, positionSizePct: posSize, leverage, strategyTier: tier,
-          pyramidingEnabled: pyramiding, pyramidMaxEntries: maxEntries, pyramidScalePct: scalePct,
-        })}
-        disabled={updateSettings.isPending}
-        className="w-full bg-primary text-primary-foreground"
-      >
-        {updateSettings.isPending ? "Saving…" : "Save Settings & Re-sync"}
-      </Button>
-    </div>
-  );
-}
-
 // ── Main component ─────────────────────────────────────────────────────────
 export default function PublicDemo() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [tradeView, setTradeView] = useState<"cards" | "table">("cards");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const prevTradeIds = useRef<Set<number>>(new Set());
@@ -457,12 +313,12 @@ export default function PublicDemo() {
 
   const token = publicDemo?.token ?? "";
 
-  const { data: backendTrades, refetch: refetchTrades } = trpc.demo.getTrades.useQuery(
+  const { data: backendTrades } = trpc.demo.getTrades.useQuery(
     { token },
     { enabled: !!token, refetchInterval: POLL_MS }
   );
 
-  const { data: portfolioSeries, refetch: refetchSeries } = trpc.demo.getPortfolioSeries.useQuery(
+  const { data: portfolioSeries } = trpc.demo.getPortfolioSeries.useQuery(
     { token },
     { enabled: !!token, refetchInterval: POLL_MS }
   );
@@ -483,27 +339,6 @@ export default function PublicDemo() {
     prevTradeIds.current = currentIds;
     setLastUpdated(new Date());
   }, [backendTrades]);
-
-  const triggerSync = trpc.demo.triggerSync.useMutation({
-    onSuccess: (r) => {
-      toast.success(`${r.tradesCreated} trade${r.tradesCreated !== 1 ? "s" : ""} applied`, {
-        description: `${r.snapshotsWritten} equity snapshots written`, duration: 4000,
-      });
-      refetchTrades();
-      refetchSeries();
-    },
-    onError: (e) => toast.error(`Sync failed: ${e.message}`),
-  });
-
-  // Auto-bootstrap on first load
-  const hasAutoSynced = useRef(false);
-  useEffect(() => {
-    if (!token || !backendTrades || hasAutoSynced.current) return;
-    if (backendTrades.length === 0 && !triggerSync.isPending) {
-      hasAutoSynced.current = true;
-      triggerSync.mutate({ token });
-    }
-  }, [token, backendTrades]);
 
   const account = publicDemo?.account;
   const startingCapital = account ? parseFloat(account.startingCapital) : 10000;
@@ -619,12 +454,6 @@ export default function PublicDemo() {
                 Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
             )}
-            <Button variant="outline" size="sm" className="border-border text-foreground gap-1.5"
-              onClick={() => token && triggerSync.mutate({ token })}
-              disabled={triggerSync.isPending || !token}>
-              <RefreshCw className={`w-3.5 h-3.5 ${triggerSync.isPending ? "animate-spin" : ""}`} />
-              <span className="hidden sm:inline">{triggerSync.isPending ? "Syncing…" : "Sync"}</span>
-            </Button>
             <Button size="sm" className="btn-border-wrap bg-primary text-primary-foreground gap-1.5" asChild>
               <Link href="/register">
                 <span className="hidden sm:inline">Get Started Free →</span>
@@ -665,13 +494,13 @@ export default function PublicDemo() {
             color="text-primary" highlight={totalPnl > 0} />
           <StatCard
             icon={totalPnl >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-            label="Total P&L"
+            label="Modeled P&L"
             value={`${totalPnl >= 0 ? "+" : ""}$${Math.abs(totalPnl).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             sub={`${parseFloat(pnlPercent) >= 0 ? "+" : ""}${pnlPercent}%`}
             color={totalPnl >= 0 ? "text-green-400" : "text-red-400"} />
           <StatCard icon={<Zap className="w-5 h-5" />} label="Win Rate"
             value={closedTrades.length > 0 ? `${((winCount / closedTrades.length) * 100).toFixed(0)}%` : "—"}
-            sub={closedTrades.length > 0 ? `${winCount}W / ${closedTrades.length - winCount}L · ${closedTrades.length} trades` : "Sync to load"}
+            sub={closedTrades.length > 0 ? `${winCount}W / ${closedTrades.length - winCount}L · ${closedTrades.length} modeled trades` : "Unavailable"}
             color={winCount / closedTrades.length >= 0.5 ? "text-green-400" : "text-muted-foreground"} />
         </div>
 
@@ -695,14 +524,14 @@ export default function PublicDemo() {
                 color="text-primary" />
               <SummaryStatItem label="Max Drawdown"
                 value={summaryStats.maxDrawdownPct < 0.01 ? "<0.01%" : `-${summaryStats.maxDrawdownPct.toFixed(2)}%`}
-                sub={`Capital protected — ${posSize.toFixed(1)}% risk per entry`}
+                sub={`Historical scenario using ${posSize.toFixed(1)}% risk per entry`}
                 color="text-amber-400" />
               <SummaryStatItem label="Profit Factor"
                 value={summaryStats.profitFactor === null ? "∞" : summaryStats.profitFactor.toFixed(2) + "×"}
                 sub="Exceptional edge — wins dwarf losses" color="text-cyan-400" />
               <SummaryStatItem label="Best Trade"
                 value={`+${summaryStats.bestTrade.pnlPct.toFixed(2)}%`}
-                sub={`${summaryStats.bestTrade.pair} — one signal, real returns`}
+                sub={`${summaryStats.bestTrade.pair} — modeled historical scenario`}
                 color="text-amber-300" />
             </div>
           </div>
@@ -732,7 +561,7 @@ export default function PublicDemo() {
               <p className="text-xs text-muted-foreground mt-0.5">
                 {growthData.length > 1
                   ? `${growthData[0].label} → ${growthData[growthData.length - 1].label} · ${closedTrades.length} Tier A signals · ${posSize.toFixed(1)}% risk × ${leverage.toFixed(1)}× leverage`
-                  : "Click Sync to build your equity curve from historical Tier A signals"}
+                  : "Historical scenario data is unavailable"}
               </p>
             </div>
             <div className="text-right flex-shrink-0">
@@ -790,14 +619,9 @@ export default function PublicDemo() {
               <div>
                 <p className="text-sm font-medium text-foreground mb-1">Equity curve loading…</p>
                 <p className="text-xs text-muted-foreground max-w-xs">
-                  Click <strong>Sync</strong> to apply all historical Tier A signals to this account.
+                  Historical scenario data is currently unavailable.
                 </p>
               </div>
-              <Button size="sm" className="bg-primary text-primary-foreground"
-                onClick={() => token && triggerSync.mutate({ token })} disabled={triggerSync.isPending || !token}>
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${triggerSync.isPending ? "animate-spin" : ""}`} />
-                {triggerSync.isPending ? "Syncing signals…" : "Sync Historical Signals"}
-              </Button>
             </div>
           )}
         </div>
@@ -811,7 +635,7 @@ export default function PublicDemo() {
             <div>
               <h2 className="font-heading font-semibold text-foreground">Trade History</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Simulated from real Tier A signals · {posSize.toFixed(1)}% capital risk × {leverage.toFixed(1)}× leverage
+                Modeled historical scenario from recorded Tier A signals · {posSize.toFixed(1)}% capital risk × {leverage.toFixed(1)}× leverage
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -837,7 +661,7 @@ export default function PublicDemo() {
           {closedTrades.length === 0 ? (
             <div className="py-16 text-center">
               <Clock className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No trades yet — click Sync to load Tier A signal history</p>
+              <p className="text-sm text-muted-foreground">Historical scenario trades are unavailable</p>
             </div>
           ) : tradeView === "cards" ? (
             /* Mobile-first card grid */
@@ -852,14 +676,14 @@ export default function PublicDemo() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    {["Pair", "Tier", "Indicator", "TF", "Entry Price", "Exit Price", "Opened", "Closed", "Duration", "P&L", "Return"].map((h) => {
-                      const sortKey = h === "Duration" ? "duration" : h === "P&L" ? "pnl" : h === "Closed" ? "date" : null;
+                    {["Pair", "Tier", "Indicator", "TF", "Entry Price", "Exit Price", "Opened", "Closed", "Duration", "Modeled P&L", "Modeled Return"].map((h) => {
+                      const sortKey = h === "Duration" ? "duration" : h === "Modeled P&L" ? "pnl" : h === "Closed" ? "date" : null;
                       const isActive = sortKey && sortBy === sortKey;
                       return (
                         <th
                           key={h}
                           onClick={sortKey ? () => toggleSort(sortKey as typeof sortBy) : undefined}
-                          className={`py-3 px-3 text-xs font-medium select-none ${["Entry Price", "Exit Price", "Opened", "Closed", "Duration", "P&L", "Return"].includes(h) ? "text-right" : "text-left"} ${sortKey ? "cursor-pointer hover:text-foreground transition-colors" : ""} ${isActive ? "text-primary" : "text-muted-foreground"}`}
+                          className={`py-3 px-3 text-xs font-medium select-none ${["Entry Price", "Exit Price", "Opened", "Closed", "Duration", "Modeled P&L", "Modeled Return"].includes(h) ? "text-right" : "text-left"} ${sortKey ? "cursor-pointer hover:text-foreground transition-colors" : ""} ${isActive ? "text-primary" : "text-muted-foreground"}`}
                         >
                           {h}{isActive ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                         </th>
@@ -913,37 +737,6 @@ export default function PublicDemo() {
               </table>
             </div>
           )}
-        </div>
-
-        {/* Strategy Settings accordion */}
-        <div>
-          <button onClick={() => setSettingsOpen(!settingsOpen)}
-            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors mb-3 w-full">
-            <Settings2 className="w-4 h-4" />
-            Strategy Settings
-            <span className="text-xs text-muted-foreground/60 ml-1">
-              ({posSize.toFixed(1)}% risk · {leverage.toFixed(1)}× leverage · Tier {account?.strategyTier ?? "A"})
-            </span>
-            <span className="ml-auto">{settingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</span>
-          </button>
-          <AnimatePresence>
-            {settingsOpen && account && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}>
-                <SettingsPanel
-                  token={token}
-                  account={{
-                    positionSizePct: account.positionSizePct ?? "5.00",
-                    leverage: (account as any).leverage ?? "3.00",
-                    strategyTier: account.strategyTier ?? "A",
-                    pyramidingEnabled: account.pyramidingEnabled ?? false,
-                    pyramidMaxEntries: account.pyramidMaxEntries ?? 3,
-                    pyramidScalePct: account.pyramidScalePct ?? "0.50",
-                  }}
-                  onSaved={() => setSettingsOpen(false)}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
         {/* Leverage Disclaimer Banner */}

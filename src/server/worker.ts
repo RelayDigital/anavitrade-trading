@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { trpcServer } from "@hono/trpc-server";
+import { z } from "zod";
 import { appRouter } from "./routers";
 import { createContext } from "./context";
 import type { Env } from "./_core/env";
@@ -19,16 +19,32 @@ import { runPaperEngine, validatePaperOutcomes } from "./analysis/paper-trade";
 import { runMirror, compareWithCoinlegs } from "./analysis/mirror/engine";
 import { runAsterLiveProof } from "./aster/liveProof";
 import { verifyGlobalKill } from "./execution/riskEngine";
+import { claimExecutionJobs, LeaseConflictError, reportExecutionOutcome, type LeaseAction } from "./execution/lease";
+import { createWorkerSecurityMiddleware } from "./security/workerMiddleware";
+import { WorkerMetricsCollector, createMetricsEndpoint, createWorkerMetricsMiddleware } from "./observability/workerMetrics";
 
-const app = new Hono<{ Bindings: Env }>();
+const ADMIN_ROUTE_PREFIXES = [
+  "/api/analysis/", "/api/signals/backfill", "/api/signals/generate", "/api/scraper/",
+  "/api/backtest/", "/api/paper-trade/", "/api/mirror/", "/api/engine/",
+  "/api/outcome/validate", "/api/aster/live-proof", "/api/fee/",
+] as const;
+const metrics = new WorkerMetricsCollector({ knownRoutes: [
+  "/api/health", "/api/live", "/metrics", "/api/trpc/*", "/api/internal/risk-approved-jobs",
+  "/api/internal/report-execution", "/api/internal/pending-intents", "/api/internal/active-connections",
+  "/api/internal/kill-state", "/api/internal/seed-klines",
+] });
 
-// One-time startup flag — warns if ADMIN_API_KEY is missing on first request.
-let _adminKeyWarned = false;
+export const app = new Hono<{ Bindings: Env }>();
 
-app.use("/api/*", cors({
-  origin: ["http://localhost:5174", "http://127.0.0.1:5174", "https://anavitrade-trading.vercel.app"],
-  credentials: true,
-}));
+app.use("/*", createWorkerMetricsMiddleware(metrics));
+app.use("/*", async (c, next) => createWorkerSecurityMiddleware({
+  allowedOrigins: c.env.CORS_ALLOWED_ORIGINS ?? "",
+  production: c.env.APP_ENVIRONMENT === "production",
+  rateLimitBinding: c.env.RATE_LIMITER,
+  machineSecrets: { internal: c.env.INTERNAL_SECRET, admin: c.env.ADMIN_API_KEY },
+  adminRoutePrefixes: ADMIN_ROUTE_PREFIXES,
+  metrics,
+})(c, next));
 
 app.use("/api/trpc/*", trpcServer({
   router: appRouter,
@@ -36,26 +52,23 @@ app.use("/api/trpc/*", trpcServer({
   createContext: (opts, c) => createContext(c.env, opts, c),
 }));
 
-app.get("/api/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOString() }));
-
-/** Require admin API key on the request — caller passes it as x-admin-api-key header. */
-function requireAdminAuth(c: any, env: Env): Response | null {
-  const apiKey = c.req.header("x-admin-api-key") ?? "";
-  const expected = env.ADMIN_API_KEY ?? "";
-  if (!expected) {
-    if (!_adminKeyWarned) { _adminKeyWarned = true; console.warn("[startup] ADMIN_API_KEY is not set — admin endpoints will fail closed"); }
-    return c.json({ status: "error", message: "ADMIN_API_KEY not configured on server" }, 500);
+app.get("/api/live", (c) => c.json({ status: "ok" }));
+app.get("/api/health", async (c) => {
+  try {
+    const schema = await c.env.DB.prepare(
+      "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'execution_jobs' LIMIT 1",
+    ).first<{ ok: number }>();
+    if (!schema) return c.json({ status: "unavailable" }, 503);
+    await c.env.DB.prepare("SELECT leaseToken FROM execution_jobs LIMIT 1").first();
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  } catch {
+    return c.json({ status: "unavailable" }, 503);
   }
-  if (apiKey !== expected) {
-    return c.json({ status: "error", message: "Unauthorized" }, 401);
-  }
-  return null;
-}
+});
+app.get("/metrics", (c, next) => createMetricsEndpoint(metrics, { token: c.env.METRICS_TOKEN ?? "" })(c, next));
 
 /** Manual trigger — run full analysis engine (admin only). */
 app.post("/api/analysis/run", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await runAnalysisEngine();
@@ -104,8 +117,6 @@ app.get("/api/signals/compare", async (c) => {
 
 /** Trigger backfill of historical Coinlegs signals into analysis_signals (admin only). */
 app.post("/api/signals/backfill", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await backfillCoinlegsToAnalysisSignals();
@@ -117,8 +128,6 @@ app.post("/api/signals/backfill", async (c) => {
 
 /** Manual trigger — run coinlegs scraper + dispatch. */
 app.post("/api/scraper/run", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await runCoinlegsScraper();
@@ -130,8 +139,6 @@ app.post("/api/scraper/run", async (c) => {
 
 /** Manual trigger — self-hosted native signal generator (no coinlegs dependency). */
 app.post("/api/signals/generate", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await generateSignals();
@@ -144,8 +151,6 @@ app.post("/api/signals/generate", async (c) => {
 /** Backfill historical signals — paginate the coinlegs API across a date range
  *  for market intelligence and outcome validation. */
 app.post("/api/scraper/backfill", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const body = await c.req.json().catch(() => ({}));
@@ -173,7 +178,13 @@ app.post("/api/scraper/backfill", async (c) => {
       }
       const j = await res.json() as any;
       const signals = j?.Data?.Signals ?? j?.signals ?? [];
-      const inserted = await runCoinlegsScraper(); // reuse the insert + score pipeline
+      // Persist the exact historical page that was fetched. Historical rows are
+      // scored/bridged but never dispatched to execution.
+      const inserted = await runCoinlegsScraper({
+        signals: Array.isArray(signals) ? signals : [],
+        source: `backfill:${page}`,
+        dispatch: false,
+      });
       results.push({ page, fetched: signals.length, dataKeys: Object.keys(j?.Data ?? {}), inserted: inserted.signalsInserted });
     }
     return c.json({ backfill: { startDate, endDate, pages, results } });
@@ -186,8 +197,6 @@ app.post("/api/scraper/backfill", async (c) => {
 
 /** Run a backtest on historical kline data (admin only). */
 app.post("/api/backtest/run", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const body = await c.req.json();
@@ -201,8 +210,6 @@ app.post("/api/backtest/run", async (c) => {
 
 /** Run a parameter sweep (admin only, may be slow). */
 app.post("/api/backtest/sweep", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const body = await c.req.json();
@@ -217,8 +224,6 @@ app.post("/api/backtest/sweep", async (c) => {
 
 /** Compare ICR vs baseline MA crossover strategy (admin only). */
 app.get("/api/backtest/compare", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const symbol = c.req.query("symbol") ?? "BTCUSDT";
@@ -233,8 +238,6 @@ app.get("/api/backtest/compare", async (c) => {
 
 /** Run engine in paper-trading mode — records signals with dispatched=0 (admin only). */
 app.post("/api/paper-trade/run", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await runPaperEngine();
@@ -246,8 +249,6 @@ app.post("/api/paper-trade/run", async (c) => {
 
 /** Validate paper trade outcomes against actual Binance klines (admin only). */
 app.get("/api/paper-trade/outcomes", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const trackHours = Number(c.req.query("trackHours") ?? 24);
@@ -273,8 +274,6 @@ app.get("/api/paper-trade/outcomes", async (c) => {
  * Admin-only.
  */
 app.post("/api/mirror/run", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const q = c.req.query();
@@ -365,8 +364,6 @@ app.post("/api/mirror/run", async (c) => {
  * Admin-only.
  */
 app.get("/api/mirror/compare", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const since = c.req.query("since") ? Number(c.req.query("since")) : undefined;
@@ -402,8 +399,6 @@ app.get("/api/mirror/compare", async (c) => {
 
 /** Engine health and aggregate stats (admin only). */
 app.get("/api/engine/stats", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const stats = await getSignalStats();
@@ -420,8 +415,6 @@ app.get("/api/engine/stats", async (c) => {
 
 /** Manual trigger — validate signal outcomes against Binance klines. */
 app.post("/api/outcome/validate", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const result = await validateSignalOutcomes();
@@ -445,8 +438,6 @@ app.get("/api/outcome/stats", async (c) => {
 
 /** Guarded real Aster proof: tiny non-marketable LIMIT order followed by cancel. */
 app.post("/api/aster/live-proof", async (c) => {
-  const authErr = requireAdminAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const body = await c.req.json().catch(() => ({}));
@@ -468,13 +459,6 @@ app.post("/api/aster/live-proof", async (c) => {
 
 /** Protected admin endpoint – manually trigger fee crystallization. */
 app.post("/api/fee/crystallize", async (c) => {
-  const apiKey = c.req.header("x-admin-api-key") ?? "";
-  const expected = c.env.ADMIN_API_KEY ?? "";
-
-  if (!expected || apiKey !== expected) {
-    return c.json({ status: "error", message: "Unauthorized" }, 401);
-  }
-
   try {
     setDbEnv(c.env);
     const result = await crystallizeFees();
@@ -491,18 +475,8 @@ app.post("/api/fee/crystallize", async (c) => {
  * reports execution results back.  Credentials are stored encrypted at rest
  * and decrypted ONLY on the VPS.  */
 
-function requireInternalAuth(c: any, env: Env): Response | null {
-  const secret = c.req.header("x-internal-secret") ?? "";
-  const expected = env.INTERNAL_SECRET ?? "";
-  if (!expected) return c.json({ status: "error", message: "INTERNAL_SECRET not configured" }, 500);
-  if (secret !== expected) return c.json({ status: "error", message: "Unauthorized" }, 401);
-  return null;
-}
-
 /** Return pending TradeIntents (status = "created") -- VPS polls this. */
 app.get("/api/internal/pending-intents", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const { getDb } = await import("./db");
@@ -514,67 +488,53 @@ app.get("/api/internal/pending-intents", async (c) => {
 });
 
 /**
- * Return risk-approved CEX execution_jobs that are queued and ready for VPS execution.
- * Joins with cexConnections (encrypted credentials) and tradeIntents (stopLoss, takeProfit, etc.)
- * so the VPS has everything it needs without separate API calls.
- *
- * This is the primary VPS poll endpoint — it replaces polling raw pending-intents.
- * Every job returned here has already passed decideExecution() on the Worker.
+ * Claim risk-approved CEX execution jobs before returning them to the VPS. The
+ * lease prevents a second poller from receiving the same job concurrently.
  */
 app.get("/api/internal/risk-approved-jobs", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
-    setDbEnv(c.env);
-    const { getDb } = await import("./db");
-    const { executionJobs, cexConnections, tradeIntents } = await import("../drizzle/schema");
-    const { and, eq } = await import("drizzle-orm");
-    const db = getDb();
+    const actionValue = c.req.query("action") ?? "submit";
+    if (actionValue !== "submit" && actionValue !== "reconcile") {
+      return c.json({ status: "error", code: "invalid_lease_action" }, 400);
+    }
+    const action = actionValue as LeaseAction;
+    const owner = c.env.EXECUTION_LEASE_OWNER?.trim() || "anavitrade-worker";
+    const token = crypto.randomUUID();
+    const claimed = await claimExecutionJobs(c.env.DB, { owner, action, token });
+    if (claimed.length === 0) return c.json({ jobs: [] });
 
-    const jobs = await db.select({
-      jobId: executionJobs.id,
-      tradeIntentId: executionJobs.tradeIntentId,
-      userId: executionJobs.userId,
-      cexConnectionId: executionJobs.cexConnectionId,
-      symbol: executionJobs.symbol,
-      side: executionJobs.side,
-      orderType: executionJobs.orderType,
-      notionalUsd: executionJobs.notionalUsd,
-      quantity: executionJobs.quantity,
-      leverage: executionJobs.leverage,
-      limitPrice: executionJobs.limitPrice,
-      idempotencyKey: executionJobs.idempotencyKey,
-      // Connection fields for VPS credential decryption
-      connId: cexConnections.id,
-      connExchange: cexConnections.exchange,
-      connEncryptedApiKey: cexConnections.encryptedApiKey,
-      connEncryptedApiSecret: cexConnections.encryptedApiSecret,
-      connEncryptedPassphrase: cexConnections.encryptedPassphrase,
-      connKillSwitchActive: cexConnections.killSwitchActive,
-      connLabel: cexConnections.label,
-      // Intent fields for protective orders
-      intentStopLossPrice: tradeIntents.stopLossPrice,
-      intentTakeProfitPrice: tradeIntents.takeProfitPrice,
-      intentTargetLeverage: tradeIntents.targetLeverage,
-    })
-      .from(executionJobs)
-      .innerJoin(cexConnections, eq(executionJobs.cexConnectionId, cexConnections.id))
-      .innerJoin(tradeIntents, eq(executionJobs.tradeIntentId, tradeIntents.id))
-      .where(and(
-        eq(executionJobs.provider, "cex"),
-        eq(executionJobs.status, "queued"),
-        eq(executionJobs.riskApproved, true),
-      ))
-      .limit(50);
-
-    return c.json({ jobs });
-  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+    const jobIds = claimed.map((job) => job.id);
+    const placeholders = jobIds.map(() => "?").join(", ");
+    const result = await c.env.DB.prepare(`
+      SELECT execution_jobs.id AS jobId, execution_jobs.tradeIntentId, execution_jobs.userId,
+        execution_jobs.cexConnectionId, execution_jobs.symbol, execution_jobs.side,
+        execution_jobs.orderType, execution_jobs.notionalUsd, execution_jobs.quantity,
+        execution_jobs.leverage, execution_jobs.limitPrice, execution_jobs.idempotencyKey,
+        execution_jobs.orderId, execution_jobs.leaseToken, execution_jobs.leaseAttempt,
+        execution_jobs.leaseExpiresAt, execution_jobs.leaseAction,
+        cex_connections.id AS connId, cex_connections.exchange AS connExchange,
+        cex_connections.encryptedApiKey AS connEncryptedApiKey,
+        cex_connections.encryptedApiSecret AS connEncryptedApiSecret,
+        cex_connections.encryptedPassphrase AS connEncryptedPassphrase,
+        cex_connections.killSwitchActive AS connKillSwitchActive, cex_connections.label AS connLabel,
+        trade_intents.stopLossPrice AS intentStopLossPrice,
+        trade_intents.takeProfitPrice AS intentTakeProfitPrice,
+        trade_intents.targetLeverage AS intentTargetLeverage
+      FROM execution_jobs
+      INNER JOIN cex_connections ON execution_jobs.cexConnectionId = cex_connections.id
+      INNER JOIN trade_intents ON execution_jobs.tradeIntentId = trade_intents.id
+      WHERE execution_jobs.id IN (${placeholders}) AND execution_jobs.leaseToken = ?
+        AND execution_jobs.leaseOwner = ? AND execution_jobs.leaseAction = ?
+      ORDER BY execution_jobs.queuedAt ASC, execution_jobs.id ASC
+    `).bind(...jobIds, token, owner, action).all<Record<string, unknown>>();
+    return c.json({ jobs: result.results ?? [] });
+  } catch {
+    return c.json({ status: "error", code: "execution_claim_unavailable" }, 500);
+  }
 });
 
 /** Active CEX connections with encrypted credentials (VPS decrypts locally). */
 app.get("/api/internal/active-connections", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const { getDb } = await import("./db");
@@ -593,8 +553,6 @@ app.get("/api/internal/active-connections", async (c) => {
 
 /** Kill switch state — reads global kill from DB (survives Worker restarts). */
 app.get("/api/internal/kill-state", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const { getDb } = await import("./db");
@@ -609,54 +567,56 @@ app.get("/api/internal/kill-state", async (c) => {
   } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
 });
 
-/** VPS reports execution result -- Worker writes execution_jobs + orderEvents + audit. */
+const executionReportBase = z.object({
+  reportId: z.string().min(1),
+  jobId: z.number().int().positive(),
+  leaseToken: z.string().min(1),
+  leaseAttempt: z.number().int().positive(),
+  stopLossOrderId: z.string().min(1).optional(),
+  takeProfitOrderId: z.string().min(1).optional(),
+  compensationState: z.enum(["completed", "failed"]).optional(),
+  compensationOrderId: z.string().min(1).optional(),
+});
+const executionReportSchema = z.discriminatedUnion("status", [
+  executionReportBase.extend({ status: z.literal("submitted"), orderId: z.string().min(1), errorCode: z.never().optional() }).strict(),
+  executionReportBase.extend({ status: z.literal("filled"), orderId: z.string().min(1), errorCode: z.never().optional() }).strict(),
+  executionReportBase.extend({ status: z.literal("protection_pending"), orderId: z.string().min(1), errorCode: z.never().optional() }).strict(),
+  executionReportBase.extend({
+    status: z.literal("protected"),
+    orderId: z.string().min(1),
+    errorCode: z.never().optional(),
+    stopLossOrderId: z.string().min(1),
+    takeProfitOrderId: z.string().min(1),
+  }).strict(),
+  executionReportBase.extend({ status: z.literal("failed"), orderId: z.string().min(1).optional(), errorCode: z.string().min(1) }).strict(),
+  executionReportBase.extend({ status: z.literal("cancelled"), orderId: z.string().min(1).optional(), errorCode: z.string().min(1).optional() }).strict(),
+  executionReportBase.extend({ status: z.literal("unresolved"), orderId: z.string().min(1).optional(), errorCode: z.string().min(1) }).strict(),
+]);
+
+/** VPS reports a result only for an active execution lease. */
 app.post("/api/internal/report-execution", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
-    setDbEnv(c.env);
-    const body = await c.req.json();
-    const { getDb, writeAuditLog } = await import("./db");
-    const { executionJobs, orderEvents } = await import("../drizzle/schema");
-    const { eq } = await import("drizzle-orm");
-    const db = getDb();
-    const now = Date.now();
-
-    const [existing] = await db.select().from(executionJobs).where(eq(executionJobs.idempotencyKey, body.idempotencyKey)).limit(1);
-    let jobId: number;
-    if (existing) {
-      jobId = existing.id;
-      await db.update(executionJobs).set({
-        status: body.status, orderId: body.orderId ?? null, errorMessage: body.errorMessage ?? null,
-        submittedAt: body.status !== "queued" ? now : existing.submittedAt,
-        filledAt: body.status === "filled" ? now : existing.filledAt, updatedAt: now,
-      } as any).where(eq(executionJobs.id, jobId));
-    } else {
-      const [inserted] = await db.insert(executionJobs).values({
-        tradeIntentId: body.tradeIntentId, userId: body.userId, cexConnectionId: body.cexConnectionId,
-        provider: body.provider, symbol: body.symbol, side: body.side,
-        orderType: body.orderType ?? "market", notionalUsd: body.notionalUsd ?? null,
-        quantity: body.quantity ?? null, leverage: body.leverage ?? null, limitPrice: body.limitPrice ?? null,
-        status: body.status, idempotencyKey: body.idempotencyKey, queuedAt: now,
-        submittedAt: body.status !== "queued" ? now : undefined,
-        filledAt: body.status === "filled" ? now : undefined,
-      } as any).returning({ id: executionJobs.id });
-      jobId = inserted.id;
+    const body = await c.req.json().catch(() => undefined);
+    const parsed = executionReportSchema.safeParse(body);
+    if (!parsed.success) return c.json({ status: "error", code: "invalid_execution_report" }, 400);
+    const report = await reportExecutionOutcome(c.env.DB, parsed.data);
+    metrics.recordExecutionReport("success");
+    if (parsed.data.status === "failed" || parsed.data.status === "unresolved") {
+      metrics.recordExecutionFailure(parsed.data.errorCode ?? "unknown");
     }
-
-    await db.insert(orderEvents).values({
-      executionJobId: jobId, provider: body.provider, eventType: body.status,
-      exchangeOrderId: body.orderId ?? null, payloadJson: JSON.stringify(body), occurredAt: now,
-    } as any);
-    await writeAuditLog(body.userId, `EXECUTION_${body.status.toUpperCase()}`, body.symbol);
-    return c.json({ status: "ok", jobId });
-  } catch (e: any) { return c.json({ status: "error", message: e?.message }, 500); }
+    return c.json(report);
+  } catch (error) {
+    if (error instanceof LeaseConflictError) {
+      metrics.recordExecutionReport("rejected");
+      return c.json({ status: "error", code: "execution_lease_conflict" }, 409);
+    }
+    metrics.recordExecutionReport("failure");
+    return c.json({ status: "error", code: "execution_report_unavailable" }, 500);
+  }
 });
 
 /** VPS pushes klines — bypasses Cloudflare geo-block by fetching locally */
 app.post("/api/internal/seed-klines", async (c) => {
-  const authErr = requireInternalAuth(c, c.env);
-  if (authErr) return authErr;
   try {
     setDbEnv(c.env);
     const body = await c.req.json();

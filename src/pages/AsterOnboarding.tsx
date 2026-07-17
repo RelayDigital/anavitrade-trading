@@ -237,7 +237,7 @@ export default function AsterOnboarding() {
           className="flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground/50"
         >
           <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> No withdrawal access</span>
-          <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Under 50ms execution</span>
+          <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Direct onchain execution</span>
           <span className="flex items-center gap-1.5"><ExternalLink className="w-3.5 h-3.5" /> Powered by Aster</span>
         </motion.div>
       </div>

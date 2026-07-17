@@ -27,9 +27,7 @@ export default function Login() {
     },
     onError: (e) => {
       const msg = e.message ?? "";
-      if (msg.toLowerCase().includes("verify") || msg.toLowerCase().includes("email")) {
-        setError("Please verify your email address before signing in. Check your inbox for the verification link.");
-      } else if (msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("credentials")) {
+      if (msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("credentials")) {
         setError("Invalid email or password. Please try again.");
       } else {
         setError("Login failed. Please try again.");

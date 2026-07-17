@@ -22,9 +22,9 @@ export default function PricingSection() {
         "Live Buy / Sell / Hold signal feed",
         "5 technical indicators (Stochastic, MACD, CCI, Ichimoku, Trend Reversal)",
         "All timeframes: 5m → 1W",
-        "Aster-routable USDT pairs (35,000+ signals/week)",
+        "Aster-routable USDT pairs returned by the configured signal provider",
         "Filter by signal type, timeframe, and pair",
-        "Real-time dashboard with portfolio overview",
+        "Dashboard with portfolio overview",
         "Email alerts (coming soon)",
       ],
       cta: "Get Started Free",
@@ -33,25 +33,25 @@ export default function PricingSection() {
     },
     {
       id: "automated",
-      label: "Automated Trades",
+      label: "Connected Execution",
       icon: <Bot className="w-6 h-6" />,
-      tagline: "Full execution — the engine trades for you",
+      tagline: "User-enabled execution on supported connections",
       price: "Contact Us",
       priceSub: "for access",
       highlight: true,
       gold: true,
       features: [
         "Everything in Signal Delivery",
-        "Automatic trade execution on your exchange",
+        "Order routing where supported and explicitly enabled",
         "Trade-only API key or Ledger hardware wallet",
-        "Position sizing, stop-loss & take-profit management",
+        "Configurable position sizing and supported exit-order controls",
         "Kill switch — pause execution instantly",
         "Aster DEX integration with wallet self-custody",
         "Priority support & onboarding",
       ],
       cta: "Request Access",
       ctaHref: "/register",
-      note: "Your funds never leave your exchange. Zero-custody architecture.",
+      note: "Use trade-only credentials and verify connection permissions before enabling execution.",
     },
   ];
 
@@ -71,7 +71,7 @@ export default function PricingSection() {
             Choose How You Trade
           </motion.h2>
           <motion.p variants={fadeUp} transition={{ duration: 0.6 }} className="text-muted-foreground max-w-lg mx-auto">
-            Start with signals and act manually. Upgrade to full automation when you're ready to let the engine execute for you.
+            Start with signals and act manually. Connected execution is available only for supported, explicitly enabled configurations.
           </motion.p>
         </motion.div>
 

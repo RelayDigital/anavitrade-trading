@@ -1,11 +1,14 @@
 import { binanceSignedQuery, hmacSha256Hex } from "./signing";
 import type {
-  CexBalance, CexClient, CexCredentials, CexOrderRequest, CexOrderResult,
-  CexPermissionCheck, CexPosition,
+  CexBalance, CexClient, CexCredentials, CexExactOrder, CexOrderRequest, CexOrderResult,
+  CexProtectionFailureOutcome,
+  CexPermissionCheck, CexPosition, CexTransport, ExchangeEnvironment,
 } from "./clientTypes";
+import {
+  CexProtectionError, type CexProtectionLegOutcome, validateCexOrderRequest,
+} from "./clientTypes";
+import { resolveExchangeEndpoint } from "./registry";
 
-const FAPI_PROD = "https://fapi.binance.com";
-const FAPI_TEST = "https://testnet.binancefuture.com";
 const SAPI_PROD = "https://api.binance.com"; // key-permission introspection lives on spot host
 
 const RECV_WINDOW = 5000;
@@ -19,11 +22,19 @@ export class BinanceFuturesClient implements CexClient {
   private readonly key: string;
   private readonly secret: string;
   private readonly fapi: string;
+  private readonly environment: ExchangeEnvironment;
+  private readonly transport: CexTransport;
 
-  constructor(creds: CexCredentials) {
+  constructor(
+    creds: CexCredentials,
+    transport: CexTransport = fetch,
+    endpoint?: string,
+  ) {
     this.key = creds.apiKey;
     this.secret = creds.apiSecret;
-    this.fapi = creds.testnet ? FAPI_TEST : FAPI_PROD;
+    this.environment = creds.environment ?? (creds.testnet ? "testnet" : "production");
+    this.fapi = endpoint ?? resolveExchangeEndpoint("binance", this.environment);
+    this.transport = transport;
   }
 
   private headers() {
@@ -34,7 +45,7 @@ export class BinanceFuturesClient implements CexClient {
     const query = await binanceSignedQuery(this.secret, {
       ...params, timestamp: Date.now(), recvWindow: RECV_WINDOW,
     });
-    const res = await fetch(`${base}${path}?${query}`, { headers: this.headers() });
+    const res = await this.transport(`${base}${path}?${query}`, { headers: this.headers() });
     const text = await res.text();
     if (!res.ok) throw new Error(`BINANCE_${res.status}:${text.slice(0, 300)}`);
     return text ? JSON.parse(text) : {};
@@ -44,10 +55,70 @@ export class BinanceFuturesClient implements CexClient {
     const query = await binanceSignedQuery(this.secret, {
       ...params, timestamp: Date.now(), recvWindow: RECV_WINDOW,
     });
-    const res = await fetch(`${this.fapi}${path}?${query}`, { method: "POST", headers: this.headers() });
+    const res = await this.transport(`${this.fapi}${path}?${query}`, { method: "POST", headers: this.headers() });
     const text = await res.text();
     if (!res.ok) throw new Error(`BINANCE_${res.status}:${text.slice(0, 300)}`);
     return text ? JSON.parse(text) : {};
+  }
+
+  private async signedDelete(path: string, params: Record<string, string | number> = {}) {
+    const query = await binanceSignedQuery(this.secret, {
+      ...params, timestamp: Date.now(), recvWindow: RECV_WINDOW,
+    });
+    const res = await this.transport(`${this.fapi}${path}?${query}`, { method: "DELETE", headers: this.headers() });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`BINANCE_${res.status}:${text.slice(0, 300)}`);
+    return text ? JSON.parse(text) : {};
+  }
+
+  private async compensateProtectionFailure(input: {
+    order: CexOrderRequest;
+    exitSide: "BUY" | "SELL";
+    acceptedProtectionOrderId?: string;
+  }): Promise<CexProtectionFailureOutcome["compensation"]> {
+    let emergencyClose: CexProtectionLegOutcome = { status: "not_attempted" };
+    let protectionCleanup: CexProtectionLegOutcome = { status: "not_attempted" };
+
+    try {
+      const response = await this.signedPost("/fapi/v1/order", {
+        symbol: input.order.symbol,
+        side: input.exitSide,
+        type: "MARKET",
+        quantity: input.order.quantity,
+        reduceOnly: "true",
+        newOrderRespType: "RESULT",
+      });
+      const orderId = String(response.orderId ?? response.clientOrderId ?? "");
+      if (!orderId) throw new Error("BINANCE_COMPENSATION_ORDER_ID_MISSING");
+      if (String(response.status ?? "").toUpperCase() !== "FILLED") {
+        throw new Error(`BINANCE_COMPENSATION_NOT_FILLED:${String(response.status ?? "unknown").slice(0, 32)}`);
+      }
+      emergencyClose = { status: "accepted", orderId };
+    } catch (error) {
+      emergencyClose = { status: "failed", error: error instanceof Error ? error.message : String(error) };
+    }
+
+    if (input.acceptedProtectionOrderId) {
+      try {
+        const response = await this.signedDelete("/fapi/v1/order", {
+          symbol: input.order.symbol,
+          orderId: input.acceptedProtectionOrderId,
+        });
+        const orderId = String(response.orderId ?? response.clientOrderId ?? input.acceptedProtectionOrderId);
+        protectionCleanup = { status: "accepted", orderId };
+      } catch (error) {
+        protectionCleanup = { status: "failed", error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+
+    const closeCompleted = emergencyClose.status === "accepted";
+    const cleanupCompleted = protectionCleanup.status !== "failed";
+    return {
+      state: closeCompleted && cleanupCompleted ? "completed" : "failed",
+      reason: "entry_accepted_without_complete_protection",
+      emergencyClose,
+      protectionCleanup,
+    };
   }
 
   async validateAndReadBalance(): Promise<CexBalance> {
@@ -84,37 +155,88 @@ export class BinanceFuturesClient implements CexClient {
   }
 
   async placeOrder(req: CexOrderRequest): Promise<CexOrderResult> {
-    if (req.leverage) {
-      try { await this.setLeverage(req.symbol, req.leverage); } catch { /* non-fatal */ }
+    const order = validateCexOrderRequest(req);
+    if (order.leverage) {
+      try { await this.setLeverage(order.symbol, order.leverage); } catch { /* non-fatal */ }
     }
     // Entry order
     const entry = await this.signedPost("/fapi/v1/order", {
-      symbol: req.symbol,
-      side: req.side,
-      type: req.type,
-      quantity: req.quantity,
-      ...(req.type === "LIMIT" ? { price: req.price ?? "", timeInForce: "GTC" } : {}),
-      ...(req.reduceOnly ? { reduceOnly: "true" } : {}),
-      ...(req.clientOrderId ? { newClientOrderId: req.clientOrderId } : {}),
+      symbol: order.symbol,
+      side: order.side,
+      type: order.type,
+      quantity: order.quantity,
+      ...(order.type === "LIMIT" ? { price: order.price ?? "", timeInForce: "GTC" } : {}),
+      ...(order.reduceOnly ? { reduceOnly: "true" } : {}),
+      ...(order.clientOrderId ? { newClientOrderId: order.clientOrderId } : {}),
+      newOrderRespType: "RESULT",
     });
 
     // Reduce-only exits (separate orders — Binance can't attach SL/TP to entry)
-    const exitSide = req.side === "BUY" ? "SELL" : "BUY";
-    if (req.stopLossPrice) {
-      await this.signedPost("/fapi/v1/order", {
-        symbol: req.symbol, side: exitSide, type: "STOP_MARKET",
-        stopPrice: req.stopLossPrice, closePosition: "true",
-      }).catch(() => undefined);
+    const entryOrderId = String(entry.orderId ?? entry.clientOrderId ?? "");
+    const exitSide = order.side === "BUY" ? "SELL" : "BUY";
+    let stopLoss: CexProtectionLegOutcome = { status: "not_attempted" };
+    let takeProfit: CexProtectionLegOutcome = { status: "not_attempted" };
+    let stopResponse: any;
+    let takeProfitResponse: any;
+    try {
+      stopResponse = await this.signedPost("/fapi/v1/order", {
+        symbol: order.symbol, side: exitSide, type: "STOP_MARKET",
+        stopPrice: order.stopLossPrice!, closePosition: "true",
+      });
+      const orderId = String(stopResponse.orderId ?? stopResponse.clientOrderId ?? "");
+      if (!orderId) throw new Error("BINANCE_PROTECTION_ORDER_ID_MISSING:stop_loss");
+      stopLoss = { status: "accepted", orderId };
+    } catch (error) {
+      stopLoss = {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+      const compensation = await this.compensateProtectionFailure({ order, exitSide });
+      throw new CexProtectionError({
+        entryOrderId,
+        status: "protection_failed",
+        protection: { strategy: "separate-orders", stopLoss, takeProfit },
+        compensation,
+      });
     }
-    if (req.takeProfitPrice) {
-      await this.signedPost("/fapi/v1/order", {
-        symbol: req.symbol, side: exitSide, type: "TAKE_PROFIT_MARKET",
-        stopPrice: req.takeProfitPrice, closePosition: "true",
-      }).catch(() => undefined);
+    try {
+      takeProfitResponse = await this.signedPost("/fapi/v1/order", {
+        symbol: order.symbol, side: exitSide, type: "TAKE_PROFIT_MARKET",
+        stopPrice: order.takeProfitPrice!, closePosition: "true",
+      });
+      const orderId = String(takeProfitResponse.orderId ?? takeProfitResponse.clientOrderId ?? "");
+      if (!orderId) throw new Error("BINANCE_PROTECTION_ORDER_ID_MISSING:take_profit");
+      takeProfit = { status: "accepted", orderId };
+    } catch (error) {
+      takeProfit = {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+      const compensation = await this.compensateProtectionFailure({
+        order,
+        exitSide,
+        acceptedProtectionOrderId: stopLoss.status === "accepted" ? stopLoss.orderId : undefined,
+      });
+      throw new CexProtectionError({
+        entryOrderId,
+        status: "protection_failed",
+        protection: { strategy: "separate-orders", stopLoss, takeProfit },
+        compensation,
+      });
     }
 
     const status = entry.status === "FILLED" ? "filled" : "accepted";
-    return { orderId: String(entry.orderId ?? entry.clientOrderId ?? ""), status, raw: entry };
+    return {
+      orderId: entryOrderId,
+      status,
+      protection: {
+        status: "protected",
+        strategy: "separate-orders",
+        stopLossOrderId: stopLoss.status === "accepted" ? stopLoss.orderId : "",
+        takeProfitOrderId: takeProfit.status === "accepted" ? takeProfit.orderId : "",
+      },
+      raw: { entry, stopLoss: stopResponse, takeProfit: takeProfitResponse },
+    };
   }
 
   async getPositions(symbol?: string): Promise<CexPosition[]> {
@@ -129,6 +251,30 @@ export class BinanceFuturesClient implements CexClient {
         unrealizedPnlUsd: Number(p.unRealizedProfit ?? p.unrealizedProfit ?? 0),
       }))
       .filter((p: CexPosition) => p.sizeSigned !== 0);
+  }
+
+  private exactOrder(value: any): CexExactOrder | null {
+    if (!value || typeof value !== "object") return null;
+    const orderId = String(value.orderId ?? "");
+    const clientOrderId = String(value.clientOrderId ?? value.origClientOrderId ?? "");
+    if (!orderId && !clientOrderId) return null;
+    return {
+      orderId: orderId || undefined,
+      clientOrderId: clientOrderId || undefined,
+      status: typeof value.status === "string" ? value.status.toUpperCase() : undefined,
+      raw: value,
+    };
+  }
+
+  async getOrderById(symbol: string, orderId: string): Promise<CexExactOrder | null> {
+    return this.exactOrder(await this.signedGet(this.fapi, "/fapi/v1/order", { symbol, orderId }));
+  }
+
+  async getOrderByClientId(symbol: string, clientOrderId: string): Promise<CexExactOrder | null> {
+    return this.exactOrder(await this.signedGet(this.fapi, "/fapi/v1/order", {
+      symbol,
+      origClientOrderId: clientOrderId,
+    }));
   }
 }
 

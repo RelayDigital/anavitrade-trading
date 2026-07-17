@@ -1,9 +1,9 @@
-FROM node:22-alpine AS runtime
+FROM node:22.17.0-alpine3.22 AS runtime
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@9 --activate
+RUN corepack enable && corepack prepare pnpm@10.8.0 --activate
 
 # Copy package manifest and install all deps (--prod for runtime, but keep TypeScript dev for --experimental-transform-types)
 COPY package.json pnpm-lock.yaml ./

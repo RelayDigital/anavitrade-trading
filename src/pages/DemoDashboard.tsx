@@ -13,6 +13,7 @@ import {
   ChevronDown, ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatSignedPercent, UNAVAILABLE } from "@/components/performancePresentation";
 
 // ── Trade duration helper ─────────────────────────────────────────────────
 function fmtDuration(openedAt: Date | null, closedAt: Date | null): string {
@@ -296,14 +297,14 @@ export default function DemoDashboard() {
           />
           <StatCard
             icon={<Activity className="w-5 h-5" />}
-            label="Current Balance"
+            label="Modeled Balance"
             value={`$${currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             color="text-primary"
             highlight={totalPnl > 0}
           />
           <StatCard
             icon={totalPnl >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-            label="Total P&L"
+            label="Modeled P&L"
             value={`${totalPnl >= 0 ? "+" : ""}$${Math.abs(totalPnl).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             sub={`${parseFloat(pnlPercent) >= 0 ? "+" : ""}${pnlPercent}%`}
             color={totalPnl >= 0 ? "text-green-400" : "text-red-400"}
@@ -350,7 +351,7 @@ export default function DemoDashboard() {
               <SummaryStatItem
                 label="Max Drawdown"
                 value={summaryStats.maxDrawdownPct < 0.01 ? "<0.01%" : `-${summaryStats.maxDrawdownPct.toFixed(2)}%`}
-                sub="Capital protected — risk is capped at 0.5% per entry"
+                sub="Historical scenario using 0.5% sizing per entry"
                 positive={summaryStats.maxDrawdownPct < 2}
                 negative={summaryStats.maxDrawdownPct >= 2}
               />
@@ -363,7 +364,7 @@ export default function DemoDashboard() {
               <SummaryStatItem
                 label="Best Trade"
                 value={`+${summaryStats.bestTrade.pnlPct.toFixed(2)}%`}
-                sub={`${summaryStats.bestTrade.pair} — one signal, real returns`}
+                sub={`${summaryStats.bestTrade.pair} — modeled historical scenario`}
                 positive
               />
             </div>
@@ -506,7 +507,7 @@ export default function DemoDashboard() {
             <div>
               <h3 className="font-heading font-semibold text-foreground">Trade History</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Simulated trades from real Tier A + B signals · 0.5% position size per entry
+                Modeled historical trades from recorded Tier A + B signals · 0.5% position size per entry
               </p>
             </div>
             <div className="flex gap-1">
@@ -553,8 +554,8 @@ export default function DemoDashboard() {
                     <th className="text-left py-3 px-2 text-muted-foreground font-medium">Tier</th>
                     <th className="text-right py-3 px-2 text-muted-foreground font-medium">Entry</th>
                     <th className="text-right py-3 px-2 text-muted-foreground font-medium">Exit</th>
-                    <th className="text-right py-3 px-2 text-muted-foreground font-medium">P&L</th>
-                    <th className="text-right py-3 px-2 text-muted-foreground font-medium">Return</th>
+                    <th className="text-right py-3 px-2 text-muted-foreground font-medium">Modeled P&L</th>
+                    <th className="text-right py-3 px-2 text-muted-foreground font-medium">Modeled Return</th>
                     <th className="text-right py-3 px-2 text-muted-foreground font-medium">Opened</th>
                     <th className="text-right py-3 px-2 text-muted-foreground font-medium">Closed</th>
                     <th className="text-right py-3 px-2 text-muted-foreground font-medium">Duration</th>
@@ -712,7 +713,7 @@ function LiveSignalFeed({ token }: { token: string }) {
               <th className="text-left py-2 px-2 text-muted-foreground font-medium">TF</th>
               <th className="text-left py-2 px-2 text-muted-foreground font-medium">Tier</th>
               <th className="text-right py-2 px-2 text-muted-foreground font-medium">Price</th>
-              <th className="text-right py-2 px-2 text-muted-foreground font-medium">Max Profit</th>
+              <th className="text-right py-2 px-2 text-muted-foreground font-medium">Reported Favorable Move</th>
               <th className="text-right py-2 px-2 text-muted-foreground font-medium">Score</th>
               <th className="text-right py-2 px-2 text-muted-foreground font-medium">Date</th>
             </tr>
@@ -734,10 +735,10 @@ function LiveSignalFeed({ token }: { token: string }) {
                   ${parseFloat(s.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
                 </td>
                 <td className="py-2.5 px-2 text-right text-xs font-medium primary">
-                  {s.maxProfit ? `+${parseFloat(s.maxProfit).toFixed(2)}%` : "—"}
+                  {formatSignedPercent(s.maxProfit, 2)}
                 </td>
                 <td className="py-2.5 px-2 text-right text-xs text-muted-foreground">
-                  {s.qualityScore != null ? s.qualityScore.toFixed(1) : "—"}
+                  {s.qualityScore != null ? s.qualityScore.toFixed(1) : UNAVAILABLE}
                 </td>
                 <td className="py-2.5 px-2 text-right text-xs text-muted-foreground">
                   {s.signalDate

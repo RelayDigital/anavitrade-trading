@@ -15,7 +15,6 @@ import DashboardLayout from "@/components/DashboardLayout";
 import ActivationCard from "@/components/dashboard/ActivationCard";
 import DashboardStatsRow from "@/components/dashboard/DashboardStatsRow";
 import PortfolioChartPanel from "@/components/dashboard/PortfolioChartPanel";
-import GoldWinnersPodium from "@/components/dashboard/GoldWinnersPodium";
 import DemoTradeHistory from "@/components/dashboard/DemoTradeHistory";
 import LiveSignalFeed from "@/components/dashboard/LiveSignalFeed";
 import FirstRunWizard from "@/components/dashboard/FirstRunWizard";
@@ -56,11 +55,6 @@ function fmtSignalDate(utcStr: string | null | undefined, fallback: string | Dat
   return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-/** Is this signal a "winner"? Buy + ≥3% 24h gain */
-function isWinner(signal: number, pct: number | null): boolean {
-  return signal === 1 && pct !== null && pct >= 3;
-}
-
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const { user } = useAuth();
@@ -82,7 +76,7 @@ export default function Dashboard() {
 
   const {
     signals, signalsLoading, signalsTotal, signalsMaxPage,
-    signalPage, tierFilter, signalPeriod, sortBy, topWinners, winnerRankMap,
+    signalPage, tierFilter, signalPeriod, sortBy, topWinners: topMovers,
     setTierFilter, setSignalPeriod, setSignalPage, setSortBy, refetchSignals,
     SIGNALS_PER_PAGE,
   } = useSignalFeed();
@@ -191,7 +185,7 @@ export default function Dashboard() {
           onShowWizard={() => setShowWizard(true)}
         />
 
-        <MarketTickerRail topSignals={topWinners} />
+        <MarketTickerRail topSignals={topMovers} />
 
         <TradingViewMiniWidgets />
 
@@ -238,9 +232,6 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Gold Winners Podium */}
-        <GoldWinnersPodium topWinners={topWinners} fmtPrice={fmtPrice} />
-
         {/* Demo Trade History (only in demo mode) */}
         {isDemoMode && (
           <DemoTradeHistory
@@ -265,11 +256,9 @@ export default function Dashboard() {
           tierFilter={tierFilter}
           signalPeriod={signalPeriod}
           sortBy={sortBy}
-          winnerRankMap={winnerRankMap}
           SIGNALS_PER_PAGE={SIGNALS_PER_PAGE}
           fmtPrice={fmtPrice}
           fmtSignalDate={fmtSignalDate}
-          isWinner={isWinner}
           onSetTierFilter={setTierFilter}
           onSetSignalPeriod={setSignalPeriod}
           onSetSignalPage={setSignalPage}

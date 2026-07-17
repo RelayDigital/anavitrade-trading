@@ -1,25 +1,18 @@
 import { z } from "zod";
-import { serialize } from "cookie";
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions, getClientIp } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
-import { SignJWT } from "jose";
-import { getEnv } from "./_core/env";
 import {
-  registerUser, verifyUserPassword, verifyEmailToken, resendVerificationEmail,
-  createPasswordResetToken, resetPassword, getUserById,
   getLiveAccountByUserId, toggleKillSwitch, updateRiskSettings,
-  createDemoAccount, getDemoAccountByToken, getDemoTradesByAccountId,
+  createDemoAccount, getDemoTradesByAccountId,
   saveWeb3WalletSession, getWeb3WalletSession, revokeWeb3WalletSession,
   toggleWeb3KillSwitch, dispatchCopytradeSignal,
   writeAuditLog,
   getSignals, getScraperStatus, getTopBangers, getSignalStats, getPerformance,
   getPortfolioSnapshotsByAccountId,
-  syncSignalsToDemoAccounts,
+  syncSignalsToDemoAccount,
   getJulyResults,
-  getOrCreatePublicDemoAccount, updateDemoAccountSettings, PUBLIC_DEMO_TOKEN,
+  getPublicDemoAccount, getPublicDemoAccountForRead, updateDemoAccountSettingsForUser, PUBLIC_DEMO_READ_KEY,
   getPublicDemoStats,
   getOrCreateDemoAccountForUser,
   getDemoAccountByUserId,
@@ -36,20 +29,7 @@ import { asterRouter } from "./aster/router";
 import { cexRouter } from "./cex/router";
 import { execRouter } from "./execution/router";
 import { inferenceRouter } from "./ml/inference-router";
-
-async function signSessionToken(userId: number, name: string) {
-  const env = getEnv();
-  const jwtSecret = new TextEncoder().encode(env.JWT_SECRET);
-  return new SignJWT({
-    openId: `local:${userId}`,
-    appId: env.VITE_APP_ID,
-    name: name || "Anavitrade User",
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setIssuedAt()
-    .setExpirationTime("30d")
-    .sign(jwtSecret);
-}
+import { authRouter } from "./auth/router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -58,97 +38,7 @@ export const appRouter = router({
   exec: execRouter,
   inference: inferenceRouter,
 
-  /* Auth */
-  auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-
-    register: publicProcedure
-      .input(z.object({ name: z.string().min(2).max(80), email: z.string().email(), password: z.string().min(8).max(128) }))
-      .mutation(async ({ input, ctx }) => {
-        try {
-          const { user, verificationToken } = await registerUser(input);
-          const token = await signSessionToken(user!.id, input.name);
-          const cookieOptions = getSessionCookieOptions(ctx.req);
-          ctx.setHeader("Set-Cookie", serialize(COOKIE_NAME, token, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 * 1000 }));
-          await writeAuditLog(user!.id, "USER_REGISTERED", input.email, getClientIp(ctx.req));
-          return { success: true, userId: user!.id, verificationToken };
-        } catch (e: any) {
-          if (e.message === "EMAIL_EXISTS") throw new TRPCError({ code: "CONFLICT", message: "An account with this email already exists." });
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Registration failed." });
-        }
-      }),
-
-    login: publicProcedure
-      .input(z.object({ email: z.string().email(), password: z.string() }))
-      .mutation(async ({ input, ctx }) => {
-        const user = await verifyUserPassword(input.email, input.password);
-        if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password." });
-        const token = await signSessionToken(user.id, user.name ?? input.email);
-        const cookieOptions = getSessionCookieOptions(ctx.req);
-        ctx.setHeader("Set-Cookie", serialize(COOKIE_NAME, token, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 * 1000 }));
-        await writeAuditLog(user.id, "USER_LOGIN", input.email, getClientIp(ctx.req));
-        return { success: true, userId: user.id };
-      }),
-
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.setHeader("Set-Cookie", serialize(COOKIE_NAME, "", { ...cookieOptions, maxAge: -1 }));
-      return { success: true } as const;
-    }),
-
-    verifyEmail: publicProcedure
-      .input(z.object({ token: z.string() }))
-      .mutation(async ({ input }) => {
-        try { await verifyEmailToken(input.token); return { success: true }; }
-        catch (e: any) { throw new TRPCError({ code: "BAD_REQUEST", message: e.message === "TOKEN_EXPIRED" ? "Verification link has expired." : "Invalid verification link." }); }
-      }),
-
-    forgotPassword: publicProcedure
-      .input(z.object({ email: z.string().email() }))
-      .mutation(async ({ input }) => { await createPasswordResetToken(input.email); return { success: true }; }),
-
-    resetPassword: publicProcedure
-      .input(z.object({ token: z.string(), password: z.string().min(8).max(128) }))
-      .mutation(async ({ input }) => {
-        try { await resetPassword(input.token, input.password); return { success: true }; }
-        catch (e: any) { throw new TRPCError({ code: "BAD_REQUEST", message: e.message === "TOKEN_EXPIRED" ? "Reset link has expired." : "Invalid reset link." }); }
-      }),
-
-    resendVerification: publicProcedure
-      .input(z.object({ email: z.string().email() }))
-      .mutation(async ({ input }) => { await resendVerificationEmail(input.email); return { success: true }; }),
-
-    updateProfile: protectedProcedure
-      .input(z.object({ name: z.string().min(2).max(80) }))
-      .mutation(async ({ input, ctx }) => {
-        const { getDb } = await import("./db");
-        const { users } = await import("../drizzle/schema");
-        const { eq } = await import("drizzle-orm");
-        const db = await getDb();
-        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        await db.update(users).set({ name: input.name } as any).where(eq(users.id, ctx.user.id));
-        return { success: true };
-      }),
-
-    changePassword: protectedProcedure
-      .input(z.object({ currentPassword: z.string(), newPassword: z.string().min(8).max(128) }))
-      .mutation(async ({ input, ctx }) => {
-        const user = await verifyUserPassword(ctx.user.email!, input.currentPassword);
-        if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect." });
-        const { resetPassword } = await import("./db");
-        const { getDb } = await import("./db");
-        const { users } = await import("../drizzle/schema");
-        const { eq } = await import("drizzle-orm");
-        const db = await getDb();
-        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        // User is already verified by verifyUserPassword above, so re-hash
-        const { hashPassword: hashPw } = await import("./db");
-        const passwordHash = await hashPw(input.newPassword);
-        await db.update(users).set({ passwordHash } as any).where(eq(users.id, ctx.user.id));
-        await writeAuditLog(ctx.user.id, "PASSWORD_CHANGED");
-        return { success: true };
-      }),
-  }),
+  auth: authRouter,
 
   /* Live Account */
   liveAccount: router({
@@ -196,13 +86,13 @@ export const appRouter = router({
   /* Demo Account */
   demo: router({
     create: protectedProcedure.input(z.object({ startingCapital: z.number().int().positive() })).mutation(async ({ input, ctx }) => {
-      const { accessToken } = await createDemoAccount({
+      await createDemoAccount({
         username: ctx.user.name ?? ctx.user.email ?? `user_${ctx.user.id}`,
         email: ctx.user.email ?? `user_${ctx.user.id}@anavitrade.demo`,
         startingCapital: String(input.startingCapital),
         userId: ctx.user.id,
       });
-      return { accessToken };
+      return { success: true };
     }),
 
     /* Per-User Demo (userId-based, protected — for Dashboard mode toggle) */
@@ -211,7 +101,8 @@ export const appRouter = router({
         username: ctx.user.name ?? `user_${ctx.user.id}`,
         email: ctx.user.email ?? `user_${ctx.user.id}@anavitrade.demo`,
       });
-      return { account };
+      const { accessToken: _accessToken, ...clientAccount } = account;
+      return { account: clientAccount };
     }),
     getMyTrades: protectedProcedure.query(async ({ ctx }) => {
       return getDemoTradesByUserId(ctx.user.id);
@@ -233,21 +124,22 @@ export const appRouter = router({
       const tradePoints = snapshots.map((s) => ({ value: parseFloat(String(s.balance)), timestamp: new Date(s.snapshotAt).getTime(), label: new Date(s.snapshotAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }), tradeCount: s.tradeCount ?? 0 }));
       return [...baselinePoints, ...tradePoints];
     }),
-    syncMySignals: protectedProcedure.mutation(async () => {
-      return syncSignalsToDemoAccounts();
+    syncMySignals: protectedProcedure.mutation(async ({ ctx }) => {
+      return syncSignalsToDemoAccount(ctx.user.id);
     }),
     getByToken: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
-      const account = await getDemoAccountByToken(input.token);
+      const account = await getPublicDemoAccountForRead(input.token);
       if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Demo account not found." });
-      return account;
+      const { accessToken: _accessToken, ...clientAccount } = account;
+      return clientAccount;
     }),
     getTrades: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
-      const account = await getDemoAccountByToken(input.token);
+      const account = await getPublicDemoAccountForRead(input.token);
       if (!account) return [];
       return getDemoTradesByAccountId(account.id);
     }),
     getPortfolioSeries: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
-      const account = await getDemoAccountByToken(input.token);
+      const account = await getPublicDemoAccountForRead(input.token);
       if (!account) return [];
       const snapshots = await getPortfolioSnapshotsByAccountId(account.id);
       const JULY_1 = new Date("2026-07-01T00:00:00Z");
@@ -263,24 +155,23 @@ export const appRouter = router({
       const tradePoints = snapshots.map((s) => ({ value: parseFloat(String(s.balance)), timestamp: new Date(s.snapshotAt).getTime(), label: new Date(s.snapshotAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }), tradeCount: s.tradeCount ?? 0 }));
       return [...baselinePoints, ...tradePoints];
     }),
-    triggerSync: publicProcedure.input(z.object({ token: z.string() })).mutation(async ({ input }) => {
-      const account = await getDemoAccountByToken(input.token);
-      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Demo account not found." });
-      return syncSignalsToDemoAccounts();
+    triggerSync: protectedProcedure.input(z.object({ token: z.string().optional() })).mutation(async ({ ctx }) => {
+      return syncSignalsToDemoAccount(ctx.user.id);
     }),
     getRecentSignals: publicProcedure.input(z.object({ token: z.string() })).query(async ({ input }) => {
-      const account = await getDemoAccountByToken(input.token);
+      const account = await getPublicDemoAccountForRead(input.token);
       if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Demo account not found." });
       const result = await getSignals({ page: 0, limit: 20, tier: "all", sortBy: "date" });
       return result.signals;
     }),
     getPublicDemoStats: publicProcedure.query(async () => getPublicDemoStats()),
     getPublicDemo: publicProcedure.query(async () => {
-      const account = await getOrCreatePublicDemoAccount();
-      return { token: PUBLIC_DEMO_TOKEN, account };
+      const account = await getPublicDemoAccount();
+      if (!account) return { token: PUBLIC_DEMO_READ_KEY, account: null };
+      const { accessToken: _accessToken, ...clientAccount } = account;
+      return { token: PUBLIC_DEMO_READ_KEY, account: clientAccount };
     }),
-    bootstrapPublicDemo: publicProcedure.mutation(async () => { await getOrCreatePublicDemoAccount(); return syncSignalsToDemoAccounts(); }),
-    updateSettings: publicProcedure.input(z.object({ token: z.string(), positionSizePct: z.number().min(0.1).max(25).optional(), leverage: z.number().min(1).max(10).optional(), strategyTier: z.enum(["A", "AB", "ABC"]).optional(), pyramidingEnabled: z.boolean().optional(), pyramidMaxEntries: z.number().int().min(1).max(10).optional(), pyramidScalePct: z.number().min(0.1).max(100).optional() })).mutation(async ({ input }) => { const { token, ...settings } = input; return updateDemoAccountSettings(token, settings); }),
+    updateSettings: protectedProcedure.input(z.object({ token: z.string().optional(), positionSizePct: z.number().min(0.1).max(25).optional(), leverage: z.number().min(1).max(10).optional(), strategyTier: z.enum(["A", "AB", "ABC"]).optional(), pyramidingEnabled: z.boolean().optional(), pyramidMaxEntries: z.number().int().min(1).max(10).optional(), pyramidScalePct: z.number().min(0.1).max(100).optional() })).mutation(async ({ input, ctx }) => { const { token: _ignoredToken, ...settings } = input; return updateDemoAccountSettingsForUser(ctx.user.id, settings); }),
   }),
 
   /* Signals */

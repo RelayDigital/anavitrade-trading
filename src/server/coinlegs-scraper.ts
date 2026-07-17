@@ -131,7 +131,11 @@ async function fetchSignals(): Promise<{ signals: Raw[]; source: string; error?:
 
 /* ─── scoreSignal imported from ./analysis/scoring ───────────────────── */
 
-export async function runCoinlegsScraper() {
+export async function runCoinlegsScraper(input?: {
+  signals: Record<string, unknown>[];
+  source: string;
+  dispatch?: boolean;
+}) {
   let db: ReturnType<typeof getDb> | null = null;
   try { db = getDb(); } catch { /* env not set */ }
   if (!db) return { status: "error" as const, signalsFetched: 0, signalsInserted: 0, signalsDuplicate: 0, tierA: 0, tierB: 0, tierC: 0, intentIds: [] as number[], errorMessage: "No database" };
@@ -143,7 +147,9 @@ export async function runCoinlegsScraper() {
   const tierASignals: { marketName: string; signalId: number; score: number; period: string; price: number; maxProfit: number; maxProfitDuration: string | null; leverage: number; indicatorName: string; pct24: number }[] = [];
 
   try {
-    const fetched = await fetchSignals();
+    const fetched: { signals: Raw[]; source: string; error?: string; detail?: string } = input
+      ? { signals: input.signals, source: input.source }
+      : await fetchSignals();
     if (fetched.error && fetched.signals.length === 0) {
       const detail = fetched.detail ? ` [${fetched.source}] ${fetched.detail}` : "";
       throw new Error(fetched.error + detail);
@@ -296,7 +302,7 @@ export async function runCoinlegsScraper() {
     }
 
     // Collect ALL Tier-A signals — quality filter runs in the SMC loop below.
-    for (const r of insertRows) {
+    for (const r of input?.dispatch === false ? [] : insertRows) {
       if (r.tier === "A") {
         tierASignals.push({
           marketName: r.marketName, signalId: r.sid, score: r.score, period: r.period,

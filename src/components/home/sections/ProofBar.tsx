@@ -1,5 +1,6 @@
 import { TrendingUp, Activity, Sparkles, Shield, Lock, Database } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { UNAVAILABLE } from "@/components/performancePresentation";
 import StatRail, { type StatItem } from "../primitives/StatRail";
 
 /* ─── PROOF BAR ───
@@ -9,54 +10,59 @@ import StatRail, { type StatItem } from "../primitives/StatRail";
    the numbers crisp and legible. */
 export default function ProofBar() {
   const { data: demoStats } = trpc.demo.getPublicDemoStats.useQuery();
+  const hasDemoTrades = Number(demoStats?.tradeCount ?? 0) > 0;
 
   const items: StatItem[] = [
     {
-      value: demoStats?.tierAJulyCount != null ? Number(demoStats.tierAJulyCount) : 41,
-      label: "Top-rated picks in July",
-      hint: "Our engine grades every signal. These are the highest-confidence ones — what we call Tier A.",
+      value: demoStats?.tierAJulyCount != null ? Number(demoStats.tierAJulyCount) : undefined,
+      display: demoStats?.tierAJulyCount == null ? UNAVAILABLE : undefined,
+      label: "Tier A signals in July",
+      hint: "The API-reported count of signals scored as Tier A during July.",
       icon: <Database className="w-4 h-4" />,
       tone: "gold",
     },
     {
-      value: demoStats?.totalReturnPct != null ? Number(demoStats.totalReturnPct) : 133.7,
+      value: hasDemoTrades && demoStats?.totalReturnPct != null ? Number(demoStats.totalReturnPct) : undefined,
+      display: hasDemoTrades && demoStats?.totalReturnPct != null ? undefined : UNAVAILABLE,
       prefix: "+",
       suffix: "%",
       decimals: 1,
-      label: "Growth in July (top picks)",
-      hint: "How much a demo account following only the top-rated picks grew last month. Past results don't guarantee future ones.",
+      label: "Modeled July change",
+      hint: "Change in the demo's historical scenario. It is not a live account return or a forecast.",
       icon: <TrendingUp className="w-4 h-4" />,
       tone: "green",
     },
     {
-      value: demoStats?.avgPnlPct != null ? Number(demoStats.avgPnlPct) : 15.5,
+      value: hasDemoTrades && demoStats?.avgPnlPct != null ? Number(demoStats.avgPnlPct) : undefined,
+      display: hasDemoTrades && demoStats?.avgPnlPct != null ? undefined : UNAVAILABLE,
       prefix: "+",
       suffix: "%",
       decimals: 1,
-      label: "Average win per pick",
-      hint: "The typical gain on a top-rated pick.",
+      label: "Average modeled change",
+      hint: "Average per-trade change in the demo's historical scenario.",
       icon: <Activity className="w-4 h-4" />,
     },
     {
-      value: demoStats?.bestPnlPct != null ? Number(demoStats.bestPnlPct) : 38.93,
+      value: hasDemoTrades && demoStats?.bestPnlPct != null ? Number(demoStats.bestPnlPct) : undefined,
+      display: hasDemoTrades && demoStats?.bestPnlPct != null ? undefined : UNAVAILABLE,
       prefix: "+",
       suffix: "%",
       decimals: 2,
-      label: "Best single pick",
-      hint: "The strongest result from a single signal in July.",
+      label: "Largest modeled change",
+      hint: "Largest per-trade change in the demo's historical scenario.",
       icon: <Sparkles className="w-4 h-4" />,
     },
     {
-      display: "<0.01",
-      suffix: "%",
-      label: "Worst dip along the way",
-      hint: "The largest drop the demo account saw before recovering — lower is calmer.",
+      value: demoStats?.tradeCount != null ? Number(demoStats.tradeCount) : undefined,
+      display: demoStats?.tradeCount == null ? UNAVAILABLE : undefined,
+      label: "Modeled trades",
+      hint: "Trades included in the API-reported historical scenario.",
       icon: <Shield className="w-4 h-4" />,
     },
     {
-      display: "Zero",
-      label: "Access to your money",
-      hint: "We can place trades but can never withdraw. Your funds stay on your own exchange.",
+      display: "Trade-only",
+      label: "Connection scope",
+      hint: "Supported exchange connections should use credentials without withdrawal permission; verify permissions before enabling execution.",
       icon: <Lock className="w-4 h-4" />,
     },
   ];
@@ -64,9 +70,7 @@ export default function ProofBar() {
   return (
     <section className="py-14 relative">
       <div className="container">
-        {/* Remount when live data arrives so the count-up re-runs to the real
-            values instead of freezing on the placeholder fallbacks. */}
-        <StatRail key={demoStats ? "live" : "fallback"} items={items} />
+        <StatRail key={demoStats ? "loaded" : "pending"} items={items} />
       </div>
     </section>
   );

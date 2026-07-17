@@ -1,4 +1,10 @@
-import type { CexClient, CexCredentials } from "./clientTypes";
+import {
+  type CexClient,
+  type CexCredentials,
+  type CexTransport,
+  type ExchangeEnvironment,
+  validateCexOrderRequest,
+} from "./clientTypes";
 import { BinanceFuturesClient } from "./binance";
 import { BitunixFuturesClient } from "./bitunix";
 import { BybitFuturesClient } from "./bybit";
@@ -7,31 +13,94 @@ import { KrakenFuturesClient } from "./kraken";
 import { KuCoinFuturesClient } from "./kucoin";
 import { GateioFuturesClient } from "./gateio";
 import { CoinbaseFuturesClient } from "./coinbase";
-import { isLiveExchange } from "./registry";
+import {
+  assertAutomatedExecutionSupported,
+  isLiveExchange,
+  resolveExchangeEndpoint,
+} from "./registry";
+
+export { UnsupportedCexCapabilityError } from "./registry";
+
+export type CexClientFactoryOptions = {
+  transport?: CexTransport;
+};
+
+function resolveCredentialEnvironment(creds: CexCredentials): ExchangeEnvironment {
+  const explicit = creds.environment as unknown;
+  if (explicit !== undefined && explicit !== "production" && explicit !== "testnet") {
+    return explicit as ExchangeEnvironment;
+  }
+  if (explicit && creds.testnet !== undefined && creds.testnet !== (explicit === "testnet")) {
+    return "unknown" as ExchangeEnvironment;
+  }
+  return (explicit as ExchangeEnvironment | undefined) ?? (creds.testnet ? "testnet" : "production");
+}
+
+function guardAutomatedMethods(
+  exchange: string,
+  environment: ExchangeEnvironment,
+  client: CexClient,
+): CexClient {
+  return {
+    validateAndReadBalance: () => client.validateAndReadBalance(),
+    verifyTradeOnly: () => client.verifyTradeOnly(),
+    setLeverage: async (symbol, leverage) => {
+      assertAutomatedExecutionSupported(exchange, environment);
+      return client.setLeverage(symbol, leverage);
+    },
+    placeOrder: async (request) => {
+      assertAutomatedExecutionSupported(exchange, environment);
+      return client.placeOrder(validateCexOrderRequest(request));
+    },
+    getPositions: (symbol) => client.getPositions(symbol),
+    ...(client.getOrderById
+      ? { getOrderById: (symbol: string, orderId: string) => client.getOrderById!(symbol, orderId) }
+      : {}),
+    ...(client.getOrderByClientId
+      ? { getOrderByClientId: (symbol: string, clientOrderId: string) => client.getOrderByClientId!(symbol, clientOrderId) }
+      : {}),
+  };
+}
 
 /** Build the right CEX client for an exchange id. Throws for non-live exchanges. */
-export function createCexClient(exchange: string, creds: CexCredentials): CexClient {
+export function createCexClient(
+  exchange: string,
+  creds: CexCredentials,
+  options: CexClientFactoryOptions = {},
+): CexClient {
   if (!isLiveExchange(exchange)) {
     throw new Error(`EXCHANGE_NOT_LIVE:${exchange}`);
   }
+  const environment = resolveCredentialEnvironment(creds);
+  const endpoint = resolveExchangeEndpoint(exchange, environment);
+  let client: CexClient;
   switch (exchange) {
     case "binance":
-      return new BinanceFuturesClient(creds);
+      client = new BinanceFuturesClient({ ...creds, environment }, options.transport, endpoint);
+      break;
     case "bitunix":
-      return new BitunixFuturesClient(creds);
+      client = new BitunixFuturesClient(creds);
+      break;
     case "bybit":
-      return new BybitFuturesClient(creds);
+      client = new BybitFuturesClient(creds);
+      break;
     case "okx":
-      return new OkxFuturesClient(creds);
+      client = new OkxFuturesClient(creds);
+      break;
     case "kraken":
-      return new KrakenFuturesClient(creds);
+      client = new KrakenFuturesClient(creds);
+      break;
     case "kucoin":
-      return new KuCoinFuturesClient(creds);
+      client = new KuCoinFuturesClient(creds);
+      break;
     case "gateio":
-      return new GateioFuturesClient(creds);
+      client = new GateioFuturesClient(creds);
+      break;
     case "coinbase":
-      return new CoinbaseFuturesClient(creds);
+      client = new CoinbaseFuturesClient(creds);
+      break;
     default:
       throw new Error(`EXCHANGE_UNSUPPORTED:${exchange}`);
   }
+  return guardAutomatedMethods(exchange, environment, client);
 }

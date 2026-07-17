@@ -4,11 +4,13 @@ import { motion } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import { Lock, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
+import { consumeSensitiveQueryParams } from "./authQuery";
 
 export default function ResetPassword() {
-  const [, navigate] = useLocation();
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get("token") ?? "";
+  useLocation();
+  const [token] = useState(
+    () => consumeSensitiveQueryParams(["token"]).token ?? "",
+  );
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");

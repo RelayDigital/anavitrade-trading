@@ -1,8 +1,61 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type D1Database = any;
+export type D1Meta = {
+  duration: number;
+  size_after: number;
+  rows_read: number;
+  rows_written: number;
+  last_row_id: number;
+  changed_db: boolean;
+  changes: number;
+  served_by_region?: string;
+  served_by_colo?: string;
+  served_by_primary?: boolean;
+  timings?: { sql_duration_ms: number };
+  total_attempts?: number;
+};
+
+export type D1Result<T = unknown> = {
+  success: true;
+  meta: D1Meta & Record<string, unknown>;
+  results: T[];
+};
+
+export type D1PreparedStatement = {
+  bind(...values: unknown[]): D1PreparedStatement;
+  first<T = unknown>(columnName?: string): Promise<T | null>;
+  run<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  raw<T = unknown[]>(options: { columnNames: true }): Promise<[string[], ...T[]]>;
+  raw<T = unknown[]>(options?: { columnNames?: false }): Promise<T[]>;
+};
+
+export type D1DatabaseSession = {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  getBookmark(): string | null;
+};
+
+/**
+ * Structural D1 binding type for both application and Worker typecheck contexts.
+ * Cloudflare's package exposes this ambiently in some configurations instead of
+ * exporting it as a module symbol.
+ */
+export type D1Database = {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  exec(query: string): Promise<{ count: number; duration: number }>;
+  withSession(constraintOrBookmark?: string): D1DatabaseSession;
+  dump(): Promise<ArrayBuffer>;
+};
 
 export type Env = {
   DB: D1Database;
+  APP_BASE_URL?: string;
+  APP_ENVIRONMENT?: "development" | "staging" | "production";
+  CORS_ALLOWED_ORIGINS?: string;
+  RATE_LIMITER?: {
+    limit(input: { key: string }): Promise<{ success: boolean }>;
+  };
+  METRICS_TOKEN?: string;
   JWT_SECRET: string;
   ENCRYPTION_KEY: string;
   INTERNAL_SECRET?: string;
@@ -19,6 +72,7 @@ export type Env = {
   ASTER_LIVE_ORDER_SUBMISSION_ENABLED?: string;
   OWNER_OPEN_ID?: string;
   ADMIN_API_KEY?: string;
+  EXECUTION_LEASE_OWNER?: string;
 };
 
 let _env: Env | null = null;

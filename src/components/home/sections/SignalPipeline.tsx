@@ -45,14 +45,14 @@ export default function SignalPipeline() {
       title: "We pick the trade",
       desc: "It sets a clear entry, a profit target, and a safety net to limit the downside.",
       meta: "Entry · target · stop-loss",
-      detail: "Position size is calculated from your account balance (configurable risk %). Stop-loss uses ATR-based volatility. Take-profit targets are set at 1:2 and 1:3 risk-reward ratios automatically.",
+      detail: "Position sizing and protective levels are evaluated against configured risk controls before an execution can be submitted. Unsupported exchange capabilities are denied.",
       indicatorCount: 3,
     },
     {
       icon: <Zap className="w-5 h-5" />,
       title: "We place it for you",
       desc: "The trade goes straight to your exchange automatically — no button-mashing.",
-      meta: "Under 50ms",
+      meta: "Capability gated",
       detail: "The execution layer submits the order via API or your connected Ledger. A kill switch lets you pause everything instantly. Every trade is logged to your dashboard before the confirmation email arrives.",
       indicatorCount: 1,
     },
@@ -69,7 +69,7 @@ export default function SignalPipeline() {
           align="center"
           eyebrow="How it works"
           title="From market signal to done — automatically"
-          subtitle="Four steps run every second behind the scenes. Click any step for the technical detail."
+          subtitle="Signals move through validation, risk checks, and capability-gated execution. Click any step for the technical detail."
           className="mb-16"
         />
 

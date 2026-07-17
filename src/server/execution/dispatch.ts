@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import {
   cexConnections, asterAgentAccounts, executionJobs, orderEvents,
-  tradeIntents, liveAccounts, coinlegsSignals, mlInferences,
+  tradeIntents, coinlegsSignals, mlInferences,
 } from "../../drizzle/schema";
 import { getDb, writeAuditLog } from "../db";
 import { sha256Hex } from "../cex/signing";
-import { decryptCexCredentials } from "../cex/store";
+import { decryptCexCredentials, refreshCexNavSnapshot } from "../cex/store";
 import { createCexClient } from "../cex/factory";
 import { getKlines } from "../analysis/kline-repository";
 import { runInference, type Candle } from "../ml/inference-router";
@@ -14,6 +14,8 @@ import {
   computeAtrPct, computeRsi14, isBullRegime,
   type GateDecision, type GateDirection,
 } from "../signals/unified-engine";
+import { assertAutomatedExecutionSupported } from "../cex/registry";
+import type { ExchangeEnvironment } from "../cex/clientTypes";
 /* CexExecutionAdapter no longer imported — Worker no longer submits CEX orders.
  * The VPS execution server polls risk-approved jobs and submits orders from its
  * static-IP machine. */
@@ -21,7 +23,75 @@ import { AsterExecutionAdapter } from "../aster/adapter";
 import { AsterApiClient } from "../aster/client";
 import { getAsterConfig } from "../aster/config";
 import { syncAsterFuturesBalance } from "../aster/store";
-import { decideExecution, prefetchUserData, sizeNotionalFromEquity, type TradeIntentInput } from "./riskEngine";
+import { decideExecution, prefetchUserData, type RiskDecision, type TradeIntentInput } from "./riskEngine";
+
+type ApprovedRiskDecision = Extract<RiskDecision, { approved: true }>;
+
+type CexDispatchConnection = Pick<typeof cexConnections.$inferSelect, "userId" | "exchange">;
+
+export type CexNavDispatchReadiness = {
+  readyUserIds: Set<number>;
+  failures: Map<number, string>;
+};
+
+export type CexNavDispatchDependencies = {
+  assertAutomatedExecution?: (exchange: string, environment: ExchangeEnvironment) => void;
+  refreshNav?: (userId: number) => Promise<unknown>;
+};
+
+function refreshFailureReason(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+}
+
+/**
+ * Prepare fresh CEX NAV once per user before risk data is prefetched. A failed
+ * user is intentionally absent from `readyUserIds`, so no job can be queued.
+ */
+export async function refreshCexNavBeforeAutomatedDispatch(
+  connections: CexDispatchConnection[],
+  dependencies: CexNavDispatchDependencies = {},
+): Promise<CexNavDispatchReadiness> {
+  const environment: ExchangeEnvironment = "production";
+  const assertAutomatedExecution = dependencies.assertAutomatedExecution ?? assertAutomatedExecutionSupported;
+  const refreshNav = dependencies.refreshNav ?? ((userId: number) => refreshCexNavSnapshot(userId, {
+    environment,
+    requireAutomatedExecution: true,
+  }));
+  const byUser = new Map<number, CexDispatchConnection[]>();
+  for (const connection of connections) {
+    const group = byUser.get(connection.userId) ?? [];
+    group.push(connection);
+    byUser.set(connection.userId, group);
+  }
+
+  const readyUserIds = new Set<number>();
+  const failures = new Map<number, string>();
+  for (const [userId, userConnections] of byUser) {
+    try {
+      // This occurs before refreshNav can decrypt credentials or create a client.
+      for (const connection of userConnections) {
+        assertAutomatedExecution(connection.exchange, environment);
+      }
+      await refreshNav(userId);
+      readyUserIds.add(userId);
+    } catch (error) {
+      failures.set(userId, refreshFailureReason(error));
+    }
+  }
+  return { readyUserIds, failures };
+}
+
+/**
+ * The risk engine is the sole sizing authority. Any non-positive or invalid
+ * decision is treated as a denial before persistence or provider access.
+ */
+export function requireAuthoritativeRiskDecision(decision: RiskDecision): ApprovedRiskDecision | null {
+  if (!decision.approved || !Number.isFinite(decision.notionalUsd) || decision.notionalUsd <= 0) return null;
+  return decision;
+}
 
 /** Deterministic idempotency key per (user, intent). Prevents duplicate mirrors. */
 async function idempotencyKey(userId: number, intentId: number, prefix = "cex"): Promise<string> {
@@ -324,12 +394,14 @@ async function fanOutCex(
 
   for (const conn of connections) {
     const decision = await decideExecution(intent, conn.userId, conn, preloaded);
-    if (decision.approved !== true) {
-      const reason = "reason" in decision ? decision.reason : "unknown";
+    const approvedDecision = requireAuthoritativeRiskDecision(decision);
+    if (!approvedDecision) {
+      const reason = "reason" in decision ? decision.reason : "non_positive_risk_notional";
       await writeAuditLog(conn.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; cex:${conn.exchange}; reason:${reason}`);
       results.push({ userId: conn.userId, exchange: conn.exchange, status: "skipped", reason });
       continue;
     }
+    const notionalUsd = approvedDecision.notionalUsd * sizeFactor;
 
     const idem = await idempotencyKey(conn.userId, intentId, "cex");
 
@@ -343,6 +415,8 @@ async function fanOutCex(
       orderType: intent.orderType,
       status: "queued",
       riskApproved: true,
+      notionalUsd: notionalUsd.toFixed(2),
+      leverage: approvedDecision.leverage,
       idempotencyKey: idem,
     } as any).onConflictDoNothing();
 
@@ -355,19 +429,10 @@ async function fanOutCex(
     }
 
     // Size the order
-    let notionalUsd = decision.notionalUsd;
     let quantity: string | undefined;
     try {
       const creds = await decryptCexCredentials(conn);
       const client = createCexClient(conn.exchange, creds);
-      const balance = await client.validateAndReadBalance();
-      const [account] = await db.select().from(liveAccounts).where(eq(liveAccounts.userId, conn.userId)).limit(1);
-      const maxPct = parseFloat(account?.maxPositionSizePct ?? "10");
-      if (notionalUsd <= 0) notionalUsd = sizeNotionalFromEquity(balance.availableUsd || balance.equityUsd, maxPct);
-
-      // Regime gate half-size (PRD R1.1 step 4): applied to the final notional
-      // so both requested-notional and equity-derived sizing are scaled.
-      notionalUsd = notionalUsd * sizeFactor;
 
       const priceHint = parseFloat(intent.limitPrice ?? "0");
       if (priceHint > 0) {
@@ -385,17 +450,19 @@ async function fanOutCex(
         }
       }
     } catch (e: any) {
+      await skipJob(job.id, "cex", "sizing_failed", { error: String(e?.message).slice(0, 200) });
       results.push({ userId: conn.userId, exchange: conn.exchange, status: "skipped", reason: `balance_failed:${e?.message}` });
       continue;
     }
 
     if (!quantity || parseFloat(quantity) <= 0) {
+      await skipJob(job.id, "cex", "zero_quantity", { notionalUsd });
       results.push({ userId: conn.userId, exchange: conn.exchange, status: "skipped", reason: "zero_quantity" });
       continue;
     }
 
     await db.update(executionJobs).set({
-      notionalUsd: notionalUsd.toFixed(2), quantity, leverage: decision.leverage,
+      notionalUsd: notionalUsd.toFixed(2), quantity, leverage: approvedDecision.leverage,
       limitPrice: intent.limitPrice ?? null, updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
@@ -404,7 +471,7 @@ async function fanOutCex(
     // The VPS polls /api/internal/risk-approved-jobs for queued+riskApproved
     // jobs and submits orders from its static-IP machine.
     await writeAuditLog(conn.userId, "EXEC_RISK_APPROVED",
-      `intent:${intentId}; cex:${conn.exchange}; job:${job.id}; notional:${notionalUsd.toFixed(2)}; leverage:${decision.leverage}`);
+      `intent:${intentId}; cex:${conn.exchange}; job:${job.id}; notional:${notionalUsd.toFixed(2)}; leverage:${approvedDecision.leverage}`);
     results.push({ userId: conn.userId, exchange: conn.exchange, jobId: job.id, status: "queued" });
   }
 
@@ -456,12 +523,14 @@ async function fanOutAster(
       circuitBreakerUntil: null,
       highWaterMark: null,
     }, preloaded);
-    if (decision.approved !== true) {
-      const reason = "reason" in decision ? decision.reason : "unknown";
+    const approvedDecision = requireAuthoritativeRiskDecision(decision);
+    if (!approvedDecision) {
+      const reason = "reason" in decision ? decision.reason : "non_positive_risk_notional";
       await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
       results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason });
       continue;
     }
+    const notionalUsd = approvedDecision.notionalUsd * sizeFactor;
 
     const idem = await idempotencyKey(agent.userId, intentId, "aster");
     const queuedAt = Date.now();
@@ -475,6 +544,9 @@ async function fanOutAster(
       side: intent.side,
       orderType: intent.orderType,
       status: "queued",
+      riskApproved: true,
+      notionalUsd: notionalUsd.toFixed(2),
+      leverage: approvedDecision.leverage,
       idempotencyKey: idem,
       queuedAt,
       updatedAt: queuedAt,
@@ -494,37 +566,6 @@ async function fanOutAster(
       const reason = "fee_rate_exceeds_approved_max";
       await skipJob(job.id, "aster", reason, { feeRate: agent.feeRate, maxFeeRate: agent.maxFeeRate });
       await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
-      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
-      continue;
-    }
-
-    let notionalUsd = decision.notionalUsd;
-    let account: typeof liveAccounts.$inferSelect | undefined;
-    try {
-      const [row] = await db.select().from(liveAccounts)
-        .where(eq(liveAccounts.userId, agent.userId)).limit(1);
-      account = row;
-      let equity = parseFloat(account?.lastTotalEquityUsd ?? "0");
-      if (equity <= 0) {
-        try {
-          const synced = await syncAsterFuturesBalance(agent.userId);
-          equity = synced.equityUsd;
-        } catch { /* keep existing zero-equity handling below */ }
-      }
-      if (equity > 0 && notionalUsd <= 0) {
-        const maxPct = parseFloat(account?.maxPositionSizePct ?? "10");
-        notionalUsd = sizeNotionalFromEquity(equity, maxPct);
-      }
-    } catch { /* fall through */ }
-
-    // Regime gate half-size (PRD R1.1 step 4).
-    notionalUsd = notionalUsd * sizeFactor;
-
-    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
-      const reason = "no_requested_notional_or_equity_snapshot";
-      await skipJob(job.id, "aster", reason, {
-        lastTotalEquityUsd: account?.lastTotalEquityUsd ?? null,
-      });
       results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
       continue;
     }
@@ -560,7 +601,7 @@ async function fanOutAster(
     }
 
     await db.update(executionJobs).set({
-      notionalUsd: notionalUsd.toFixed(2), quantity, leverage: decision.leverage,
+      notionalUsd: notionalUsd.toFixed(2), quantity, leverage: approvedDecision.leverage,
       limitPrice: String(sizingPrice), updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
@@ -609,7 +650,7 @@ async function fanOutAster(
             symbol: intent.symbol, side: intent.side, type: intent.orderType,
             quantity, price: intent.limitPrice ?? undefined,
             newClientOrderId: idem,
-            leverage: decision.leverage,
+            leverage: approvedDecision.leverage,
             stopLossPrice: intent.stopLossPrice ?? undefined,
             takeProfitPrice: intent.takeProfitPrice ?? undefined,
           });
@@ -696,14 +737,25 @@ export async function createExecutionJobsForIntent(intentId: number) {
   const connections = await db.select().from(cexConnections)
     .where(eq(cexConnections.status, "active"));
 
-  // Pre-fetch CEX risk data
-  const cexUserIds = [...new Set(connections.map((c) => c.userId))];
+  // A CEX NAV is an execution prerequisite. Refresh per user before risk
+  // prefetch so risk sees this cycle's authoritative provider snapshot.
+  const cexNavReadiness = await refreshCexNavBeforeAutomatedDispatch(connections);
+  const readyConnections = connections.filter((connection) => cexNavReadiness.readyUserIds.has(connection.userId));
+  const deniedConnections = connections.filter((connection) => !cexNavReadiness.readyUserIds.has(connection.userId));
+  const cexUserIds = [...new Set(readyConnections.map((c) => c.userId))];
   const preloaded = cexUserIds.length > 0 ? await prefetchUserData(cexUserIds) : undefined;
+
+  const navDeniedResults = await Promise.all(deniedConnections.map(async (connection) => {
+    const refreshFailure = cexNavReadiness.failures.get(connection.userId) ?? "CEX_NAV_REFRESH_FAILED";
+    const reason = `cex_nav_refresh_failed:${refreshFailure}`;
+    await writeAuditLog(connection.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; cex:${connection.exchange}; reason:${reason}`);
+    return { userId: connection.userId, exchange: connection.exchange, status: "skipped" as const, reason };
+  }));
 
   // Fan out to CEX and Aster in parallel
   const [cexResults, asterResults] = await Promise.all([
     Promise.allSettled(
-      connections.map(async (conn) => {
+      readyConnections.map(async (conn) => {
         const r = await fanOutCex(intent, intentId, [conn], preloaded, sizeFactor);
         return r[0] ?? { userId: conn.userId, exchange: conn.exchange, status: "error" as const };
       }),
@@ -718,6 +770,7 @@ export async function createExecutionJobsForIntent(intentId: number) {
   ]);
 
   const allResults = [
+    ...navDeniedResults,
     ...cexResults.map((r) => (r.status === "fulfilled" ? r.value : { userId: 0, exchange: "error", status: "error" as const, reason: String(r.reason) })),
     ...asterResults,
   ];

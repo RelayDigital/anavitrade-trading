@@ -1,6 +1,7 @@
 import { eq, and, gte, sql, inArray } from "drizzle-orm";
 import { liveAccounts, navSnapshots, executionJobs, globalSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { DEFAULT_NAV_MAX_AGE_MS, validateNavSnapshot } from "./outcomes";
 import type { CexConnectionRow } from "./types";
 
 /**
@@ -50,6 +51,10 @@ const TF_RISK_MULTIPLIER: Record<string, number> = {
 export type RiskDecision =
   | { approved: true; notionalUsd: number; leverage: number }
   | { approved: false; reason: string };
+
+/** A NAV older than this cannot authorize automated execution. */
+export const RISK_NAV_MAX_AGE_MS = DEFAULT_NAV_MAX_AGE_MS;
+const OPEN_EXPOSURE_JOB_STATUSES: string[] = ["queued", "leased", "submitted"];
 
 /* ─── DB-backed kill switch ────────────────────────────────────────────── */
 
@@ -137,7 +142,7 @@ export async function prefetchUserData(userIds: number[]): Promise<PrefetchedUse
     }).from(executionJobs)
       .where(and(
         inArray(executionJobs.userId, userIds),
-        inArray(executionJobs.status, ["queued", "submitted"]),
+        inArray(executionJobs.status, OPEN_EXPOSURE_JOB_STATUSES),
       ))
       .all(),
     db.select().from(navSnapshots)
@@ -271,7 +276,7 @@ export async function decideExecution(
   } else {
     openJobsResult = await db.select({ notionalUsd: executionJobs.notionalUsd })
       .from(executionJobs)
-      .where(and(eq(executionJobs.userId, userId), inArray(executionJobs.status, ["queued", "submitted"])))
+      .where(and(eq(executionJobs.userId, userId), inArray(executionJobs.status, OPEN_EXPOSURE_JOB_STATUSES)))
       .all();
   }
 
@@ -291,7 +296,11 @@ export async function decideExecution(
     latestNav = nav ?? null;
   }
 
-  const availableEquity = latestNav ? parseFloat(latestNav.accountEquityUsd) : 0;
+  const navValidation = validateNavSnapshot(latestNav, Date.now(), RISK_NAV_MAX_AGE_MS);
+  if (!navValidation.approved) {
+    return { approved: false, reason: "reason" in navValidation ? navValidation.reason : "invalid_nav" };
+  }
+  const availableEquity = navValidation.equityUsd;
 
   // ── Drawdown-aware Kelly sizing ──
   // Uses backtest-derived metrics (ICT Sniper rule-based: 68% WR, 694 trades).
@@ -323,6 +332,10 @@ export async function decideExecution(
     : (availableEquity > 0
       ? sizeNotionalFromEquity(availableEquity, effectivePositionPct) * kellyFactor * ddFactor
       : 0);
+
+  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+    return { approved: false, reason: "non_positive_risk_notional" };
+  }
 
   return { approved: true, notionalUsd, leverage };
 }
