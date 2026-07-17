@@ -18,7 +18,11 @@ const result = await page.evaluate(async () => {
     chainId: await provider.request({ method: "eth_chainId" }),
     signature: await provider.request({
       method: "eth_signTypedData_v4",
-      params: [provider.selectedAddress, JSON.stringify({ primaryType: "ApproveAgent" })],
+      params: [provider.selectedAddress, JSON.stringify({
+        domain: { chainId: 1666 },
+        primaryType: "ApproveAgent",
+        message: { CanWithdraw: false },
+      })],
     }),
   };
 });
