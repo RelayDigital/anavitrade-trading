@@ -89,13 +89,14 @@ export function createAuthRouter(dependencies: AuthRouterDependencies = defaultD
         try {
           getCanonicalAppOrigin(ctx.env);
           const result = await dependencies.registerUser(input);
+          const verificationUrl = createCanonicalAuthUrl(ctx.env, "/verify-email", {
+            token: result.verificationToken,
+            email: result.user.email!,
+          });
           await dependencies.getEmailSender(ctx.env).sendVerification({
             to: result.user.email!,
             name: result.user.name ?? "Anavitrade User",
-            verificationUrl: createCanonicalAuthUrl(ctx.env, "/verify-email", {
-              token: result.verificationToken,
-              email: result.user.email!,
-            }),
+            verificationUrl,
           });
           await dependencies.writeAuditLog(
             result.user.id,
@@ -103,7 +104,10 @@ export function createAuthRouter(dependencies: AuthRouterDependencies = defaultD
             input.email,
             getClientIp(ctx.req),
           );
-          return toSafeUser(result.user);
+          const safeUser = toSafeUser(result.user);
+          return isExplicitDevelopmentOrTestnet(ctx.env)
+            ? { ...safeUser, developmentVerificationUrl: verificationUrl }
+            : safeUser;
         } catch (error: any) {
           if (error?.message === "EMAIL_EXISTS") {
             throw new TRPCError({

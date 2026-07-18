@@ -38,6 +38,13 @@ export default function Register() {
   // Registration starts email verification and intentionally does not authenticate.
   const register = trpc.auth.register.useMutation({
     onSuccess: (user) => {
+      const developmentVerificationUrl = "developmentVerificationUrl" in user
+        ? user.developmentVerificationUrl
+        : undefined;
+      if (developmentVerificationUrl) {
+        navigate(new URL(developmentVerificationUrl).pathname + new URL(developmentVerificationUrl).search);
+        return;
+      }
       toast.success("Account created. Check your inbox to verify your email.");
       navigate(`/verify-email?email=${encodeURIComponent(user.email ?? form.email)}`);
     },
