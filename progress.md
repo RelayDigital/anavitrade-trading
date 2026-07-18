@@ -17,6 +17,40 @@
 2. Thread B: run scripts/ml/locked-walkforward-backtest.py on 120-day/49-pair corpus
 3. Threads C/D/E in parallel per PRD ordering
 
+## Session: 2026-07-18 (continued — Thread A/B execution, DeepSeek-delegated)
+
+### Done This Session
+- [x] Thread A confirmed already landed from prior (crashed) run of this same session:
+      commits `b60574d`, `8ad8a60`, `8935d3a` match PRD exactly
+- [x] Committed `docs/prd/2026-07-18-completion.md` + honest-ML-validation-gate PRD (`47c415b`)
+- [x] Thread B executed for real via a DeepSeek agent (`ds-agent.py`, background+poll pattern
+      to work around its 60s bash timeout): `scripts/ml/locked-walkforward-backtest.py`
+      against `klines-mtf-extended.json` (49 pairs, 120-day window)
+- [x] **Gate B result: FAIL — 0 qualified test trades.** meta-v22-definitive's claimed
+      threshold (0.52) never reached by calibrated probabilities on validation OR test
+      partition (p99=0.243 both). The model card's "test_wr=0.65, test_pf=3.14, n=40" was
+      not a thin-sample fluke — it was unreachable under honest purged/embargoed scoring.
+      Report committed at `scripts/data/models/locked-gate-2026-07-18/report.json` (`8510997`)
+- [x] Removed a duplicate partial-run artifact dir from an earlier attempt this same session
+      (`meta-v22-locked-gate-2026-07-18/`, identical 0-trade result, redundant)
+- [x] Found and committed unrelated finished-but-uncommitted work from earlier in this same
+      session: graduated-conviction entry confirmation band in `dispatch-gate.ts` (`33451da`,
+      29/29 tests pass). **Not yet wired into `dispatch.ts`** — gate computes `entryMode` but
+      all approved signals still submit at market. Follow-up, not blocking.
+
+### Per PRD Thread B2 (no third option)
+Gate failed → freeze ML architecture/feature/regime tuning. meta-v24/v25 dual-regime
+experiments (already committed as a negative result in `8935d3a`) are the last permitted
+tuning pass until this is treated as a label/feature-definition problem via the ICR
+empirical process (large sample, one variable at a time, negative results kept).
+
+### Next
+1. Thread B3: wire `select_threshold_locked` + `purged_chronological_split` into `train.py`
+   as the default path; label `train_chronological`'s self-reported metrics `NOT A RESULT`
+2. Thread E: move kline ingestion to VPS cron (Worker 50-subrequest cap blocks in-Worker fetch)
+3. Thread C (operator gates) and Thread D (Aster fresh-wallet E2E proof) need direct user
+   action — exchange-account access and a real wallet signature, not code-executable
+
 ## Session: 2026-07-16 (Session Unification & Pipeline Priming)
 
 ### Context Recovered
