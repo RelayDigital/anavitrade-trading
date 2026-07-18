@@ -42,6 +42,7 @@ def main():
     parser.add_argument('--config', default='default', choices=['default', 'wide', 'tight'],
                        help='Parameter preset')
     parser.add_argument('--dry-run', action='store_true', help='Build data only, skip training')
+    parser.add_argument('--input', type=str, help='Override klines input path (default: scripts/data/klines-mtf.json)')
     parser.add_argument('--output', type=str, help='Override training data output path')
     parser.add_argument('--version', type=str, default='meta-v21',
                        help='Model version directory name (default: meta-v21)')
