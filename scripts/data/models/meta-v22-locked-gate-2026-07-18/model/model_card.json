@@ -1,0 +1,51 @@
+{
+  "acceptance": {
+    "minimumProfitFactor": 2.0,
+    "minimumTrades": 200,
+    "minimumWinRate": 0.55,
+    "passed": false
+  },
+  "calibrationRows": 65647,
+  "features": [
+    "m15_rsi",
+    "m15_bb_w",
+    "m15_bb_p",
+    "m15_ao",
+    "m15_macd",
+    "m15_vz",
+    "m15_m7s",
+    "m15_trend",
+    "m15_atr_pct",
+    "h1_rsi",
+    "h1_bb_w",
+    "h1_bb_p",
+    "h1_ao",
+    "h1_macd",
+    "h1_m7s",
+    "h4_rsi",
+    "h4_bb_w",
+    "h4_bb_p",
+    "h4_ao",
+    "h4_macd",
+    "h4_trend"
+  ],
+  "sourceContractSha256": "499a66847fc509cd336922594ac9795744f1463fca1a95cfb37eefec539a9a1a",
+  "testMetrics": {
+    "averageR": 0.0,
+    "equityCurve": [
+      10000.0
+    ],
+    "finalEquity": 10000.0,
+    "initialEquity": 10000.0,
+    "maxDrawdownPct": 0.0,
+    "profitFactor": 0.0,
+    "totalR": 0,
+    "trades": 0,
+    "winRate": 0.0,
+    "wins": 0
+  },
+  "testRows": 66782,
+  "threshold": 0.52,
+  "trainingRows": 310006,
+  "version": "meta-v22-locked-walkforward-20260717"
+}
