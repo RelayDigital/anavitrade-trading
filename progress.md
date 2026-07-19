@@ -378,3 +378,22 @@ Cross-referenced 6 Claude Code session logs from the past 4 days:
   score-threshold=85 (stricter), coil-threshold=80 (stricter). Awaiting
   results -- will aggregate ALL honestly, not cherry-pick the best.
 
+### Parallel variant sweep -- honest results (n too small, real finding on ablations)
+- All 6 parallel variants (baseline, disable-divergence, disable-mtf, disable-ict,
+  score-threshold=85, coil-threshold=80) produced the IDENTICAL 17-trade result:
+  WR 41.2%, PF 1.92, expectancy +0.47R, net +8.0R. Verified this is a real finding,
+  not a flag-wiring bug (`enable_ict`/`enable_divergence`/`enable_mtf` are genuinely
+  read and checked in ict.py/divergence.py/mtf.py, and all 17 accepted trades score
+  100/100 -- the confluence/confirmation layers aren't the binding constraint on
+  this window; something in the core structural setup criteria is). Matches
+  EMPIRICAL_FINDINGS.md's existing note that SMC patterns are "amplifiers, not
+  requisites."
+- --real-edge-report's statistical-significance stage (bootstrap/walk-forward)
+  did NOT complete for any variant within the 900s per-agent timeout -- 6 CPU-bound
+  Python processes competing for cores starved each other. n=17 is also just too
+  small a sample regardless.
+- Real bottleneck identified: sample size, not parameter tuning. Killed the
+  contending processes and launched ONE larger, non-contending run: 2024-01 to
+  present (~2.5 years) instead of 6 months, same ~20 altcoins, real-edge-report
+  enabled, generous timeout, running solo. In progress.
+
