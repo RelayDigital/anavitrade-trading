@@ -228,6 +228,30 @@ Sharpe 7.00, walk-forward PASS (corpus-derived; does NOT generalize to raw OHLCV
 
 Current ML approach supersedes rule-based — see `docs/ops/SYSTEM_OPERATIONS.md`.
 
+## Hard Rules — Coinlegs Signal Validation (non-negotiable)
+
+1. **Live Coinlegs signals must be cross-validated against real klines as they
+   arrive, before being trusted or surfaced on the platform.** Never forward a
+   Coinlegs signal to a user or dispatch it for execution on Coinlegs' own
+   tier/score alone — confirm it against actual OHLCV price action first (the
+   existing SMC structural validator in `src/server/analysis/dispatcher.ts` is
+   the mechanism; keep it mandatory, never bypass it for a "fast path").
+2. **Backtests measuring whether a strategy has edge must run against real
+   klines, not against `scripts/backtest-prioritized.json` or any other
+   Coinlegs-pre-filtered corpus.** That corpus is already selected for
+   positive-looking setups — testing a strategy against it is circular, not
+   validation, no matter how good the numbers look (see the "does NOT
+   generalize to raw OHLCV" caveat above; this repo's own suspiciously high
+   64-76% WR results on that corpus are the cautionary example, not a template
+   to repeat). The Coinlegs-derived corpus is still fine for meta-analysis
+   (tier/score distribution, indicator frequency) — just never as the
+   ground truth for an edge claim.
+3. **Corollary — don't sit on validated edge.** If a genuinely validated
+   filter is found for which *live* Coinlegs signals are worth acting on
+   (tested on real klines, honest out-of-sample split, no p-hacking), push it
+   to the platform immediately. The bar is validation, not caution for its
+   own sake — once a filter clears that bar, ship it.
+
 ## Codex + Claude Multi-Agent Orchestration
 
 The OpenAI Codex plugin (`codex@openai-codex`) is installed and enabled. Use it proactively for:
