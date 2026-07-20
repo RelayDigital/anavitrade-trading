@@ -16,15 +16,17 @@
  *   2. Tier gate          — Tier A (>= 80) live; Tier B (65-79) paper-only
  *   3. RSI extension gate — no chasing: reject long >= 70 / short <= 30
  *   4. Regime gate        — longs half-size unless bull regime (MA200 slope +)
- *   5. ML gate            — calibrated score >= threshold (from model card)
+ *   5. Judgment gate       — Opus confidence >= threshold (src/server/analysis/
+ *                            llm-trade-judge.ts; replaced the statistical ML
+ *                            score once its locked walk-forward test proved
+ *                            it had no usable edge — see
+ *                            docs/prd/2026-07-17-honest-ml-validation-gate.md)
  *   (6. Risk engine decideExecution() runs downstream per-connection, unchanged)
  *
- * Fail-closed (R1.3): if scoring is impossible (inference unreachable OR the
+ * Fail-closed (R1.3): if scoring is impossible (Opus unreachable OR the
  * market data required to score is unavailable) the gate REJECTS with
- * gate_result='ml_unreachable'. It never falls back to unscored dispatch.
+ * gate_result='ml_unreachable'. It never falls back to unjudged dispatch.
  */
-
-import modelCard from "../../../scripts/data/models/meta-v22-definitive/model_card.json";
 
 /* ─── Config (no hardcoded thresholds — sourced from empirical findings / card) ─ */
 
@@ -45,10 +47,18 @@ export const GATE_CONFIG = {
 } as const;
 
 /**
- * Single source of truth for the ML decision threshold: the champion model
- * card (meta-v22-definitive). Never hardcode this in two runtimes.
+ * Confidence threshold for the Opus trade-judgment gate (src/server/analysis/
+ * llm-trade-judge.ts), which replaced the statistical ML score. The old
+ * value (modelCard.threshold, 0.52) was calibrated for meta-v22-definitive's
+ * LightGBM output distribution — meaningless once the score comes from an
+ * LLM's own 0-1 confidence scale instead. 0.65 is a starting value, not
+ * backtest-derived (there is no historical corpus of Opus judgments to
+ * calibrate against yet) — tune once live confirm/reject outcomes accumulate.
+ * Name kept as ML_THRESHOLD (not renamed) because it feeds the same
+ * `mlScore`/`mlThreshold` fields throughout this file, dispatch.ts, and the
+ * ml_inferences table — only the source of the score changed.
  */
-export const ML_THRESHOLD: number = modelCard.threshold;
+export const ML_THRESHOLD: number = 0.65;
 
 /**
  * Above this, a signal is high-conviction enough to enter immediately at
@@ -56,7 +66,7 @@ export const ML_THRESHOLD: number = modelCard.threshold;
  * the signal is real but marginal — see "entry confirmation band" below.
  * Starting value, not backtest-derived; tune once live data accumulates.
  */
-export const ML_CONFIRM_THRESHOLD: number = ML_THRESHOLD + 0.05;
+export const ML_CONFIRM_THRESHOLD: number = ML_THRESHOLD + 0.1;
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
@@ -195,7 +205,7 @@ export function evaluateDispatchGate(
       ? cfg.regimeHalfSizeFactor
       : 1.0;
 
-  /* ── 5. ML gate (fail closed) ───────────────────────────────────────── */
+  /* ── 5. Judgment gate — Opus confidence (fail closed) ─────────────────── */
   if (input.mlUnreachable || input.mlScore === null) {
     return reject("ml_unreachable", "inference_unreachable");
   }

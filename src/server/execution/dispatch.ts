@@ -3,12 +3,13 @@ import {
   cexConnections, asterAgentAccounts, pancakeswapDelegations, executionJobs, orderEvents,
   tradeIntents, coinlegsSignals, mlInferences,
 } from "../../drizzle/schema";
-import { getDb, writeAuditLog } from "../db";
+import { getDb, getDbEnv, writeAuditLog } from "../db";
 import { sha256Hex } from "../cex/signing";
 import { decryptCexCredentials, refreshCexNavSnapshot } from "../cex/store";
 import { createCexClient } from "../cex/factory";
 import { getKlines } from "../analysis/kline-repository";
-import { runInference, type Candle } from "../ml/inference-router";
+import { judgeTradeWithOpus } from "../analysis/llm-trade-judge";
+import type { Candle } from "../ml/inference-router";
 import {
   evaluateDispatchGate, GATE_CONFIG, ML_THRESHOLD,
   computeAtrPct, computeRsi14, isBullRegime, computeConfirmationPrice,
@@ -23,6 +24,7 @@ import { AsterExecutionAdapter } from "../aster/adapter";
 import { AsterApiClient } from "../aster/client";
 import { getAsterConfig } from "../aster/config";
 import { syncAsterFuturesBalance } from "../aster/store";
+import type { AsterSymbolRules } from "../aster/types";
 import { getPancakeswapConfig } from "../pancakeswap/config";
 import { decideExecution, prefetchUserData, type RiskDecision, type TradeIntentInput } from "./riskEngine";
 
@@ -146,11 +148,48 @@ async function skipJob(
   } as any);
 }
 
+function fixedAsterValue(value: number, decimals: number): string {
+  return value.toFixed(decimals).replace(/\.?0+$/, "");
+}
+
 function quantityFromNotional(notionalUsd: number, price: number): string | null {
   if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
   if (!Number.isFinite(price) || price <= 0) return null;
   const quantity = (notionalUsd / price).toFixed(6);
   return Number(quantity) > 0 ? quantity : null;
+}
+
+export function normalizeAsterOrderValues(input: {
+  notionalUsd: number;
+  referencePrice: number;
+  requestedLimitPrice?: string | null;
+  side: "BUY" | "SELL";
+  orderType: "MARKET" | "LIMIT";
+  rules: AsterSymbolRules;
+}): { quantity: string; limitPrice?: string; actualNotionalUsd: number } | null {
+  if (!Number.isFinite(input.notionalUsd) || input.notionalUsd <= 0) return null;
+  const rawPrice = input.orderType === "LIMIT"
+    ? Number(input.requestedLimitPrice ?? input.referencePrice)
+    : input.referencePrice;
+  if (!Number.isFinite(rawPrice) || rawPrice <= 0) return null;
+
+  const priceSteps = rawPrice / input.rules.tickSize;
+  const normalizedPrice = (input.side === "BUY" ? Math.floor(priceSteps) : Math.ceil(priceSteps)) * input.rules.tickSize;
+  if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) return null;
+
+  const quantitySteps = Math.floor((input.notionalUsd / normalizedPrice) / input.rules.stepSize);
+  const quantity = quantitySteps * input.rules.stepSize;
+  const minimumQuantity = Math.max(input.rules.minQuantity, input.rules.minNotionalUsd / normalizedPrice);
+  const actualNotionalUsd = quantity * normalizedPrice;
+  if (!Number.isFinite(quantity) || quantity < minimumQuantity || actualNotionalUsd <= 0) return null;
+
+  return {
+    quantity: fixedAsterValue(quantity, input.rules.quantityPrecision),
+    ...(input.orderType === "LIMIT"
+      ? { limitPrice: fixedAsterValue(normalizedPrice, input.rules.pricePrecision) }
+      : {}),
+    actualNotionalUsd,
+  };
 }
 
 async function resolveAsterSizingPrice(intent: TradeIntentInput): Promise<number> {
@@ -332,7 +371,14 @@ async function runDispatchGate(
   const rsi14 = computeRsi14(rsiCandles.map((c) => c.close));
   const bullRegime = isBullRegime((k4hExt.length >= k4h.length ? k4hExt : k4h).map((c) => c.close));
 
-  // ── ML score (mandatory; fail closed on any failure — R1.3) ──
+  // ── Opus trade-judgment gate (mandatory; fail closed on any failure — R1.3) ──
+  // Replaces the old statistical ML score: meta-v22-definitive's locked
+  // walk-forward test proved it has no usable edge (calibrated probs never
+  // exceed 0.243 against a 0.52 threshold — see
+  // docs/prd/2026-07-17-honest-ml-validation-gate.md). judgeTradeWithOpus's
+  // confidence (0-1) fills the same mlScore slot the pure gate already
+  // consumes; the gate's own logic (universe/tier/RSI/regime/threshold) is
+  // unchanged. See src/server/analysis/llm-trade-judge.ts.
   let mlScore: number | null = null;
   let mlRegime = "UNKNOWN";
   let mlUnreachable = false;
@@ -340,15 +386,29 @@ async function runDispatchGate(
     if (!marketDataAvailable) {
       mlUnreachable = true;
     } else {
-      const result = runInference({
-        symbol: intent.symbol,
-        direction,
-        klines15m: k15,
-        klines1h: k1h,
-        klines4h: k4h,
-      });
-      mlScore = result.proba;
-      mlRegime = result.regime;
+      const apiKey = getDbEnv().ANTHROPIC_API_KEY;
+      if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+      const entry = Number(row?.limitPrice) || k4h[k4h.length - 1]?.close || 0;
+      const stopLoss = Number(row?.stopLossPrice) || 0;
+      const takeProfit = Number(row?.takeProfitPrice) || 0;
+      const judgment = await judgeTradeWithOpus(
+        {
+          symbol: intent.symbol,
+          direction,
+          entry,
+          stopLoss,
+          takeProfit,
+          tierScore,
+          atrPct4h,
+          rsi14,
+          bullRegime,
+          source: row?.source ?? "unknown",
+          thesis: row?.thesis ?? "",
+        },
+        apiKey,
+      );
+      mlScore = judgment.confidence;
+      mlRegime = `OPUS_${judgment.approved ? "APPROVED" : "REJECTED"}: ${judgment.reasoning}`.slice(0, 250);
     }
   } catch (e: any) {
     mlUnreachable = true;
@@ -526,7 +586,10 @@ async function fanOutAster(
 
   for (const agent of agents) {
     const now = Date.now();
-    if (agent.agentStatus !== "approved" || agent.builderStatus !== "approved") {
+    const builderApproved = agent.builderAddress
+      ? agent.builderStatus === "approved"
+      : agent.builderStatus === "approved" || agent.builderStatus === "not_required";
+    if (agent.agentStatus !== "approved" || !builderApproved) {
       const reason = "aster_approval_not_confirmed";
       await writeAuditLog(agent.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; aster; reason:${reason}`);
       results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason });
@@ -557,7 +620,11 @@ async function fanOutAster(
       results.push({ userId: agent.userId, provider: "aster", status: "skipped", reason });
       continue;
     }
-    const notionalUsd = approvedDecision.notionalUsd * sizeFactor;
+    // Absolute pilot guard applied after every account-specific risk decision.
+    const notionalUsd = Math.min(
+      approvedDecision.notionalUsd * sizeFactor,
+      asterConfig.maxOrderNotionalUsd,
+    );
 
     const idem = await idempotencyKey(agent.userId, intentId, "aster");
     const queuedAt = Date.now();
@@ -619,17 +686,33 @@ async function fanOutAster(
       continue;
     }
 
-    const quantity = quantityFromNotional(notionalUsd, sizingPrice);
-    if (!quantity) {
-      const reason = "zero_quantity";
+    let normalizedOrder: ReturnType<typeof normalizeAsterOrderValues>;
+    try {
+      const rules = await new AsterApiClient().getSymbolRules(intent.symbol);
+      normalizedOrder = normalizeAsterOrderValues({
+        notionalUsd,
+        referencePrice: sizingPrice,
+        requestedLimitPrice: intent.limitPrice,
+        side: intent.side,
+        orderType: intent.orderType,
+        rules,
+      });
+    } catch (error: any) {
+      const reason = "symbol_rules_unavailable";
+      await skipJob(job.id, "aster", reason, { error: String(error?.message ?? error).slice(0, 200) });
+      results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+    if (!normalizedOrder) {
+      const reason = "notional_below_symbol_minimum";
       await skipJob(job.id, "aster", reason, { notionalUsd, sizingPrice });
       results.push({ userId: agent.userId, provider: "aster", jobId: job.id, status: "skipped", reason });
       continue;
     }
 
     await db.update(executionJobs).set({
-      notionalUsd: notionalUsd.toFixed(2), quantity, leverage: approvedDecision.leverage,
-      limitPrice: String(sizingPrice), updatedAt: Date.now(),
+      notionalUsd: normalizedOrder.actualNotionalUsd.toFixed(2), quantity: normalizedOrder.quantity, leverage: approvedDecision.leverage,
+      limitPrice: normalizedOrder.limitPrice ?? String(sizingPrice), updatedAt: Date.now(),
     } as any).where(eq(executionJobs.id, job.id));
 
     if (!asterConfig.liveOrderSubmissionEnabled) {
@@ -675,7 +758,7 @@ async function fanOutAster(
           const adapter = new AsterExecutionAdapter(agent.id);
           const receipt = await adapter.submitOrder(job.id, {
             symbol: intent.symbol, side: intent.side, type: intent.orderType,
-            quantity, price: intent.limitPrice ?? undefined,
+            quantity: normalizedOrder.quantity, price: normalizedOrder.limitPrice,
             newClientOrderId: idem,
             leverage: approvedDecision.leverage,
             stopLossPrice: intent.stopLossPrice ?? undefined,
