@@ -207,6 +207,68 @@ p10=32/p50=61/p90=93, shorts p10=9/p50=26/p90=62 — much broader spread than
 Money Flow's clean sign-alignment, no obvious single-bar threshold. Left as
 an open item, not a finding either way.
 
+## Locked-gate FAIL post-mortem: volatility-compression is the only real signal in the 21-feature set (2026-07-19/20)
+
+Follow-up analysis of `8510997`'s FAILED locked walk-forward run
+(`scripts/data/models/locked-gate-2026-07-18/candidates.jsonl`, 442,435
+candidates — this file is 484MB and was never pushed; do not re-add it to
+git, regenerate locally from the run script if needed). The gate's own
+verdict was "0 qualified trades, calibrated probs cap at 0.243 vs 0.52
+threshold" — technically correct but incomplete: the model has a small, real,
+reproducible signal, it's just nowhere near strong enough alone.
+
+**The model isn't blind, just badly calibrated.** Actual winners score
+consistently higher raw probability than losers, in BOTH independent
+partitions (not a fluke):
+
+| | n | mean prob | median prob |
+|---|---|---|---|
+| validation wins | 12,433 | 0.1956 | 0.2038 |
+| validation losses | 53,214 | 0.1879 | 0.1855 |
+| test wins | 12,676 | 0.1957 | 0.2038 |
+| test losses | 54,106 | 0.1880 | 0.1855 |
+
+**Univariate feature diagnosis** (Cohen's d, wins vs losses, validation+test
+combined, n=132,429): of all 21 features, only two have any real separation,
+both volatility-compression measures — everything else (RSI, MACD, AO, trend,
+Money Flow "m7s", all three timeframes) is d < 0.05, indistinguishable:
+
+| feature | win mean | loss mean | Cohen's d |
+|---|---|---|---|
+| `m15_atr_pct` | 0.437 | 0.506 | **-0.26** |
+| `m15_bb_w` | 1.869 | 2.188 | **-0.22** |
+| `h1_bb_w` | 4.098 | 4.313 | -0.08 |
+| all others | — | — | < 0.05 |
+
+**Joint effect is much stronger than either feature alone.** Quartile-bucketing
+both `m15_atr_pct` and `m15_bb_w` together and reading win rate per cell
+(n=132,429, both extreme corners are large-sample, not noise):
+
+- Both lowest quartile (tightest 15m range): **23.4%** win rate (n=21,862)
+- Both highest quartile (widest 15m range): **12.5%** win rate (n=22,342)
+- Overall baseline: 19.0%
+
+That's a ~1.9x relative win-rate swing from a single joint volatility-regime
+split — bigger than anything the 21-feature classifier ever found on its own.
+**Actionable**: a simple rule-based pre-filter (skip entries when 15m ATR% and
+15m BB width are both in the top quartile) is worth backtesting as a
+standalone gate before touching the ML feature set again. This also directly
+supports the run's own conclusion — reclassify as a label/feature-definition
+problem, not a training problem — since the one thing that clearly matters
+(volatility regime) isn't encoded as a first-class gate anywhere in the
+current pipeline, it's buried as one of 21 roughly-equal-weighted inputs to a
+classifier that can't tell it apart from noise features.
+
+**No symbol-concentration artifact**: win rate across all 49 symbols sits in
+a tight 13.7%–23.5% band around the 19.0% overall average (checked to rule
+out one broken/mislabeled pair explaining the pattern) — the compression
+effect is general, not a single-asset data issue.
+
+25,109 raw false-negative records (actual win, `partition` validation/test,
+never cleared 0.52) extracted to `/tmp/candidates-analysis/false-negatives.jsonl`
+for further inspection — not committed (ephemeral, regenerate from the source
+JSONL if needed).
+
 ## What To Do Next (Future Builder Agents)
 
 ### Short-term (before live dispatch):
@@ -234,3 +296,28 @@ an open item, not a finding either way.
 5. `docs/analysis/ARCHITECTURE.md` — Full file tree and pipeline
 6. `docs/analysis/API.md` — All API routes and how they're called
 7. `semantic-memory.md` in Obsidian vault — All decisions and empirical results
+
+## Volatility-compression filter: win rate improves, R-expectancy gets worse (2026-07-20)
+
+Follow-up on the "Locked-gate FAIL post-mortem" section above's actionable
+item ("a simple rule-based pre-filter... is worth backtesting as a
+standalone gate"). Tested honestly: quartile thresholds for `m15_atr_pct`
+and `m15_bb_w` derived from the **train** partition only
+(`m15_atr_pct <= 0.310`, `m15_bb_w <= 1.113`), then applied to validation
+and test partitions, evaluated on real `netR` (fee/funding-inclusive)
+economics, not win rate alone.
+
+| Partition | Unfiltered | Filtered (both features bottom quartile) |
+|---|---|---|
+| Validation (n=65,647 / 7,755) | WR 18.9%, expectancy -0.257R, PF 0.64 | WR 22.8%, expectancy -0.328R, PF 0.61 |
+| Test, evaluated once (n=66,782 / 12,311) | WR 19.0%, expectancy -0.299R, PF 0.60 | WR 24.0%, expectancy **-0.407R**, PF 0.57 |
+
+**Correction to the prior note**: the win-rate improvement (19%→24%) is real
+and reproduces on held-out test, but it does NOT translate to better
+expectancy — average win size shrinks enough in the low-volatility regime to
+make net economics worse, not better. Win rate was the wrong metric to
+judge this filter by. **Not actionable as a standalone gate.** (Caveat: this
+entire corpus is the failed locked-gate's candidate set — every row here is
+already below the model's qualifying threshold, so the unfiltered baseline
+itself is negative; this result is about whether the compression filter
+improves or worsens that baseline, not about absolute profitability.)
