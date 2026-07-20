@@ -25,6 +25,10 @@
     "@hono/trpc-server": "^0.3.0",
     "@hookform/resolvers": "^5.2.2",
     "@ledgerhq/connect-kit-loader": "^1.1.8",
+    "@pancakeswap/permit2-sdk": "1.2.0",
+    "@pancakeswap/sdk": "5.9.0",
+    "@pancakeswap/smart-router": "7.6.1",
+    "@pancakeswap/universal-router-sdk": "1.5.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.7",
@@ -100,10 +104,10 @@
     "concurrently": "^9.0.0",
     "drizzle-kit": "^0.31.10",
     "playwright": "^1.61.1",
+    "tsx": "^4.23.1",
     "typescript": "5.9.3",
     "vite": "^7.1.7",
-    "wrangler": "^4.111.0",
-    "tsx": "^4.23.1"
+    "wrangler": "^4.111.0"
   },
   "packageManager": "pnpm@10.8.0",
   "engines": {
@@ -117,7 +121,8 @@
       "sharp"
     ],
     "overrides": {
-      "ws@>=8.0.0 <8.21.1": "8.21.1"
+      "ws@>=8.0.0 <8.21.1": "8.21.1",
+      "viem": "$viem"
     }
   }
 }

@@ -14,6 +14,19 @@ interface WalletConnectModalProps {
   onConnected?: (address: string, walletType: string) => void;
 }
 
+/** Extracts a readable message from a caught wallet/connector error. Many
+ *  EIP-1193 provider rejections are plain objects ({code, message, data}),
+ *  not Error instances — falling back to String(obj) on those renders the
+ *  literal text "[object Object]" to the user. */
+function getWalletErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message || fallback;
+  if (error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message || fallback;
+  }
+  if (typeof error === "string" && error) return error;
+  return fallback;
+}
+
 type WalletOption = {
   id: string;
   name: string;
@@ -275,7 +288,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
       })
       .catch((error: unknown) => {
         clearConnectTimeout();
-        const msg = error instanceof Error ? error.message : String(error || "Wallet connection was rejected.");
+        const msg = getWalletErrorMessage(error, "Wallet connection was rejected.");
         if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("user refused")) {
           setStep("select");
         } else {
@@ -317,7 +330,7 @@ export default function WalletConnectModal({ isOpen, onClose, onConnected }: Wal
       setDirectAddress(addr);
       persistWallet(addr, "ledger", 1);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getWalletErrorMessage(err, "Failed to connect to Ledger device.");
       const isUserCancel = msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("user refused");
       const isTransportError = msg.toLowerCase().includes("webusb") || msg.toLowerCase().includes("hid") || msg.toLowerCase().includes("transport") || msg.toLowerCase().includes("bluetooth") || msg.toLowerCase().includes("not supported");
       if (isUserCancel) {

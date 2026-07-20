@@ -168,4 +168,53 @@ export const execRouter = router({
       } as any);
       return { jobId: job.id, status, receipt };
     }),
+
+  /** Re-checks a submitted PancakeSwap job's on-chain transaction status. */
+  syncPancakeswapJob: protectedProcedure
+    .input(z.object({ jobId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [job] = await db.select().from(executionJobs)
+        .where(and(eq(executionJobs.id, input.jobId), eq(executionJobs.userId, ctx.user.id)))
+        .limit(1);
+      if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Execution job not found." });
+      if (job.provider !== "pancakeswap" || !job.pancakeswapDelegationId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only PancakeSwap jobs can be synced here." });
+      }
+      if (!job.orderId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "PancakeSwap job has no transaction hash yet." });
+
+      const { getPublicClient } = await import("../pancakeswap/client");
+      const receipt = await getPublicClient().getTransactionReceipt({ hash: job.orderId as `0x${string}` });
+      const status = receipt.status === "success" ? "filled" : "rejected";
+      const now = Date.now();
+      await db.update(executionJobs).set({
+        status,
+        ...(status === "filled" ? { filledAt: now } : {}),
+        updatedAt: now,
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id,
+        provider: "pancakeswap",
+        eventType: `sync:${status}`,
+        payloadJson: JSON.stringify({ raw: receipt }),
+        occurredAt: now,
+      } as any);
+      return { jobId: job.id, status, receipt };
+    }),
+
+  /** PancakeSwap spot swaps settle atomically on submission — there is nothing
+   *  to cancel post-submission (matches PancakeswapExecutionAdapter.cancelOrder). */
+  cancelPancakeswapJob: protectedProcedure
+    .input(z.object({ jobId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [job] = await db.select().from(executionJobs)
+        .where(and(eq(executionJobs.id, input.jobId), eq(executionJobs.userId, ctx.user.id)))
+        .limit(1);
+      if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "Execution job not found." });
+      if (job.provider !== "pancakeswap") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only PancakeSwap jobs can be cancelled here." });
+      }
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "PancakeSwap spot swaps cannot be cancelled once submitted." });
+    }),
 });

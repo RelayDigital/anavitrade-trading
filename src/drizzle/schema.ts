@@ -265,6 +265,61 @@ export type AsterAgentAccount = typeof asterAgentAccounts.$inferSelect;
 export type InsertAsterAgentAccount = typeof asterAgentAccounts.$inferInsert;
 
 /**
+ * Non-custodial PancakeSwap delegation (Permit2 AllowanceTransfer model) — the
+ * LIVE execution path. The user grants a capped, expiring allowance on a token
+ * to Anavitrade's executor address via an off-chain-signed PermitSingle. Funds
+ * never leave the user's wallet except for the exact pulled trade amount,
+ * immediately swapped and delivered back to the user. One row per (user, token).
+ */
+export const pancakeswapDelegations = sqliteTable("pancakeswap_delegations", {
+  id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+  userId: integer({ mode: "number" }).notNull(),
+  walletAddress: text().notNull(),
+  tokenAddress: text().notNull(),
+  spenderAddress: text().notNull(),
+  amountCap: text().notNull(),
+  expiration: integer({ mode: "number" }).notNull(),
+  nonce: integer({ mode: "number" }).notNull(),
+  sigDeadline: integer({ mode: "number" }).notNull(),
+  signature: text(),
+  permitTxHash: text(),
+  status: text().default("pending").notNull(), // pending | active | expired | revoked
+  lastValidatedAt: integer({ mode: "number" }),
+  revokedAt: integer({ mode: "number" }),
+  createdAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+  updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+});
+
+export type PancakeswapDelegation = typeof pancakeswapDelegations.$inferSelect;
+export type InsertPancakeswapDelegation = typeof pancakeswapDelegations.$inferInsert;
+
+export const pancakeswapDelegationUserTokenIdx = uniqueIndex("pancakeswap_delegations_user_token_idx")
+  .on(pancakeswapDelegations.userId, pancakeswapDelegations.tokenAddress);
+
+/**
+ * Custodial agent-wallet scaffold — NOT the live path (see docs). Mirrors
+ * asterAgentAccounts's shape, but unlike Aster's Agent (which Aster's own
+ * exchange contract restricts to perps-only/no-withdraw), a key stored here
+ * has no protocol-level restriction: it is genuine full custody of whatever
+ * is deposited to it. Kept inert (no dispatch wiring) until/unless a future
+ * decision explicitly promotes this path.
+ */
+export const pancakeswapAgentAccounts = sqliteTable("pancakeswap_agent_accounts", {
+  id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+  userId: integer({ mode: "number" }).notNull(),
+  signerAddress: text().notNull(),
+  encryptedSignerPrivateKey: text().notNull(),
+  status: text().default("pending_approval").notNull(),
+  lastValidatedAt: integer({ mode: "number" }),
+  revokedAt: integer({ mode: "number" }),
+  createdAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+  updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
+});
+
+export type PancakeswapAgentAccount = typeof pancakeswapAgentAccounts.$inferSelect;
+export type InsertPancakeswapAgentAccount = typeof pancakeswapAgentAccounts.$inferInsert;
+
+/**
  * Per-user CEX (centralized exchange) API-key connections for non-custodial
  * copytrading. Key custody is deliberately SEPARATE from aster_agent_accounts
  * (handoff rule). CEXs need both an apiKey and an apiSecret (some also a
@@ -327,6 +382,7 @@ export const executionJobs = sqliteTable("execution_jobs", {
   userId: integer({ mode: "number" }).notNull(),
   asterAgentAccountId: integer({ mode: "number" }),
   cexConnectionId: integer({ mode: "number" }),
+  pancakeswapDelegationId: integer({ mode: "number" }),
   provider: text().default("aster").notNull(),
   riskApproved: integer({ mode: "boolean" }).default(false).notNull(),
   symbol: text().notNull(),

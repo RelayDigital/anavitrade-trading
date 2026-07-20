@@ -26,3 +26,4 @@ scripts/data/models/*/regressor.pkl
 scripts/data/models/*/calibrator.pkl
 scripts/data/models/*/*.pkl
 scripts/ml/venv/
+node_modules.previous/

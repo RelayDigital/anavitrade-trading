@@ -63,6 +63,47 @@ function validateAsterRegistrationTypedData(input: {
   }
 }
 
+/**
+ * Aster's EIP-712 signing domain uses a fixed chainId (1666 mainnet / 714
+ * testnet) purely as a signature-domain separator — it's not a real chain
+ * (Aster's own SDK examples sign it with a raw private key, no wallet/network
+ * concept). Wallets that strictly validate eth_signTypedData_v4's
+ * domain.chainId against the currently connected network (Rabby, and
+ * MetaMask in some configurations) refuse to sign otherwise, so the wallet
+ * must actually be switched/added to that chainId first. The RPC endpoint
+ * behind this is a read-only stub (src/server/worker.ts,
+ * /api/aster-chain-rpc/:network) — it exists solely to pass wallet_addEthereumChain's
+ * RPC-liveness check and rejects any state-changing call.
+ */
+const ASTER_SIGNING_CHAINS: Record<number, { network: "mainnet" | "testnet"; chainName: string }> = {
+  1666: { network: "mainnet", chainName: "Aster Signature Domain (Mainnet)" },
+  714: { network: "testnet", chainName: "Aster Signature Domain (Testnet)" },
+};
+
+async function switchOrAddAsterSigningChain(provider: Eip1193Provider, signatureChainId: number): Promise<void> {
+  const config = ASTER_SIGNING_CHAINS[signatureChainId];
+  if (!config) throw new Error("Unsupported Aster signature chain.");
+  const hexChainId = `0x${signatureChainId.toString(16)}`;
+
+  try {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexChainId }] });
+    return;
+  } catch (error: any) {
+    const notYetAdded = error?.code === 4902 || /unrecognized chain|not.*been added|4902/i.test(String(error?.message ?? ""));
+    if (!notYetAdded) throw error;
+  }
+
+  await provider.request({
+    method: "wallet_addEthereumChain",
+    params: [{
+      chainId: hexChainId,
+      chainName: config.chainName,
+      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+      rpcUrls: [`${window.location.origin}/api/aster-chain-rpc/${config.network}`],
+    }],
+  });
+}
+
 export async function signAsterRegistrationTypedData(input: {
   provider: Eip1193Provider | null | undefined;
   account: `0x${string}`;
@@ -77,6 +118,8 @@ export async function signAsterRegistrationTypedData(input: {
     signatureChainId: input.signatureChainId,
     typedData: input.typedData,
   });
+
+  await switchOrAddAsterSigningChain(input.provider, input.signatureChainId);
 
   const signature = await input.provider.request({
     method: "eth_signTypedData_v4",

@@ -26,6 +26,7 @@ import {
   updateBinanceSettings, getTradeExecutions, getFuturesBalance,
 } from "./binance";
 import { asterRouter } from "./aster/router";
+import { pancakeswapRouter } from "./pancakeswap/router";
 import { cexRouter } from "./cex/router";
 import { execRouter } from "./execution/router";
 import { inferenceRouter } from "./ml/inference-router";
@@ -34,6 +35,7 @@ import { authRouter } from "./auth/router";
 export const appRouter = router({
   system: systemRouter,
   aster: asterRouter,
+  pancakeswap: pancakeswapRouter,
   cex: cexRouter,
   exec: execRouter,
   inference: inferenceRouter,

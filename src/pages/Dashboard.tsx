@@ -23,6 +23,7 @@ import MarketTickerRail from "@/components/dashboard/MarketTickerRail";
 
 // Shared components
 import WalletPanel from "@/components/WalletPanel";
+import WalletAssetsPanel from "@/components/WalletAssetsPanel";
 import ConnectedExchangesPanel from "@/components/ConnectedExchangesPanel";
 import WalletConnectModal from "@/components/WalletConnectModal";
 import TradingViewMiniWidgets from "@/components/TradingViewMiniWidgets";
@@ -219,17 +220,20 @@ export default function Dashboard() {
             liveTotalEquity={liveBalanceUsd}
           />
 
-          <WalletPanel
-            walletAddress={web3Session?.walletAddress ?? null}
-            walletType={web3Session?.walletType ?? null}
-            copytradeEnabled={web3Session?.copytradeEnabled ?? false}
-            killSwitchActive={web3Session?.killSwitchActive ?? false}
-            maxPositionSize={web3Session?.maxPositionSizeUsd != null ? Number(web3Session.maxPositionSizeUsd) : undefined}
-            maxDailyLoss={web3Session?.maxDailyLossPct != null ? Number(web3Session.maxDailyLossPct) : undefined}
-            onKillSwitch={(active) => toggleWeb3Kill.mutate({ active })}
-            onRevoke={() => revokeWeb3.mutate()}
-            onConnected={() => refetchWeb3()}
-          />
+          <div className="flex flex-col gap-6">
+            <WalletPanel
+              walletAddress={web3Session?.walletAddress ?? null}
+              walletType={web3Session?.walletType ?? null}
+              copytradeEnabled={web3Session?.copytradeEnabled ?? false}
+              killSwitchActive={web3Session?.killSwitchActive ?? false}
+              maxPositionSize={web3Session?.maxPositionSizeUsd != null ? Number(web3Session.maxPositionSizeUsd) : undefined}
+              maxDailyLoss={web3Session?.maxDailyLossPct != null ? Number(web3Session.maxDailyLossPct) : undefined}
+              onKillSwitch={(active) => toggleWeb3Kill.mutate({ active })}
+              onRevoke={() => revokeWeb3.mutate()}
+              onConnected={() => refetchWeb3()}
+            />
+            <WalletAssetsPanel walletAddress={web3Session?.walletAddress} chainId={web3Session?.chainId} />
+          </div>
         </div>
 
         {/* Demo Trade History (only in demo mode) */}

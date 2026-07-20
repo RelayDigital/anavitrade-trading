@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
-  cexConnections, asterAgentAccounts, executionJobs, orderEvents,
+  cexConnections, asterAgentAccounts, pancakeswapDelegations, executionJobs, orderEvents,
   tradeIntents, coinlegsSignals, mlInferences,
 } from "../../drizzle/schema";
 import { getDb, writeAuditLog } from "../db";
@@ -23,6 +23,7 @@ import { AsterExecutionAdapter } from "../aster/adapter";
 import { AsterApiClient } from "../aster/client";
 import { getAsterConfig } from "../aster/config";
 import { syncAsterFuturesBalance } from "../aster/store";
+import { getPancakeswapConfig } from "../pancakeswap/config";
 import { decideExecution, prefetchUserData, type RiskDecision, type TradeIntentInput } from "./riskEngine";
 
 type ApprovedRiskDecision = Extract<RiskDecision, { approved: true }>;
@@ -734,9 +735,219 @@ async function fanOutAster(
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * PANCAKESWAP FAN-OUT – mirrors the intent to every active Permit2 delegation
+ * (the live path). Sizing reuses the same venue-neutral market reference
+ * price as Aster (resolveAsterSizingPrice) — the actual PancakeSwap token/
+ * pool resolution only happens inside the adapter's submitOrder(), which is
+ * unreachable while liveOrderSubmissionEnabled is false (default).
+ * ═══════════════════════════════════════════════════════════════════ */
+
+async function fanOutPancakeswap(
+  intent: TradeIntentInput,
+  intentId: number,
+  sizeFactor = 1,
+) {
+  const db = getDb();
+  const pancakeswapConfig = getPancakeswapConfig();
+  const delegations = await db.select().from(pancakeswapDelegations)
+    .where(eq(pancakeswapDelegations.status, "active"));
+  const preloaded = delegations.length > 0
+    ? await prefetchUserData([...new Set(delegations.map((d) => d.userId))])
+    : undefined;
+
+  const results: Array<{ userId: number; provider: string; status: string; reason?: string; jobId?: number }> = [];
+
+  for (const delegation of delegations) {
+    const now = Date.now();
+    if (delegation.expiration <= Math.floor(now / 1000)) {
+      await db.update(pancakeswapDelegations).set({ status: "expired", updatedAt: now } as any)
+        .where(eq(pancakeswapDelegations.id, delegation.id));
+      const reason = "pancakeswap_delegation_expired";
+      await writeAuditLog(delegation.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; pancakeswap; reason:${reason}`);
+      results.push({ userId: delegation.userId, provider: "pancakeswap", status: "skipped", reason });
+      continue;
+    }
+
+    const decision = await decideExecution(intent, delegation.userId, {
+      id: 0, // PancakeSwap delegations do not have a cexConnection
+      status: "active",
+      copytradeEnabled: true,
+      killSwitchActive: false,
+      consecutiveLosses: 0,
+      circuitBreakerUntil: null,
+      highWaterMark: null,
+    }, preloaded);
+    const approvedDecision = requireAuthoritativeRiskDecision(decision);
+    if (!approvedDecision) {
+      const reason = "reason" in decision ? decision.reason : "non_positive_risk_notional";
+      await writeAuditLog(delegation.userId, "EXEC_RISK_SKIPPED", `intent:${intentId}; pancakeswap; reason:${reason}`);
+      results.push({ userId: delegation.userId, provider: "pancakeswap", status: "skipped", reason });
+      continue;
+    }
+    const notionalUsd = approvedDecision.notionalUsd * sizeFactor;
+
+    const idem = await idempotencyKey(delegation.userId, intentId, "pancakeswap");
+    const queuedAt = Date.now();
+
+    await db.insert(executionJobs).values({
+      tradeIntentId: intentId,
+      userId: delegation.userId,
+      pancakeswapDelegationId: delegation.id,
+      provider: "pancakeswap",
+      symbol: intent.symbol,
+      side: intent.side,
+      orderType: intent.orderType,
+      status: "queued",
+      riskApproved: true,
+      notionalUsd: notionalUsd.toFixed(2),
+      idempotencyKey: idem,
+      queuedAt,
+      updatedAt: queuedAt,
+    } as any).onConflictDoNothing();
+
+    const [job] = await db.select().from(executionJobs)
+      .where(and(eq(executionJobs.userId, delegation.userId), eq(executionJobs.idempotencyKey, idem)))
+      .limit(1);
+    if (!job || job.status !== "queued") {
+      results.push({ userId: delegation.userId, provider: "pancakeswap", status: job ? "duplicate" : "skipped" });
+      continue;
+    }
+
+    let sizingPrice: number;
+    try {
+      sizingPrice = await resolveAsterSizingPrice(intent);
+    } catch (e: any) {
+      const reason = "price_unavailable";
+      await skipJob(job.id, "pancakeswap", reason, { error: String(e?.message).slice(0, 200) });
+      results.push({ userId: delegation.userId, provider: "pancakeswap", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
+    const quantity = quantityFromNotional(notionalUsd, sizingPrice);
+    if (!quantity) {
+      const reason = "zero_quantity";
+      await skipJob(job.id, "pancakeswap", reason, { notionalUsd, sizingPrice });
+      results.push({ userId: delegation.userId, provider: "pancakeswap", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
+    if (Number(quantity) * sizingPrice > Number(delegation.amountCap)) {
+      const reason = "exceeds_delegation_cap";
+      await skipJob(job.id, "pancakeswap", reason, { notionalUsd, amountCap: delegation.amountCap });
+      results.push({ userId: delegation.userId, provider: "pancakeswap", jobId: job.id, status: "skipped", reason });
+      continue;
+    }
+
+    await db.update(executionJobs).set({
+      notionalUsd: notionalUsd.toFixed(2), quantity,
+      limitPrice: String(sizingPrice), updatedAt: Date.now(),
+    } as any).where(eq(executionJobs.id, job.id));
+
+    if (!pancakeswapConfig.liveOrderSubmissionEnabled) {
+      const stagedAt = Date.now();
+      await db.update(executionJobs).set({
+        status: "staged",
+        errorMessage: null,
+        updatedAt: stagedAt,
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id,
+        provider: "pancakeswap",
+        eventType: "staged",
+        payloadJson: JSON.stringify({
+          reason: "live_order_submission_disabled",
+          environment: pancakeswapConfig.environment,
+        }),
+        occurredAt: stagedAt,
+      } as any);
+      await writeAuditLog(delegation.userId, "EXEC_ORDER_STAGED",
+        `intent:${intentId}; pancakeswap; live_order_submission_disabled`);
+      results.push({
+        userId: delegation.userId,
+        provider: "pancakeswap",
+        jobId: job.id,
+        status: "staged",
+        reason: "live_order_submission_disabled",
+      });
+      continue;
+    }
+
+    // Submit via PancakeSwap adapter with retry — unreachable while the live
+    // flag above is false (default in every environment through this pass).
+    let finalStatus: "submitted" | "filled" | "rejected" | "error" = "submitted";
+    await enqueue(delegation.id, async () => {
+      let attempts = 0;
+      const maxAttempts = 3;
+      const backoff = [1000, 2000, 4000];
+      let lastError: Error | undefined;
+
+      while (attempts < maxAttempts) {
+        try {
+          attempts++;
+          // Keep the optional PancakeSwap SDK out of unrelated Worker/test
+          // paths. Its transitive SDK graph is browser-heavy and is only
+          // needed when a live PancakeSwap job is actually submitted.
+          const { PancakeswapExecutionAdapter } = await import("../pancakeswap/adapter");
+          const adapter = new PancakeswapExecutionAdapter(delegation.id);
+          const receipt = await adapter.submitOrder(job.id, {
+            tokenInSymbol: intent.side === "BUY" ? "USDT" : intent.symbol,
+            tokenOutSymbol: intent.side === "BUY" ? intent.symbol : "USDT",
+            quantity,
+            newClientOrderId: idem,
+          });
+
+          finalStatus = receipt.status === "filled" ? "filled" : receipt.status === "rejected" ? "rejected" : "submitted";
+          await db.update(executionJobs).set({
+            status: finalStatus,
+            orderId: receipt.orderId,
+            submittedAt: Date.now(),
+            ...(receipt.status === "filled" ? { filledAt: Date.now() } : {}),
+            ...(receipt.status === "rejected" ? { errorMessage: "pancakeswap_order_rejected" } : {}),
+            updatedAt: Date.now(),
+          } as any).where(eq(executionJobs.id, job.id));
+
+          await db.insert(orderEvents).values({
+            executionJobId: job.id, provider: "pancakeswap", eventType: receipt.status,
+            payloadJson: JSON.stringify({ raw: receipt.raw ?? {}, attempt: attempts }),
+            occurredAt: Date.now(),
+          } as any);
+
+          await writeAuditLog(delegation.userId, "EXEC_ORDER_SUBMITTED",
+            `intent:${intentId}; pancakeswap:${receipt.orderId}; attempt:${attempts}`);
+          return;
+        } catch (e: any) {
+          lastError = e;
+          if (attempts < maxAttempts) {
+            const delay = backoff[attempts - 1];
+            console.warn(`[dispatch] PancakeSwap attempt ${attempts}/${maxAttempts} failed for job ${job.id}, retrying in ${delay}ms: ${e?.message}`);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+
+      finalStatus = "error";
+      await db.update(executionJobs).set({
+        status: "error", errorMessage: String(lastError?.message).slice(0, 300), updatedAt: Date.now(),
+      } as any).where(eq(executionJobs.id, job.id));
+      await db.insert(orderEvents).values({
+        executionJobId: job.id, provider: "pancakeswap", eventType: "rejected",
+        payloadJson: JSON.stringify({ error: String(lastError?.message).slice(0, 300), attempts }),
+        occurredAt: Date.now(),
+      } as any);
+      await writeAuditLog(delegation.userId, "EXEC_ORDER_FAILED",
+        `intent:${intentId}; pancakeswap; ${String(lastError?.message).slice(0, 120)}; attempts:${attempts}`);
+    });
+
+    results.push({ userId: delegation.userId, provider: "pancakeswap", jobId: job.id, status: finalStatus });
+  }
+
+  return results;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * MAIN ENTRY POINT
- * Fans out a TradeIntent to BOTH active CEX connections AND active
- * Aster agents. Each provider path is independent.
+ * Fans out a TradeIntent to active CEX connections, active Aster agents,
+ * and active PancakeSwap delegations. Each provider path is independent.
  * ═══════════════════════════════════════════════════════════════════ */
 
 export async function createExecutionJobsForIntent(intentId: number) {
@@ -779,8 +990,8 @@ export async function createExecutionJobsForIntent(intentId: number) {
     return { userId: connection.userId, exchange: connection.exchange, status: "skipped" as const, reason };
   }));
 
-  // Fan out to CEX and Aster in parallel
-  const [cexResults, asterResults] = await Promise.all([
+  // Fan out to CEX, Aster, and PancakeSwap in parallel
+  const [cexResults, asterResults, pancakeswapResults] = await Promise.all([
     Promise.allSettled(
       readyConnections.map(async (conn) => {
         const r = await fanOutCex(dispatchIntent, intentId, [conn], preloaded, sizeFactor);
@@ -794,12 +1005,20 @@ export async function createExecutionJobsForIntent(intentId: number) {
         return [{ userId: 0, provider: "aster" as const, status: "error" as const, reason: e?.message }];
       }
     })(),
+    (async () => {
+      try {
+        return await fanOutPancakeswap(dispatchIntent, intentId, sizeFactor);
+      } catch (e: any) {
+        return [{ userId: 0, provider: "pancakeswap" as const, status: "error" as const, reason: e?.message }];
+      }
+    })(),
   ]);
 
   const allResults = [
     ...navDeniedResults,
     ...cexResults.map((r) => (r.status === "fulfilled" ? r.value : { userId: 0, exchange: "error", status: "error" as const, reason: String(r.reason) })),
     ...asterResults,
+    ...pancakeswapResults,
   ];
 
   return { intentId, jobs: allResults };

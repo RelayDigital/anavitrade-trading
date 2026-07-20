@@ -19,6 +19,7 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
 const VerifyEmail = lazy(() => import("@/pages/VerifyEmail"));
 const AsterOnboarding = lazy(() => import("@/pages/AsterOnboarding"));
+const PancakeswapOnboarding = lazy(() => import("@/pages/PancakeswapOnboarding"));
 const LedgerOnboarding = lazy(() => import("@/pages/LedgerOnboarding"));
 const ExchangeOnboarding = lazy(() => import("@/pages/ExchangeOnboarding"));
 const AccountSettings = lazy(() => import("@/pages/AccountSettings"));
@@ -101,6 +102,9 @@ function AnimatedRoutes() {
             </Route>
             <Route path="/onboarding/aster">
               {() => <ProtectedRoute component={AsterOnboarding} />}
+            </Route>
+            <Route path="/onboarding/pancakeswap">
+              {() => <ProtectedRoute component={PancakeswapOnboarding} />}
             </Route>
             <Route path="/onboarding/ledger">
               {() => <ProtectedRoute component={LedgerOnboarding} />}

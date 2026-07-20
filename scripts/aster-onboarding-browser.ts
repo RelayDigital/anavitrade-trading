@@ -108,8 +108,16 @@ async function main() {
     if (signingCalls.length !== 1) throw new Error("Expected exactly one Aster typed-data signature, got " + signingCalls.length);
     if (!walletProof.lastAsterSignature) throw new Error("Aster signature was not captured");
     if ((walletProof.lastAsterTypedData as any)?.domain?.chainId !== expectedSignatureChainId) throw new Error("Captured Aster typed-data chainId mismatch");
-    if (walletProof.rpcCalls.some((call: { method: string }) => ["wallet_switchEthereumChain", "wallet_addEthereumChain", "personal_sign", "eth_signTypedData", "eth_signTypedData_v3"].includes(call.method))) {
+    // wallet_switchEthereumChain/wallet_addEthereumChain are now EXPECTED — the
+    // mock wallet starts on mainnet and refuses to sign unless it's actually on
+    // Aster's signing-domain chainId (see aster-injected-wallet.ts), matching
+    // strict real wallets like Rabby. Only the wrong/legacy signing methods stay forbidden.
+    if (walletProof.rpcCalls.some((call: { method: string }) => ["personal_sign", "eth_signTypedData", "eth_signTypedData_v3"].includes(call.method))) {
       throw new Error("Aster activation used a forbidden wallet method");
+    }
+    const switchOrAddCalls = walletProof.rpcCalls.filter((call: { method: string }) => ["wallet_switchEthereumChain", "wallet_addEthereumChain"].includes(call.method));
+    if (switchOrAddCalls.length === 0) {
+      throw new Error("Aster activation did not switch/add the signing-domain chain — Rabby-style wallets will reject the signature without this");
     }
 
     const body = await page.locator("body").innerText();

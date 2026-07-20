@@ -92,7 +92,7 @@ export type AsterStrategyOrderRequest = {
 };
 
 export type ExecutionAdapterReceipt = {
-  provider: "aster" | "cex";
+  provider: "aster" | "cex" | "pancakeswap";
   orderId: string;
   status: "accepted" | "filled" | "rejected" | "cancelled";
   raw?: unknown;

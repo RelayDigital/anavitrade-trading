@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useDisconnect } from "wagmi";
 import {
   Shield, Lock, Zap, CheckCircle2, HardDrive,
   Wifi, WifiOff, AlertTriangle, Eye, RefreshCw, ChevronDown,
-  ChevronUp, TrendingUp, Activity, Copy, ExternalLink
+  ChevronUp, TrendingUp, Activity, Copy, ExternalLink, LogOut
 } from "lucide-react";
 import WalletConnectModal from "./WalletConnectModal";
 
@@ -40,6 +41,7 @@ export default function WalletPanel({
   walletAddress, walletType, copytradeEnabled = false, killSwitchActive = false,
   maxPositionSize = 10, maxDailyLoss = 5, onKillSwitch, onRevoke, onConnected,
 }: WalletPanelProps) {
+  const { disconnect } = useDisconnect();
   const [modalOpen, setModalOpen] = useState(false);
   const [killActive, setKillActive] = useState(killSwitchActive);
   const [showDetails, setShowDetails] = useState(false);
@@ -267,6 +269,11 @@ export default function WalletPanel({
                     ) : (
                       <><RefreshCw className="w-3.5 h-3.5" /> Revoke Wallet Access</>
                     )}
+                  </button>
+
+                  <button onClick={() => disconnect()}
+                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-all bg-transparent border-border/30 text-muted-foreground hover:bg-muted/20 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+                    <LogOut className="w-3.5 h-3.5" /> Disconnect Wallet
                   </button>
                 </motion.div>
               )}
