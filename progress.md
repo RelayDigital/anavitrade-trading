@@ -397,3 +397,30 @@ Cross-referenced 6 Claude Code session logs from the past 4 days:
   present (~2.5 years) instead of 6 months, same ~20 altcoins, real-edge-report
   enabled, generous timeout, running solo. In progress.
 
+### Bottom-confluence hypothesis test (user's TradingView indicators) -- honest result after bug fix
+- User pushback was fair: I'd never actually tested their specific indicators
+  (Market Cipher B WaveTrend, LuxAlgo EQL, Premium/Discount zones) as a
+  dedicated long-entry-at-bottoms filter -- only folded generic
+  divergence/WaveTrend into an already-failed ML feature vector, and tested
+  ICR's own different pattern detectors. Built a standalone, pre-registered
+  test (/tmp/test_bottom_confluence.py): EQL sweep + discount zone + WT
+  divergence/oversold confluence, LONG only, on real 2yr klines (20 alts).
+- Initial result looked strong: n=76, WR 61.8%, expectancy +0.734R, PF 2.92,
+  chronological split first-60% +1.02R / holdout +0.49R (both positive).
+  Reported this to the user as the strongest finding of the session.
+- Caught and fixed a real lookahead bug I'd flagged but not yet verified:
+  swing-low confirmation used a +/-5 bar window computed upfront, but the
+  main loop allowed using a swing low before it was actually confirmable
+  (needed i >= j+5, code allowed swing_idxs <= i). Fixing this dropped the
+  sample from 76 to 31 trades and expectancy from +0.734R to +0.381R.
+  Corrected split: discovery +0.817R (n=12), holdout +0.105R (n=19) -- thin,
+  plausibly noise at that n, does NOT clear +1R in aggregate or holdout.
+- Honest reassessment: real signal (stayed directionally positive across the
+  split rather than collapsing to zero/negative like the ICR aggregate did),
+  but weak and unproven -- not the "strongest finding of the session" it
+  looked like before the fix. Corrected the record with the user immediately.
+- Dispatched a Fable Plan-mode agent (read-only) to produce a concrete plan
+  for what more data/validation would be needed before this is even worth a
+  confidence judgment, and (only if it clears that bar later) the integration
+  path into the live platform per the new CLAUDE.md hard rules. In progress.
+
