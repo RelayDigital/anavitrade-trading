@@ -252,4 +252,44 @@ test("isBullRegime: rising series bull, falling series not", () => {
   assert.equal(isBullRegime([1, 2, 3]), false); // insufficient data
 });
 
+/* ── 5. Judgment gate bypass (temporary kill switch, 2026-07-20) ── */
+test("judgmentGateEnabled=false: dispatches on tier/structural quality alone, no ML score needed", () => {
+  const d = evaluateDispatchGate(
+    base({ judgmentGateEnabled: false, mlScore: null, mlUnreachable: true }),
+  );
+  assert.equal(d.approved, true);
+  assert.equal(d.paperOnly, false);
+  assert.equal(d.gateResult, "passed_no_judgment");
+  assert.equal(d.entryMode, "market");
+});
+
+test("judgmentGateEnabled=false: still respects sizeFactor from the regime gate", () => {
+  const d = evaluateDispatchGate(
+    base({ judgmentGateEnabled: false, bullRegime: false, mlScore: null, mlUnreachable: true }),
+  );
+  assert.equal(d.approved, true);
+  assert.equal(d.sizeFactor, GATE_CONFIG.regimeHalfSizeFactor);
+});
+
+test("judgmentGateEnabled=false: universe/tier/RSI gates still reject before reaching the bypass", () => {
+  const majors = evaluateDispatchGate(base({ judgmentGateEnabled: false, symbol: "BTCUSDT" }));
+  assert.equal(majors.gateResult, "universe");
+
+  const tierC = evaluateDispatchGate(base({ judgmentGateEnabled: false, tierScore: 10 }));
+  assert.equal(tierC.gateResult, "tier_c_reject");
+
+  const extended = evaluateDispatchGate(
+    base({ judgmentGateEnabled: false, rsi14: GATE_CONFIG.rsiMax }),
+  );
+  assert.equal(extended.gateResult, "rsi_extension");
+});
+
+test("judgmentGateEnabled undefined (default): mandatory ML/judgment gate unaffected", () => {
+  // Every prior test in this file omits judgmentGateEnabled and still requires
+  // a passing mlScore — this just makes the default explicit and pinned.
+  const d = evaluateDispatchGate(base({ mlScore: null, mlUnreachable: true }));
+  assert.equal(d.approved, false);
+  assert.equal(d.gateResult, "ml_unreachable");
+});
+
 console.log(`\ndispatch-gate: ${passed} assertions passed${process.exitCode ? " (with failures)" : ""}`);

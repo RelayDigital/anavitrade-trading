@@ -371,7 +371,7 @@ async function runDispatchGate(
   const rsi14 = computeRsi14(rsiCandles.map((c) => c.close));
   const bullRegime = isBullRegime((k4hExt.length >= k4h.length ? k4hExt : k4h).map((c) => c.close));
 
-  // ── Opus trade-judgment gate (mandatory; fail closed on any failure — R1.3) ──
+  // ── Opus trade-judgment gate — built, temporarily disabled (2026-07-20) ──
   // Replaces the old statistical ML score: meta-v22-definitive's locked
   // walk-forward test proved it has no usable edge (calibrated probs never
   // exceed 0.243 against a 0.52 threshold — see
@@ -379,40 +379,48 @@ async function runDispatchGate(
   // confidence (0-1) fills the same mlScore slot the pure gate already
   // consumes; the gate's own logic (universe/tier/RSI/regime/threshold) is
   // unchanged. See src/server/analysis/llm-trade-judge.ts.
+  //
+  // Set JUDGMENT_GATE_ENABLED="true" once a live agent is wired here — until
+  // then intents dispatch on tier/structural quality alone (steps 1-4),
+  // gateResult="passed_no_judgment", no Opus call made (no wasted API cost).
+  const judgmentGateEnabled = getDbEnv().JUDGMENT_GATE_ENABLED === "true";
+
   let mlScore: number | null = null;
   let mlRegime = "UNKNOWN";
   let mlUnreachable = false;
-  try {
-    if (!marketDataAvailable) {
+  if (judgmentGateEnabled) {
+    try {
+      if (!marketDataAvailable) {
+        mlUnreachable = true;
+      } else {
+        const apiKey = getDbEnv().ANTHROPIC_API_KEY;
+        if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+        const entry = Number(row?.limitPrice) || k4h[k4h.length - 1]?.close || 0;
+        const stopLoss = Number(row?.stopLossPrice) || 0;
+        const takeProfit = Number(row?.takeProfitPrice) || 0;
+        const judgment = await judgeTradeWithOpus(
+          {
+            symbol: intent.symbol,
+            direction,
+            entry,
+            stopLoss,
+            takeProfit,
+            tierScore,
+            atrPct4h,
+            rsi14,
+            bullRegime,
+            source: row?.source ?? "unknown",
+            thesis: row?.thesis ?? "",
+          },
+          apiKey,
+        );
+        mlScore = judgment.confidence;
+        mlRegime = `OPUS_${judgment.approved ? "APPROVED" : "REJECTED"}: ${judgment.reasoning}`.slice(0, 250);
+      }
+    } catch (e: any) {
       mlUnreachable = true;
-    } else {
-      const apiKey = getDbEnv().ANTHROPIC_API_KEY;
-      if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
-      const entry = Number(row?.limitPrice) || k4h[k4h.length - 1]?.close || 0;
-      const stopLoss = Number(row?.stopLossPrice) || 0;
-      const takeProfit = Number(row?.takeProfitPrice) || 0;
-      const judgment = await judgeTradeWithOpus(
-        {
-          symbol: intent.symbol,
-          direction,
-          entry,
-          stopLoss,
-          takeProfit,
-          tierScore,
-          atrPct4h,
-          rsi14,
-          bullRegime,
-          source: row?.source ?? "unknown",
-          thesis: row?.thesis ?? "",
-        },
-        apiKey,
-      );
-      mlScore = judgment.confidence;
-      mlRegime = `OPUS_${judgment.approved ? "APPROVED" : "REJECTED"}: ${judgment.reasoning}`.slice(0, 250);
+      console.warn(`[dispatch-gate] inference unreachable for intent ${intentId} (${intent.symbol}): ${String(e?.message).slice(0, 160)}`);
     }
-  } catch (e: any) {
-    mlUnreachable = true;
-    console.warn(`[dispatch-gate] inference unreachable for intent ${intentId} (${intent.symbol}): ${String(e?.message).slice(0, 160)}`);
   }
 
   const decision = evaluateDispatchGate({
@@ -426,6 +434,7 @@ async function runDispatchGate(
     mlThreshold: ML_THRESHOLD,
     mlUnreachable,
     marketDataAvailable,
+    judgmentGateEnabled,
   });
 
   return { decision, mlScore, mlRegime, tierScore, atrPct4h, rsi14, bullRegime };

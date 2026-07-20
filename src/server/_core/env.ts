@@ -81,6 +81,9 @@ export type Env = {
   INTERNAL_SECRET?: string;
   /** Anthropic API key for the Opus trade-judgment gate (src/server/analysis/llm-trade-judge.ts). */
   ANTHROPIC_API_KEY?: string;
+  /** Set "true" to activate the Opus judgment gate (step 5). Unset/anything
+   *  else = dispatch on tier/structural quality alone (steps 1-4 only). */
+  JUDGMENT_GATE_ENABLED?: string;
   VITE_APP_ID: string;
   BINANCE_API_KEY?: string;
   BINANCE_SECRET_KEY?: string;

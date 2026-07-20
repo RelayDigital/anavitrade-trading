@@ -79,6 +79,7 @@ export type GateDirection = "long" | "short";
 export type GateResult =
   | "passed"
   | "passed_confirm"
+  | "passed_no_judgment"
   | "universe"
   | "tier_b_paper"
   | "tier_c_reject"
@@ -118,6 +119,17 @@ export interface GateInput {
    * available. When false, scoring is impossible → fail closed (ml_unreachable).
    */
   marketDataAvailable: boolean;
+  /**
+   * Temporary kill switch for step 5 (2026-07-20): the Opus judgment gate is
+   * built (src/server/analysis/llm-trade-judge.ts) but intentionally not
+   * wired to a live agent yet. When explicitly `false`, step 5 is skipped
+   * entirely — intents that clear steps 1-4 (universe/tier/RSI/regime)
+   * dispatch on tier/structural quality alone, gateResult="passed_no_judgment".
+   * Undefined (all existing callers/tests) behaves exactly as before: step 5
+   * is mandatory and fail-closed. Flip via dispatch.ts once a real agent is
+   * wired to JUDGMENT_GATE_ENABLED="true".
+   */
+  judgmentGateEnabled?: boolean;
 }
 
 export interface GateDecision {
@@ -205,7 +217,17 @@ export function evaluateDispatchGate(
       ? cfg.regimeHalfSizeFactor
       : 1.0;
 
-  /* ── 5. Judgment gate — Opus confidence (fail closed) ─────────────────── */
+  /* ── 5. Judgment gate — Opus confidence (fail closed), or bypassed ────── */
+  if (input.judgmentGateEnabled === false) {
+    return {
+      approved: true,
+      paperOnly: false,
+      gateResult: "passed_no_judgment",
+      reason: "judgment_gate_disabled:tier_and_structural_only",
+      sizeFactor,
+      entryMode: "market",
+    };
+  }
   if (input.mlUnreachable || input.mlScore === null) {
     return reject("ml_unreachable", "inference_unreachable");
   }
