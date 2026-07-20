@@ -239,6 +239,33 @@ Cross-referenced 6 Claude Code session logs from the past 4 days:
 
 ---
 
+<!-- source: progress/fable-thread-pickup.md -->
+
+
+## 2026-07-19 — Opus trade-judgment gate
+
+- Found: the shared dispatch gate's step 5 (ML score >= 0.52 threshold) was
+  rejecting essentially all live TradeIntents platform-wide, from every
+  source, because today's locked walk-forward test proved meta-v22-definitive
+  never produces a score above 0.243. This silently blocked live dispatch
+  AND testnet evidence accumulation (Thread C's release gate).
+- Fix (commit 543e217): replaced the statistical ML score with
+  src/server/analysis/llm-trade-judge.ts — Claude Opus judges each candidate
+  via forced tool-use, feeding its 0-1 confidence into the same mlScore slot
+  the pure gate (dispatch-gate.ts) already consumed. Zero changes to the
+  pure gate logic itself (31 existing tests still pass unchanged).
+  ML_THRESHOLD moved from the old model card (0.52) to 0.65 (starting value
+  for Opus's confidence scale, not backtest-derived).
+- Requires ANTHROPIC_API_KEY (documented in .env.example) — without it,
+  intents still fail closed at ml_unreachable, same R1.3 guarantee as before.
+- Also shipped this session: Binance perp top-gainers/volume-breakout signal
+  source (commit 761f316), wired to the same 60s cron as Coinlegs.
+- Next: get ANTHROPIC_API_KEY set as a Worker secret so this actually starts
+  judging live intents; then Thread C (operator gates) is the real remaining
+  blocker to MVP.
+
+---
+
 <!-- source: progress/jazzy-spinning-brook.md -->
 
 ## Session: jazzy-spinning-brook (started 2026-07-18T19:46:45Z)
@@ -423,4 +450,48 @@ Cross-referenced 6 Claude Code session logs from the past 4 days:
   for what more data/validation would be needed before this is even worth a
   confidence judgment, and (only if it clears that bar later) the integration
   path into the live platform per the new CLAUDE.md hard rules. In progress.
+
+### Bottom-confluence hypothesis -- exhaustive honest test, final state
+Tested the WaveTrend+EQL+Discount-zone confluence (and its mirror-image short
+version, EQH+Premium-zone) across every reasonable, principled variation:
+
+| Test | n | Expectancy | PF |
+|---|---|---|---|
+| Long, general alts, 4h (lookahead-fixed) | 31 | +0.38R | 1.73 |
+| Long, holdout half, 4h | 19 | +0.10R | 1.17 |
+| Long, thin CEX-orderbook-liquidity coins, 4h | 44 | -0.09R | 0.87 |
+| Long, verified CEX-vol/DEX-liquidity mismatch coins, 4h | 11 | -0.18R | 0.75 |
+| Short (mirror), general alts, 4h | 28 | -0.10R | 0.85 |
+| Long, general alts, 1h (19 symbols) | 141 | -0.26R | 0.63 |
+| Short (mirror), general alts, 1h | 180 | -0.10R | 0.86 |
+| Long, wide-trail exit (EMPIRICAL_FINDINGS.md's proven 5ATR/arm@4R exit, borrowed from the ICR SMC engine), 4h | 28 | -0.29R | 0.59 |
+| Long, wide-trail exit, 1h | 136 | -0.39R | 0.56 |
+
+Also properly investigated the user's CEX-volume/DEX-liquidity mismatch angle:
+initial ticker-based DEX search was unreliable (returned impersonator/wrong
+tokens sharing tickers -- e.g. "ZEC" match showing $3.2B liquidity/$200
+volume, obviously wrong). Rebuilt properly via CoinGecko's verified
+symbol->market-cap-ranked-id->contract-address mapping (1250 top coins +
+17,660-coin platform list, cross-referenced against all 524 Binance USDT
+perps), then queried DexScreener by verified contract address. Found real,
+confirmed extreme mismatches (BANKUSDT $1.7B vol/$127K liquidity, ACEUSDT
+$65M/~$0, TLMUSDT $260M/$5K, AKEUSDT $415M/$1M ratio~406x) -- but backtesting
+on this verified set was negative (n=11, -0.18R).
+
+**Final honest conclusion**: no configuration of this hypothesis clears the
++1R bar; the two largest-sample tests (1h, n=141 and n=180) are clearly
+negative rather than marginal; borrowing this repo's own proven wide-trail
+exit principle makes results worse, indicating this is a different character
+of setup (mean-reversion bounce) than what that exit principle was validated
+for (trend-continuation). Declined to keep slicing the same entry logic into
+further symbol/parameter variations once the evidence was this consistent --
+continuing would risk exactly the "test until something looks positive"
+pattern this session exists to avoid.
+
+**Overall session edge-search status**: three independent tracks (ML locked
+gate, Coinlegs-tier filtering, ICR rule engine on real klines) plus this
+fourth track (user-specified WaveTrend/EQL/discount confluence, long and
+short, two timeframes, three symbol-selection criteria, two exit models) all
+returned no edge meeting the +1R bar. This is the honest, current state of
+the codebase's search for tradeable edge as of this session.
 
