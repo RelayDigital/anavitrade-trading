@@ -23,6 +23,22 @@ DEX execution.
 Do not claim user profitability, enable automated signal dispatch, or turn on
 live order submission based on the older aggregate figures in this file.
 
+## Bottom-confluence hypothesis (WaveTrend + Equal Lows + Discount zone) — negative (2026-07-19)
+
+Tested a specific, user-proposed hypothesis (Market Cipher B WaveTrend +
+LuxAlgo Equal Lows/Highs + Premium/Discount zones as a dedicated
+reversal-entry filter) across long and short, two timeframes (4h, 1h), three
+symbol-selection criteria (general alts, thin-CEX-orderbook-liquidity coins,
+verified CEX-volume/DEX-liquidity mismatch coins), and two exit models (fixed
+2R, and this repo's own proven wide-trail exit). No configuration cleared the
+project's +1R minimum-edge bar (`CLAUDE.md`); the largest-sample results (1h,
+n=141 and n=180) were clearly negative, not marginal. Full pre-registered
+methodology, per-test results table, and honest conclusion in
+`scripts/research/bottom-confluence/README.md`. Caught and fixed a real
+lookahead bug mid-investigation (inflated an early result from +0.38R to a
+non-reproducible +0.73R) — documented there so the inflated number is never
+re-cited.
+
 ## CRITICAL: Do Not Change These Without Re-Backtesting
 
 These parameters were found through 30-symbol, 6-month sweeps with 655+ signal outcomes. They are NOT arbitrary.
