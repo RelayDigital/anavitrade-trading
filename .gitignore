@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .env
+.secrets/
 *.log
 .DS_Store
 tmp/
@@ -26,4 +27,5 @@ scripts/data/models/*/regressor.pkl
 scripts/data/models/*/calibrator.pkl
 scripts/data/models/*/*.pkl
 scripts/ml/venv/
+icr_strategy/.venv/
 node_modules.previous/

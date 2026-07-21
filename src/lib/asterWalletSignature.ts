@@ -24,6 +24,17 @@ const REQUIRED_APPROVE_AGENT_FIELDS = [
   "User",
   "Nonce",
 ];
+const REQUIRED_AGENT_MESSAGE_FIELDS = [
+  "user",
+  "nonce",
+  "agentName",
+  "agentAddress",
+  "expired",
+  "signatureChainId",
+  "canSpotTrade",
+  "canPerpTrade",
+  "canWithdraw",
+];
 
 function isAddressLike(value: unknown): value is string {
   return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
@@ -43,6 +54,43 @@ function validateAsterRegistrationTypedData(input: {
   }
   if (String(typedData.domain?.verifyingContract ?? "").toLowerCase() !== ZERO_ADDRESS) {
     throw new Error("Invalid Aster signature verifier.");
+  }
+  if (typedData.primaryType === "Message") {
+    if (typeof typedData.message?.msg !== "string" || typedData.message.msg.length === 0) {
+      throw new Error("Invalid Aster signature message.");
+    }
+    const fields = typedData.types?.Message ?? [];
+    if (fields.length !== 1 || fields[0]?.name !== "msg" || fields[0]?.type !== "string") {
+      throw new Error("Invalid Aster signature fields.");
+    }
+    const params = new URLSearchParams(typedData.message.msg);
+    if (REQUIRED_AGENT_MESSAGE_FIELDS.some((field) => params.getAll(field).length !== 1)) {
+      throw new Error("Invalid Aster signature fields.");
+    }
+    if (!isAddressLike(params.get("user")) || !isAddressLike(params.get("agentAddress"))) {
+      throw new Error("Invalid Aster signature addresses.");
+    }
+    if (params.get("user")!.toLowerCase() !== account.toLowerCase()) {
+      throw new Error("Aster signature account mismatch.");
+    }
+    if (params.get("signatureChainId") !== String(signatureChainId)) {
+      throw new Error("Invalid Aster signature chain.");
+    }
+    if (
+      params.get("canSpotTrade") !== "false"
+      || params.get("canPerpTrade") !== "true"
+      || params.get("canWithdraw") !== "false"
+    ) {
+      throw new Error("Invalid Aster agent permissions.");
+    }
+    if (
+      !/^\d+$/.test(params.get("nonce")!)
+      || !/^\d+$/.test(params.get("expired")!)
+      || !params.get("agentName")!.trim()
+    ) {
+      throw new Error("Invalid Aster signature fields.");
+    }
+    return;
   }
   if (typedData.primaryType !== "ApproveAgent") {
     throw new Error("Invalid Aster signature challenge type.");

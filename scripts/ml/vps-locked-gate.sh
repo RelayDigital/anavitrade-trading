@@ -38,9 +38,14 @@ cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
 export PYTHONPATH="$REPO_ROOT"
 
-# cron runs with a minimal environment -- load .env (BINANCE_API_KEY in particular;
-# needed to bypass fapi.binance.com's geo-block, see select-untested-pairs.py) the
-# same way it'd be available in an interactive shell.
+# cron runs with a minimal environment -- load .env the same way it'd be
+# available in an interactive shell (other scripts in this pipeline read
+# vars from it). NOTE: select-untested-pairs.py no longer needs a live
+# Binance call at all -- fapi.binance.com is geo-blocked from this VPS at
+# the IP level, and BINANCE_API_KEY does NOT bypass it (confirmed
+# empirically 2026-07-19). It reads a static, periodically-refreshed
+# snapshot instead (scripts/data/pairs/altcoin-universe-snapshot.json,
+# regenerated via --refresh-snapshot from a non-blocked environment).
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091

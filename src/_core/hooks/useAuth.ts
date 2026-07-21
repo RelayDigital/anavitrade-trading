@@ -41,17 +41,21 @@ export function useAuth(options?: UseAuthOptions) {
     }
   }, [logoutMutation, utils]);
 
+  const checkingSession =
+    meQuery.isLoading ||
+    (meQuery.fetchStatus === "fetching" && !meQuery.data && !meQuery.error);
+
   const state = useMemo(() => {
     return {
       user: meQuery.data ?? null,
-      loading: meQuery.isLoading || logoutMutation.isPending,
+      loading: checkingSession || logoutMutation.isPending,
       error: meQuery.error ?? logoutMutation.error ?? null,
       isAuthenticated: Boolean(meQuery.data),
     };
   }, [
+    checkingSession,
     meQuery.data,
     meQuery.error,
-    meQuery.isLoading,
     logoutMutation.error,
     logoutMutation.isPending,
   ]);

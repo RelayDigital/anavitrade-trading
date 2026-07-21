@@ -168,6 +168,9 @@ export function detectMarketCipher(
   const mfFastBull = mfFastPrev <= 0 && mfFastCurr > 0;
   const mfSlowBull = mfSlowPrev <= 0 && mfSlowCurr > 0;
   const mfBullRegime = mfFastBull && mfSlowBull;
+  const mfFastBear = mfFastPrev >= 0 && mfFastCurr < 0;
+  const mfSlowBear = mfSlowPrev >= 0 && mfSlowCurr < 0;
+  const mfBearRegime = mfFastBear && mfSlowBear;
 
   // ── 3. RSI + Stochastic RSI ───────────────────────────────────
   const rsiVals = rsi(closes, p.rsiLen);
@@ -186,6 +189,7 @@ export function detectMarketCipher(
   const stochKCurr = stochK[stochK.length - 1];
   const stochDCurr = stochD[stochD.length - 1];
   const stochOs = stochKCurr <= 20;
+  const stochOb = stochKCurr >= 80;
 
   // ── 4. MACD-based divergence ──────────────────────────────────
   const fastMa = arraySma(closes, p.wtChannelLen);
@@ -280,6 +284,13 @@ export function detectMarketCipher(
       details: { mf_fast: mfFastCurr, mf_slow: mfSlowCurr },
     });
   }
+  if (mfBearRegime) {
+    signals.push({
+      type: "mcb_money_flow_bear", pair, period, price,
+      confidence: 45,
+      details: { mf_fast: mfFastCurr, mf_slow: mfSlowCurr },
+    });
+  }
 
   // Regular divergences
   if (regularBullDiv) {
@@ -311,6 +322,23 @@ export function detectMarketCipher(
       type: "mcb_confluence_buy", pair, period, price,
       confidence: Math.min(100, confluenceConf),
       details: { confluence_count: confluenceCount, wt_os: wtDeepOs ? 1 : 0, mf_bull: mfBullRegime ? 1 : 0, stoch_os: stochOs ? 1 : 0, bull_div: regularBullDiv ? 1 : 0 },
+    });
+  }
+
+  // ── Confluence scoring (short side — exact mirror of the long side) ──
+  let confluenceSellCount = 0;
+  let confluenceSellConf = 0;
+  if (wtTopSignal) { confluenceSellCount++; confluenceSellConf += 35; }
+  if (wtBearCross && wtDeepOb) { confluenceSellCount++; confluenceSellConf += 20; }
+  if (mfBearRegime) { confluenceSellCount++; confluenceSellConf += 15; }
+  if (stochOb) { confluenceSellCount++; confluenceSellConf += 15; }
+  if (regularBearDiv) { confluenceSellCount++; confluenceSellConf += 15; }
+
+  if (confluenceSellCount >= 2) {
+    signals.push({
+      type: "mcb_confluence_sell", pair, period, price,
+      confidence: Math.min(100, confluenceSellConf),
+      details: { confluence_count: confluenceSellCount, wt_ob: wtDeepOb ? 1 : 0, mf_bear: mfBearRegime ? 1 : 0, stoch_ob: stochOb ? 1 : 0, bear_div: regularBearDiv ? 1 : 0 },
     });
   }
 

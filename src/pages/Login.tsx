@@ -20,10 +20,11 @@ export default function Login() {
   const [error, setError] = useState("");
 
   const login = trpc.auth.login.useMutation({
-    onSuccess: async () => {
-      await utils.auth.me.invalidate();
+    onSuccess: async (user) => {
+      utils.auth.me.setData(undefined, user);
       toast.success("Welcome back!");
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
+      void utils.auth.me.invalidate();
     },
     onError: (e) => {
       const msg = e.message ?? "";

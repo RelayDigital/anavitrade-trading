@@ -197,6 +197,7 @@ export async function bridgeCoinlegsSignals(
           metadataJson: JSON.stringify(signal.metadata),
           dispatched: 0,
           createdAt: signal.timestamp,
+          updatedAt: signal.timestamp,
         };
       });
 
@@ -301,6 +302,7 @@ export async function backfillCoinlegsToAnalysisSignals(): Promise<{
           metadataJson: JSON.stringify(signal.metadata),
           dispatched: 0,
           createdAt: signal.timestamp,
+          updatedAt: signal.timestamp,
         };
       });
 

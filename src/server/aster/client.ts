@@ -1,12 +1,14 @@
 import { getAsterConfig } from "./config";
 import type {
   AsterAgentRegistrationParams,
+  AsterRegisterAndApproveParams,
   AsterBalanceSnapshot,
   AsterStrategyOrderRequest,
   AsterOrderLookupRequest,
   AsterOrderRequest,
   AsterRemoteAgent,
   AsterRemoteBuilder,
+  AsterSymbolRules,
   ExecutionAdapterReceipt,
 } from "./types";
 import type { Account } from "viem/accounts";
@@ -96,6 +98,44 @@ export class AsterApiClient {
     const price = Number(data.price);
     if (!Number.isFinite(price) || price <= 0) throw new Error("ASTER_PRICE_UNAVAILABLE");
     return price;
+  }
+
+  async getSymbolRules(symbol: string): Promise<AsterSymbolRules> {
+    const response = await fetch(`${this.baseUrl}/fapi/v3/exchangeInfo`, {
+      method: "GET",
+      headers: { "User-Agent": "Anavitrade/1.0" },
+    });
+    if (!response.ok) throw new Error(`ASTER_EXCHANGE_INFO_FAILED:${response.status}`);
+    const data = await readAsterJson<{
+      symbols?: Array<{
+        symbol?: string;
+        pricePrecision?: number;
+        quantityPrecision?: number;
+        filters?: Array<Record<string, unknown>>;
+      }>;
+    }>(response);
+    const entry = data.symbols?.find((item) => item.symbol === symbol);
+    if (!entry) throw new Error("ASTER_SYMBOL_RULES_NOT_FOUND");
+    const filters = entry.filters ?? [];
+    const priceFilter = filters.find((item) => item.filterType === "PRICE_FILTER");
+    const lotFilter = filters.find((item) => item.filterType === "LOT_SIZE");
+    const notionalFilter = filters.find((item) => item.filterType === "MIN_NOTIONAL");
+    const percentFilter = filters.find((item) => item.filterType === "PERCENT_PRICE");
+    const rules: AsterSymbolRules = {
+      symbol,
+      pricePrecision: Number(entry.pricePrecision ?? 8),
+      quantityPrecision: Number(entry.quantityPrecision ?? 8),
+      tickSize: numberValue(priceFilter?.tickSize),
+      stepSize: numberValue(lotFilter?.stepSize),
+      minQuantity: numberValue(lotFilter?.minQty),
+      minNotionalUsd: numberValue(notionalFilter?.notional),
+      multiplierDown: numberValue(percentFilter?.multiplierDown),
+      multiplierUp: numberValue(percentFilter?.multiplierUp),
+    };
+    if (rules.tickSize <= 0 || rules.stepSize <= 0 || rules.minQuantity <= 0) {
+      throw new Error("ASTER_SYMBOL_RULES_INVALID");
+    }
+    return rules;
   }
 
   private async signedRequest<T>(
@@ -191,6 +231,33 @@ export class AsterApiClient {
     return data;
   }
 
+  async registerAndApproveAgent(
+    params: AsterRegisterAndApproveParams,
+    signature: string,
+  ): Promise<unknown> {
+    const queryParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) queryParams.set(key, String(value));
+    }
+    queryParams.set("signature", signature);
+    const response = await fetch(`${this.baseUrl}/fapi/v3/registerAndApproveAgent?${queryParams.toString()}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Anavitrade/1.0",
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "unknown");
+      throw new Error(`ASTER_AGENT_REGISTRATION_REJECTED:${response.status}:${text.slice(0, 200)}`);
+    }
+    const data = await readAsterJson<{ code?: number; msg?: string; [key: string]: unknown }>(response);
+    if (typeof data.code === "number" && data.code < 0) {
+      throw new Error(`ASTER_AGENT_REGISTRATION_REJECTED:${data.code}:${data.msg ?? "unknown"}`);
+    }
+    return data;
+  }
+
   async getAgents(user: string, signer: Account): Promise<AsterRemoteAgent[]> {
     const data = await this.signedRequest<AsterRemoteAgent[]>("GET", "/fapi/v3/agent", { user }, signer);
     return Array.isArray(data) ? data : [];
@@ -250,6 +317,16 @@ export class AsterApiClient {
     request: AsterStrategyOrderRequest,
     signer: Account,
   ): Promise<ExecutionAdapterReceipt> {
+    const params: Record<string, string> = {
+      user: request.user,
+      clientStrategyId: request.clientStrategyId,
+      strategyType: request.strategyType,
+      subOrderList: JSON.stringify(request.subOrderList),
+    };
+    if (request.builder) {
+      params.builder = request.builder;
+      params.feeRate = request.feeRate ?? "0";
+    }
     const data = await this.signedPost<{
       strategyId?: string | number;
       clientStrategyId?: string;
@@ -257,14 +334,7 @@ export class AsterApiClient {
       failureCode?: number;
       failureReason?: string;
       [key: string]: unknown;
-    }>("/fapi/v3/placeStrategyOrder", {
-      user: request.user,
-      clientStrategyId: request.clientStrategyId,
-      strategyType: request.strategyType,
-      subOrderList: JSON.stringify(request.subOrderList),
-      builder: request.builder,
-      feeRate: request.feeRate ?? "0",
-    }, signer);
+    }>("/fapi/v3/placeStrategyOrder", params, signer);
 
     const failureCode = Number(data.failureCode ?? 0);
     const failureReason = String(data.failureReason ?? "");
@@ -328,9 +398,11 @@ export class AsterApiClient {
       type: request.type,
       side: request.side,
       quantity: request.quantity,
-      builder: request.builder,
-      feeRate: request.feeRate ?? "0",
     };
+    if (request.builder) {
+      params.builder = request.builder;
+      params.feeRate = request.feeRate ?? "0";
+    }
 
     if (request.type === "LIMIT") {
       if (!request.price) throw new Error("ASTER_LIMIT_PRICE_REQUIRED");

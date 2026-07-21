@@ -10,6 +10,7 @@ import type {
   AsterAgentPermissions,
   AsterAgentRegistrationChallenge,
   AsterAgentRegistrationParams,
+  AsterRegisterAndApproveParams,
   AsterManagementTypedData,
   AsterAgentStatusView,
   AsterRemoteAgent,
@@ -26,10 +27,10 @@ const ASTER_AGENT_ACTIVATION_MODE = "approveAgentWithBuilder" as const;
 const ASTER_APPROVE_AGENT_ENDPOINT = "/fapi/v3/approveAgent" as const;
 
 type StoredRegistrationChallenge = {
-  activationMode: typeof ASTER_AGENT_ACTIVATION_MODE;
-  endpoint: typeof ASTER_APPROVE_AGENT_ENDPOINT;
+  activationMode: "approveAgentWithBuilder" | "registerAndApproveAgent";
+  endpoint: "/fapi/v3/approveAgent" | "/fapi/v3/registerAndApproveAgent";
   signatureChainId: number;
-  params: AsterAgentRegistrationParams;
+  params: AsterAgentRegistrationParams | AsterRegisterAndApproveParams;
   typedData: AsterManagementTypedData;
 };
 
@@ -113,6 +114,44 @@ async function registrationChallenge(account: typeof asterAgentAccounts.$inferSe
     user: account.asterAccountAddress,
     nonce: nextRegistrationNonce(),
   };
+
+  if (config.environment === "testnet" || config.agentOnlyEnabled) {
+    const testnetParams: AsterRegisterAndApproveParams = {
+      user: account.asterAccountAddress,
+      nonce: params.nonce,
+      agentName: params.agentName,
+      agentAddress: params.agentAddress,
+      expired: params.expired,
+      signatureChainId: config.registrationSigningChainId,
+      canSpotTrade: params.canSpotTrade,
+      canPerpTrade: params.canPerpTrade,
+      canWithdraw: params.canWithdraw,
+      ipWhitelist: params.ipWhitelist,
+    };
+    const msg = new URLSearchParams(Object.entries(testnetParams).map(([key, value]) => [key, String(value ?? "")])).toString();
+    const envelope = parsePermissionsEnvelope(account.permissionsJson);
+    const challenge: AsterAgentRegistrationChallenge = {
+      activationMode: "registerAndApproveAgent",
+      endpoint: "/fapi/v3/registerAndApproveAgent",
+      signatureChainId: testnetParams.signatureChainId,
+      params: testnetParams as any,
+      typedData: {
+        domain: {
+          name: "AsterSignTransaction",
+          version: "1",
+          chainId: testnetParams.signatureChainId,
+          verifyingContract: "0x0000000000000000000000000000000000000000",
+        },
+        types: { Message: [{ name: "msg", type: "string" }] },
+        primaryType: "Message",
+        message: { msg },
+      } as any,
+    };
+    await getDb().update(asterAgentAccounts)
+      .set({ permissionsJson: JSON.stringify({ ...envelope, registrationChallenge: challenge }), updatedAt: Date.now() } as any)
+      .where(eq(asterAgentAccounts.id, account.id));
+    return challenge;
+  }
 
   const message = Object.fromEntries(
     Object.entries(params).map(([key, value]) => [capitalizeKey(key), value]),
@@ -257,6 +296,28 @@ async function validateAsterReadback(
   throw new Error(`ASTER_REGISTRATION_VALIDATION_FAILED:agent=${agentApproved};builder=${builderApproved}`);
 }
 
+async function validateAsterAgentOnlyReadback(
+  account: typeof asterAgentAccounts.$inferSelect,
+  client: AsterApiClient,
+): Promise<void> {
+  const privateKey = await decryptKey(account.encryptedSignerPrivateKey);
+  const signer = privateKeyToAccount(privateKey as `0x${string}`);
+  const agents = await client.getAgents(account.asterAccountAddress, signer);
+  if (agents.some((agent) => remoteAgentMatches(account, agent))) return;
+
+  const now = Date.now();
+  await getDb().update(asterAgentAccounts)
+    .set({
+      agentStatus: "rejected",
+      builderStatus: "not_required",
+      status: "pending_approval",
+      lastValidatedAt: now,
+      updatedAt: now,
+    } as any)
+    .where(eq(asterAgentAccounts.id, account.id));
+  throw new Error("ASTER_REGISTRATION_VALIDATION_FAILED:agent=false;builder=not_required");
+}
+
 export async function getAsterAgentStatus(userId: number): Promise<AsterAgentStatusView> {
   const db = getDb();
   const [account] = await db.select().from(asterAgentAccounts)
@@ -277,8 +338,9 @@ export async function prepareAsterAgent(input: {
 }) {
   const db = getDb();
   const config = getAsterConfig();
-  if (!config.builderAddress) throw new Error("ASTER_BUILDER_ADDRESS_NOT_CONFIGURED");
-
+  if (!config.builderAddress && config.environment !== "testnet" && !config.agentOnlyEnabled) {
+    throw new Error("ASTER_BUILDER_ADDRESS_NOT_CONFIGURED");
+  }
   const now = Date.now();
   const approvalExpiresAt = toEpochMs(input.approvalExpiresAt) ?? now + 30 * 24 * 60 * 60 * 1000;
   const liveAccount = await getOrCreateLiveAccount(input.userId);
@@ -349,10 +411,10 @@ export async function prepareAsterRegistration(input: {
 
 export async function completeAsterRegistration(input: {
   userId: number;
-  activationMode: typeof ASTER_AGENT_ACTIVATION_MODE;
-  endpoint: typeof ASTER_APPROVE_AGENT_ENDPOINT;
+  activationMode: "approveAgentWithBuilder" | "registerAndApproveAgent";
+  endpoint: "/fapi/v3/approveAgent" | "/fapi/v3/registerAndApproveAgent";
   signatureChainId: number;
-  params: AsterAgentRegistrationParams;
+  params: AsterAgentRegistrationParams | AsterRegisterAndApproveParams;
   signature: string;
 }) {
   const db = getDb();
@@ -371,25 +433,38 @@ export async function completeAsterRegistration(input: {
   if (Number(account.approvalExpiresAt ?? 0) !== input.params.expired) {
     throw new Error("ASTER_REGISTRATION_EXPIRY_MISMATCH");
   }
-  if (normalizeAddress(input.params.builder) !== normalizeAddress(account.builderAddress)) {
+  if (input.activationMode === "approveAgentWithBuilder" && normalizeAddress((input.params as AsterAgentRegistrationParams).builder) !== normalizeAddress(account.builderAddress)) {
     throw new Error("ASTER_REGISTRATION_BUILDER_MISMATCH");
   }
-  assertRegistrationChallengeMatches({
-    account,
-    activationMode: input.activationMode,
-    endpoint: input.endpoint,
-    signatureChainId: input.signatureChainId,
-    params: input.params,
-  });
+  if (input.activationMode === "approveAgentWithBuilder") {
+    assertRegistrationChallengeMatches({
+      account,
+      activationMode: input.activationMode,
+      endpoint: input.endpoint as typeof ASTER_APPROVE_AGENT_ENDPOINT,
+      signatureChainId: input.signatureChainId,
+      params: input.params as AsterAgentRegistrationParams,
+    });
+  } else {
+    const stored = getStoredRegistrationChallenge(account.permissionsJson);
+    if (!stored || stored.activationMode !== input.activationMode || stored.endpoint !== input.endpoint || stored.signatureChainId !== input.signatureChainId || stableJson(stored.params) !== stableJson(input.params)) {
+      throw new Error("ASTER_REGISTRATION_CHALLENGE_MISMATCH");
+    }
+  }
 
   const client = new AsterApiClient();
-  await client.approveAgent(input.params, input.signature, input.signatureChainId);
-  await validateAsterReadback(account, input.params.maxFeeRate, client);
+  if (input.activationMode === "approveAgentWithBuilder") {
+    await client.approveAgent(input.params as AsterAgentRegistrationParams, input.signature, input.signatureChainId);
+    await validateAsterReadback(account, (input.params as AsterAgentRegistrationParams).maxFeeRate, client);
+  } else {
+    await client.registerAndApproveAgent(input.params as AsterRegisterAndApproveParams, input.signature);
+    await validateAsterAgentOnlyReadback(account, client);
+  }
   await recordAsterApprovals({
     userId: input.userId,
     agentApproved: true,
-    builderApproved: true,
-    maxFeeRate: input.params.maxFeeRate,
+    builderApproved: input.activationMode === "approveAgentWithBuilder",
+    builderRequired: input.activationMode === "approveAgentWithBuilder",
+    maxFeeRate: input.activationMode === "approveAgentWithBuilder" ? (input.params as AsterAgentRegistrationParams).maxFeeRate : "0",
   });
   await writeAuditLog(input.userId, "ASTER_AGENT_REGISTERED", `signer:${account.signerAddress}`);
 
@@ -400,6 +475,7 @@ export async function recordAsterApprovals(input: {
   userId: number;
   agentApproved: boolean;
   builderApproved: boolean;
+  builderRequired?: boolean;
   maxFeeRate?: string;
 }) {
   const db = getDb();
@@ -409,12 +485,15 @@ export async function recordAsterApprovals(input: {
     .limit(1);
   if (!account) throw new Error("ASTER_AGENT_NOT_FOUND");
 
-  const active = input.agentApproved && input.builderApproved;
+  const builderRequired = input.builderRequired ?? Boolean(account.builderAddress);
+  const active = input.agentApproved && (!builderRequired || input.builderApproved);
   const now = Date.now();
   await db.update(asterAgentAccounts)
     .set({
       agentStatus: input.agentApproved ? "approved" : account.agentStatus,
-      builderStatus: input.builderApproved ? "approved" : account.builderStatus,
+      builderStatus: builderRequired
+        ? (input.builderApproved ? "approved" : account.builderStatus)
+        : "not_required",
       maxFeeRate: input.maxFeeRate ?? account.maxFeeRate,
       status: active ? "active" : "pending_approval",
       lastValidatedAt: active ? now : account.lastValidatedAt,
@@ -441,7 +520,10 @@ export async function syncAsterFuturesBalance(userId: number) {
     .orderBy(desc(asterAgentAccounts.createdAt))
     .limit(1);
   if (!account) throw new Error("ASTER_AGENT_NOT_FOUND");
-  if (account.agentStatus !== "approved" || account.builderStatus !== "approved") {
+  const builderReady = account.builderAddress
+    ? account.builderStatus === "approved"
+    : account.builderStatus === "not_required" || account.builderStatus === "approved";
+  if (account.agentStatus !== "approved" || !builderReady) {
     throw new Error("ASTER_APPROVAL_NOT_CONFIRMED");
   }
 

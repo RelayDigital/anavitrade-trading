@@ -1,10 +1,19 @@
 export const PASSWORD_HASH_ITERATIONS = 600_000;
 
 const LEGACY_PASSWORD_HASH_ITERATIONS = 100_000;
+const WORKER_PASSWORD_HASH_ITERATIONS = 100_000;
 const PASSWORD_HASH_PREFIX = "pbkdf2-sha256$v1";
 const SALT_BYTES = 16;
 const HASH_BYTES = 32;
 const encoder = new TextEncoder();
+
+function preferredPasswordHashIterations(): number {
+  // Cloudflare Workers rejects PBKDF2 requests above 100k iterations. Keep
+  // the stronger Node setting for the execution server while using the
+  // highest Web Crypto cost supported by the Worker runtime.
+  const isNodeRuntime = typeof process !== "undefined" && Boolean(process.versions?.node);
+  return isNodeRuntime ? PASSWORD_HASH_ITERATIONS : WORKER_PASSWORD_HASH_ITERATIONS;
+}
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -49,10 +58,11 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const hash = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
+  const iterations = preferredPasswordHashIterations();
+  const hash = await derivePasswordHash(password, salt, iterations);
   return [
     PASSWORD_HASH_PREFIX,
-    PASSWORD_HASH_ITERATIONS,
+    iterations,
     bytesToBase64Url(salt),
     bytesToBase64Url(hash),
   ].join("$");
@@ -74,15 +84,21 @@ export async function verifyPasswordAndRehash(
         algorithm !== "pbkdf2-sha256" ||
         version !== "v1" ||
         extra !== undefined ||
-        Number(iterationText) !== PASSWORD_HASH_ITERATIONS
+        ![PASSWORD_HASH_ITERATIONS, WORKER_PASSWORD_HASH_ITERATIONS].includes(Number(iterationText))
       ) {
         return { valid: false };
       }
       const salt = base64UrlToBytes(saltText);
       const expected = base64UrlToBytes(hashText);
       if (salt.length !== SALT_BYTES || expected.length !== HASH_BYTES) return { valid: false };
-      const actual = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
-      return { valid: constantTimeEqual(actual, expected) };
+      const actual = await derivePasswordHash(password, salt, Number(iterationText));
+      const valid = constantTimeEqual(actual, expected);
+      return {
+        valid,
+        ...(valid && Number(iterationText) !== preferredPasswordHashIterations()
+          ? { rehashedPassword: await hashPassword(password) }
+          : {}),
+      };
     }
 
     const legacy = Uint8Array.from(atob(storedHash), (character) => character.charCodeAt(0));

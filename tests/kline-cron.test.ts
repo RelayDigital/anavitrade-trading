@@ -18,6 +18,7 @@ import {
   TIMEFRAMES,
   TOP_SYMBOLS_COUNT,
   parseBinanceKlines,
+  parseKrakenKlines,
   runKlineCron,
   postKlinesToWorker,
 } from "../src/server/analysis/kline-cron";
@@ -99,6 +100,26 @@ test("kline-cron parseBinanceKlines: rejects malformed row", () => {
   assert.throws(() => parseBinanceKlines("X", "1h", [[1, "a", "b", "c", "d", "e", "f"]]), /Invalid Binance kline payload/);
 });
 
+test("kline-cron parseKrakenKlines: normalizes closed OHLC rows", () => {
+  const payload = {
+    error: [],
+    result: {
+      XXBTZUSD: [
+        [1700000000, "50000", "51000", "49000", "50500", "50250", "1000", 10],
+        [1700003600, "50500", "51500", "49500", "51000", "51000", "2000", 20],
+        [1700007200, "51000", "52000", "50000", "51500", "51500", "3000", 30],
+      ],
+      last: 1700007200,
+    },
+  };
+  const result = parseKrakenKlines("BTCUSDT", "1h", payload, 300);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].symbol, "BTCUSDT");
+  assert.equal(result[0].timeframe, "1h");
+  assert.equal(result[0].timestamp, 1700000000000);
+  assert.equal(result[1].volume, "2000");
+});
+
 // ─── runKlineCron ────────────────────────────────────────────────────────────
 
 test("kline-cron runKlineCron: writes klines for both timeframes", async () => {
@@ -123,9 +144,9 @@ test("kline-cron runKlineCron: writes klines for both timeframes", async () => {
     wait,
   });
 
-  // 2 symbols × 2 timeframes × 10 klines each = 40 klines
-  assert.equal(result.totalFetched, 40);
-  assert.equal(result.totalWritten, 40);
+  // 2 symbols × 3 timeframes × 10 klines each = 60 klines
+  assert.equal(result.totalFetched, 60);
+  assert.equal(result.totalWritten, 60);
   assert.deepEqual(result.symbols, symbols);
 
   // Each chunk should be ≤ CHUNK_SIZE
@@ -217,9 +238,10 @@ test("kline-cron runKlineCron: retries on transient POST failure", async () => {
   // Each timeframe should have been retried exactly once
   assert.equal(tfCallCount["4h"], 2, "4h should have 1 retry");
   assert.equal(tfCallCount["1h"], 2, "1h should have 1 retry");
+  assert.equal(tfCallCount["15m"], 2, "15m should have 1 retry");
   assert.ok(firstTfSucceeded, "POST should have succeeded after retry");
-  // 1 symbol x 2 timeframes x 5 klines = 10
-  assert.equal(result.totalWritten, 10);
+  // 1 symbol x 3 timeframes x 5 klines = 15
+  assert.equal(result.totalWritten, 15);
   assert.equal(result.errors.length, 0);
 });
 
@@ -286,9 +308,9 @@ test("kline-cron runKlineCron: recovers from individual fetch failures", async (
     wait,
   });
 
-  // ETHUSDT failures are non-fatal; the other 2 symbols × 2 timeframes × 3 klines = 12
-  assert.equal(result.totalFetched, 12);
-  assert.equal(result.totalWritten, 12);
+  // ETHUSDT failures are non-fatal; the other 2 symbols × 3 timeframes × 3 klines = 18
+  assert.equal(result.totalFetched, 18);
+  assert.equal(result.totalWritten, 18);
   // Should have recorded the ETHUSDT error
   assert.ok(result.errors.some((e) => e.includes("ETHUSDT")));
   // No SOLUSDT or BTCUSDT errors
@@ -332,12 +354,12 @@ test("kline-cron runKlineCron: idempotent writes (INSERT OR IGNORE)", async () =
     wait,
   });
 
-  // Both runs should succeed without errors. 3 klines x 2 timeframes (4h, 1h)
+  // Both runs should succeed without errors. 3 klines x 3 timeframes (4h, 1h, 15m)
   // per symbol, since fetchKlines here ignores the requested interval.
   assert.equal(r1.errors.length, 0);
   assert.equal(r2.errors.length, 0);
-  assert.equal(r1.totalWritten, 6);
-  assert.equal(r2.totalWritten, 6);
+  assert.equal(r1.totalWritten, 9);
+  assert.equal(r2.totalWritten, 9);
 });
 
 test("kline-cron runKlineCron: chunking respects CHUNK_SIZE", async () => {
@@ -365,10 +387,10 @@ test("kline-cron runKlineCron: chunking respects CHUNK_SIZE", async () => {
     wait,
   });
 
-  // 1 symbol × 2 timeframes: each timeframe produces CHUNK_SIZE*2+10 klines
+  // 1 symbol × 3 timeframes: each timeframe produces CHUNK_SIZE*2+10 klines
   // Expect: chunk 1 = 85, chunk 2 = 85, chunk 3 = 10 (for each timeframe)
-  // So 3 POSTs per timeframe = 6 total
-  assert.equal(chunkSizes.length, 6);
+  // So 3 POSTs per timeframe = 9 total
+  assert.equal(chunkSizes.length, 9);
   // All chunks except possibly the last should be exactly CHUNK_SIZE
   for (let i = 0; i < chunkSizes.length; i++) {
     if ((i + 1) % 3 === 0) {
@@ -379,7 +401,7 @@ test("kline-cron runKlineCron: chunking respects CHUNK_SIZE", async () => {
     }
   }
 
-  const totalExpected = (CHUNK_SIZE * 2 + 10) * 2; // 2 timeframes
+  const totalExpected = (CHUNK_SIZE * 2 + 10) * 3; // 3 timeframes
   assert.equal(result.totalFetched, totalExpected);
   assert.equal(result.totalWritten, totalExpected);
 });
@@ -463,7 +485,7 @@ test("kline-cron constants are sensible", () => {
   assert.ok(MAX_RETRIES >= 1, "MAX_RETRIES should be at least 1");
   assert.ok(POST_DELAY_MS >= 0, "POST_DELAY_MS should be non-negative");
   assert.ok(RETRY_BASE_MS >= 100, "RETRY_BASE_MS should give meaningful backoff");
-  assert.equal(TIMEFRAMES.length, 2);
+  assert.equal(TIMEFRAMES.length, 3);
   assert.ok(TIMEFRAMES.includes("4h"), "Should include 4h");
   assert.ok(TIMEFRAMES.includes("1h"), "Should include 1h");
   assert.equal(TOP_SYMBOLS_COUNT, DEFAULT_SYMBOLS.length);

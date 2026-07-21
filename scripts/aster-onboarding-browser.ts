@@ -74,7 +74,16 @@ async function main() {
     await page.getByPlaceholder("Re-enter your password").fill(PASSWORD);
     await screenshot(page, "01-register-filled.png");
     await page.getByRole("button", { name: /^Create Account$/ }).click();
-    await page.waitForURL(/\/dashboard/, { timeout: 30000 });
+    await page.waitForURL(/\/(dashboard|verify-email)/, { timeout: 30000 });
+    if (page.url().includes("/verify-email")) {
+      await page.getByRole("heading", { name: /Email verified!/i }).waitFor({ timeout: 30000 });
+      await page.getByRole("button", { name: /Sign In to Your Account/i }).click();
+      await page.waitForURL(/\/login/, { timeout: 15000 });
+      await page.getByPlaceholder("alex@example.com").fill(email);
+      await page.getByPlaceholder("Your password").fill(PASSWORD);
+      await page.getByRole("button", { name: /^Sign In$/ }).click();
+      await page.waitForURL(/\/dashboard/, { timeout: 30000 });
+    }
     await screenshot(page, "02-dashboard.png");
 
     await page.goto(`${BASE_URL}/onboarding/aster`, { waitUntil: "domcontentloaded" });
@@ -91,7 +100,7 @@ async function main() {
     await page.getByRole("button", { name: /Sign & Activate Aster/i }).click();
     await Promise.race([
       page.getByText(/Already Active|Activated! Redirecting|Active - ready|Active . ready/i).waitFor({ timeout: 90000 }),
-      page.getByText(/Failed to activate Aster|Failed to register Aster|registration/i).waitFor({ timeout: 90000 }),
+      page.getByText(/Failed to activate Aster|Failed to register Aster/i).waitFor({ timeout: 90000 }),
     ]);
     await sleep(1000);
     await screenshot(page, "05-after-activation.png");

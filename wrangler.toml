@@ -14,19 +14,37 @@ database_id = "2f30b46a-e457-4691-a309-a3c8e27bbac7"
 # Local/dev vars. In production these are set as Worker secrets, not here.
 [vars]
 VITE_APP_ID = "anavitrade-trading"
+# The public platform is production-hosted and Aster execution is enabled for
+# the controlled mainnet pilot under the notional cap below.
 APP_ENVIRONMENT = "production"
+AUTOMATED_SIGNAL_DISPATCH_ENABLED = "true"
+# Product policy: password accounts can sign in immediately. Email-based
+# verification and recovery remain unavailable until a sender is provisioned.
+REQUIRE_EMAIL_VERIFICATION = "false"
 APP_BASE_URL = "https://anavitrade-trading.vercel.app"
 CORS_ALLOWED_ORIGINS = "https://anavitrade-trading.vercel.app"
-ASTER_BUILDER_ADDRESS = "0x58c022C844B1Ee047A78dcdDeb516eD992e80828"
+# Aster uses the agent-only production mainnet authorization flow.
+ASTER_BUILDER_ADDRESS = ""
+ASTER_AGENT_ONLY_ENABLED = "true"
 ASTER_API_BASE_URL = "https://fapi.asterdex.com"
 ASTER_DEFAULT_FEE_RATE = "0"
+# Mainnet connection, agent authorization, and live Aster order submission are
+# enabled for capped real-money tester accounts.
 ASTER_ENVIRONMENT = "production"
-ASTER_LIVE_ORDER_SUBMISSION_ENABLED = "false"
+ASTER_LIVE_ORDER_SUBMISSION_ENABLED = "true"
+# Absolute per-order ceiling for the real-money tester pilot. This remains
+# effective even when global automated dispatch is enabled.
+ASTER_MAX_ORDER_NOTIONAL_USD = "100"
 
 [[ratelimits]]
 name = "RATE_LIMITER"
 namespace_id = "1001"
 simple = { limit = 60, period = 60 }
+
+# Native Cloudflare transactional email. A verified sender domain must be
+# onboarded in Cloudflare Email Sending before delivery is enabled.
+[[send_email]]
+name = "AUTH_EMAIL"
 
 # Scrapes coinlegs every 60 seconds → scores → auto-dispatches Tier A signals.
 # Sliding 3-min window keeps latency under 1 min while catching clock-skew.

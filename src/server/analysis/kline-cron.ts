@@ -2,7 +2,7 @@
  * VPS-side kline ingestion cron.
  *
  * Fetches OHLCV klines from Binance (futures API) for configurable symbol lists
- * at 4h AND 1h timeframes, then writes them to the Worker's D1 database via the
+ * at 4h, 1h, AND 15m timeframes, then writes them to the Worker's D1 database via the
  * existing authenticated internal API path (`POST /api/internal/seed-klines`).
  *
  * This replaces the ad-hoc `scripts/seed-klines.mjs` approach:
@@ -16,6 +16,8 @@
  * Environment variables (.env):
  *   WORKER_URL              — Worker base URL (e.g. https://anavitrade.workers.dev)
  *   INTERNAL_SECRET         — shared secret for VPS-to-Worker auth
+ *   KLINE_FETCH_LIMIT       — candles per symbol/timeframe; defaults to 5 for
+ *                             recurring refreshes, set to 300 for warmup
  *   BINANCE_API_KEY         — optional, sent as X-MBX-APIKEY to bypass geo-block
  *
  * Standalone usage:
@@ -44,7 +46,7 @@ export const MAX_KLINES_PER_CALL = 300;
 export const CHUNK_SIZE = 85;
 
 /** Delay between API POSTs to avoid flooding the Worker. */
-export const POST_DELAY_MS = 200;
+export const POST_DELAY_MS = 1500;
 
 /** Delay between Binance API calls for different symbols. */
 export const FETCH_DELAY_MS = 150;
@@ -55,8 +57,11 @@ export const MAX_RETRIES = 3;
 /** Base retry delay (exponential backoff). */
 export const RETRY_BASE_MS = 1000;
 
+/** Recurring refresh size; operating-depth warmup opts into MAX_KLINES_PER_CALL. */
+export const DEFAULT_FETCH_LIMIT = 5;
+
 /** Timeframes to fetch — 4h (MA99 warmup, structural) and 1h (SMC patterns). */
-export const TIMEFRAMES = ["4h", "1h"] as const;
+export const TIMEFRAMES = ["4h", "1h", "15m"] as const;
 
 /** Default symbol list (static fallback if exchangeInfo fails). */
 export const DEFAULT_SYMBOLS: readonly string[] = [
@@ -64,6 +69,27 @@ export const DEFAULT_SYMBOLS: readonly string[] = [
   "AVAXUSDT", "DOTUSDT", "LINKUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT",
   "OPUSDT",
 ];
+
+/** Kraken public OHLC symbols used only when Binance returns a regional 451.
+ * The normalized output keeps the downstream USDT symbol contract, while the
+ * cron log makes the alternate market-data provenance explicit. */
+export const KRAKEN_PAIR_BY_SYMBOL: Readonly<Record<string, string>> = {
+  BTCUSDT: "XBTUSD",
+  ETHUSDT: "ETHUSD",
+  BNBUSDT: "BNBUSD",
+  SOLUSDT: "SOLUSD",
+  XRPUSDT: "XXRPZUSD",
+  ADAUSDT: "ADAUSD",
+  DOGEUSDT: "XDGUSD",
+  AVAXUSDT: "AVAXUSD",
+  DOTUSDT: "DOTUSD",
+  LINKUSDT: "LINKUSD",
+  SUIUSDT: "SUIUSD",
+  NEARUSDT: "NEARUSD",
+  APTUSDT: "APTUSD",
+  ARBUSDT: "ARBUSD",
+  OPUSDT: "OPUSD",
+};
 
 /** Number of top USDT perpetuals to fetch from exchangeInfo. */
 export const TOP_SYMBOLS_COUNT = 15;
@@ -171,6 +197,39 @@ export function parseBinanceKlines(
   });
 }
 
+/** Parse Kraken's OHLC response while retaining our normalized symbol shape. */
+export function parseKrakenKlines(
+  symbol: string,
+  interval: string,
+  payload: unknown,
+  limit = MAX_KLINES_PER_CALL,
+): BinanceKline[] {
+  if (!payload || typeof payload !== "object") throw new Error("Invalid Kraken OHLC payload");
+  const result = (payload as { result?: unknown }).result;
+  if (!result || typeof result !== "object") throw new Error("Invalid Kraken OHLC payload");
+  const rows = Object.entries(result).find(([key, value]) => key !== "last" && Array.isArray(value))?.[1];
+  if (!Array.isArray(rows)) throw new Error("Invalid Kraken OHLC payload");
+
+  return rows
+    .slice(0, -1) // Kraken includes the currently-forming candle as the last row.
+    .slice(-Math.min(limit, MAX_KLINES_PER_CALL))
+    .map((row) => {
+      if (!Array.isArray(row) || row.length < 7) throw new Error("Invalid Kraken OHLC payload");
+      const values = row.slice(0, 7).map(Number);
+      if (values.some((value) => !Number.isFinite(value))) throw new Error("Invalid Kraken OHLC payload");
+      return {
+        symbol,
+        timeframe: interval,
+        timestamp: values[0] * 1000,
+        open: String(row[1]),
+        high: String(row[2]),
+        low: String(row[3]),
+        close: String(row[4]),
+        volume: String(row[6]),
+      };
+    });
+}
+
 /**
  * Fetch klines from Binance Futures API for a single symbol/interval.
  */
@@ -194,6 +253,39 @@ export async function fetchBinanceKlines(
     throw new Error(`Binance ${res.status} for ${symbol} ${interval}: ${body.slice(0, 200)}`);
   }
   return parseBinanceKlines(symbol, interval, await res.json());
+}
+
+/** Fetch normalized candles from Kraken for regional Binance fallback. */
+export async function fetchKrakenKlines(
+  symbol: string,
+  interval: string,
+  limit: number,
+): Promise<BinanceKline[]> {
+  const pair = KRAKEN_PAIR_BY_SYMBOL[symbol];
+  if (!pair) throw new Error(`No Kraken fallback pair for ${symbol}`);
+  const krakenInterval = interval === "4h" ? "240" : interval === "1h" ? "60" : interval === "15m" ? "15" : undefined;
+  if (!krakenInterval) throw new Error(`No Kraken fallback interval for ${interval}`);
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${krakenInterval}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Kraken ${res.status} for ${symbol} ${interval}`);
+  return parseKrakenKlines(symbol, interval, await res.json(), limit);
+}
+
+/** Prefer Binance provenance; use Kraken only for the known 451 geo-block. */
+export async function fetchMarketKlines(
+  symbol: string,
+  interval: string,
+  limit: number,
+  apiKey?: string,
+): Promise<BinanceKline[]> {
+  try {
+    return await fetchBinanceKlines(symbol, interval, limit, apiKey);
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error);
+    if (!message.includes("Binance 451") && !message.includes("restricted location")) throw error;
+    console.warn(`[kline-cron] Binance restricted; using Kraken fallback for ${symbol} ${interval}`);
+    return fetchKrakenKlines(symbol, interval, limit);
+  }
 }
 
 /**
@@ -250,9 +342,13 @@ export async function postKlinesToWorker(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(
-      `Worker API ${res.status} on seed-klines: ${body.slice(0, 200)}`,
-    );
+    const error = new Error(`Worker API ${res.status} on seed-klines: ${body.slice(0, 200)}`) as Error & { retryAfterMs?: number };
+    const retryAfter = res.headers.get("retry-after");
+    if (res.status === 429 && retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds) && seconds >= 0) error.retryAfterMs = seconds * 1000;
+    }
+    throw error;
   }
   return res.json() as Promise<SeedKlinesResponse>;
 }
@@ -274,6 +370,10 @@ export async function runKlineCron(
     dependencies.internalSecret ?? process.env.INTERNAL_SECRET ?? "";
   const binanceApiKey =
     dependencies.binanceApiKey ?? process.env.BINANCE_API_KEY ?? "";
+  const configuredLimit = Number.parseInt(process.env.KLINE_FETCH_LIMIT ?? String(DEFAULT_FETCH_LIMIT), 10);
+  const fetchLimit = Number.isFinite(configuredLimit)
+    ? Math.max(1, Math.min(MAX_KLINES_PER_CALL, configuredLimit))
+    : DEFAULT_FETCH_LIMIT;
 
   const fetchSymbolsFn =
     dependencies.fetchSymbols ??
@@ -281,7 +381,7 @@ export async function runKlineCron(
   const fetchKlinesFn =
     dependencies.fetchKlines ??
     ((symbol: string, interval: string, limit: number) =>
-      fetchBinanceKlines(symbol, interval, limit, binanceApiKey));
+      fetchMarketKlines(symbol, interval, limit, binanceApiKey));
   const postKlinesFn =
     dependencies.postKlines ??
     ((klines: BinanceKline[]) =>
@@ -312,7 +412,7 @@ export async function runKlineCron(
     for (const tf of TIMEFRAMES) {
       let klines: BinanceKline[] = [];
       try {
-        klines = await fetchKlinesFn(symbol, tf, MAX_KLINES_PER_CALL);
+      klines = await fetchKlinesFn(symbol, tf, fetchLimit);
       } catch (e: any) {
         errors.push(`${symbol} ${tf} fetch: ${e.message}`);
         continue;
@@ -338,7 +438,7 @@ export async function runKlineCron(
           } catch (e: any) {
             lastError = e.message;
             if (attempt < MAX_RETRIES - 1) {
-              const delay = RETRY_BASE_MS * Math.pow(2, attempt);
+              const delay = e?.retryAfterMs ?? RETRY_BASE_MS * Math.pow(2, attempt);
               await wait(delay);
             }
           }

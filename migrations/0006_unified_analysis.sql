@@ -51,6 +51,7 @@ CREATE TABLE `analysis_signals` (
 	`metadataJson` text,
 	`dispatched` integer DEFAULT 0 NOT NULL,
 	`createdAt` integer NOT NULL,
+	`updatedAt` integer NOT NULL,
 	`dispatchedAt` integer
 );
 --> statement-breakpoint

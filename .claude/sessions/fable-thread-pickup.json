@@ -1,0 +1,9 @@
+{
+  "slug": "fable-thread-pickup",
+  "startedAt": "2026-07-18T18:02:00Z",
+  "lastHeartbeat": "2026-07-18T20:58:00Z",
+  "cwd": "/home/ariel/anavitrade-trading",
+  "planFile": null,
+  "currentTask": "ICR engine refinement toward /goal: entries at low, TPs at high, minimal drawdown, PF>=2.5, honest walk-forward only",
+  "progressLog": "progress/fable-thread-pickup.md"
+}

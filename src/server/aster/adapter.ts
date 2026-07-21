@@ -20,7 +20,10 @@ export class AsterExecutionAdapter implements ExecutionAdapter {
       .limit(1);
     if (!row) throw new Error("ASTER_AGENT_NOT_FOUND");
     if (row.status !== "active") throw new Error("ASTER_AGENT_NOT_ACTIVE");
-    if (row.agentStatus !== "approved" || row.builderStatus !== "approved") {
+    const builderReady = row.builderAddress
+      ? row.builderStatus === "approved"
+      : row.builderStatus === "not_required" || row.builderStatus === "approved";
+    if (row.agentStatus !== "approved" || !builderReady) {
       throw new Error("ASTER_APPROVAL_NOT_CONFIRMED");
     }
 

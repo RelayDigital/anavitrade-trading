@@ -47,6 +47,12 @@ export function getDb() {
   return _db;
 }
 
+/** Current Worker environment for server-only release gates. */
+export function getDbEnv(): Env {
+  if (!_env) throw new Error("Env not set — call setDbEnv() first");
+  return _env;
+}
+
 /* ─── Encryption key ───
    Delegates to the shared crypto module (src/server/cex/crypto.ts).
    This file provides Worker-friendly wrappers that read ENCRYPTION_KEY
@@ -152,20 +158,30 @@ export async function revokeAuthSessionByDigest(sessionIdDigest: string): Promis
     .where(eq(authSessions.sessionIdDigest, sessionIdDigest));
 }
 
-export async function registerUser(input: { name: string; email: string; password: string }) {
+export async function registerUser(input: {
+  name: string;
+  email: string;
+  password: string;
+  requireEmailVerification?: boolean;
+}) {
   const db = getDb();
   const existing = await getUserByEmail(input.email);
   if (existing) throw new Error("EMAIL_EXISTS");
   const passwordHash = await hashPassword(input.password);
-  const verificationToken = await createOneTimeToken();
-  const verificationTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const requireEmailVerification = input.requireEmailVerification !== false;
+  const verificationToken = requireEmailVerification ? await createOneTimeToken() : null;
+  const verificationTokenExpiresAt = requireEmailVerification
+    ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+    : null;
   await db.insert(users).values({
     name: input.name,
     email: input.email,
     passwordHash,
     loginMethod: "email",
-    emailVerified: false,
-    ...getTokenPersistence("verification", verificationToken.digest, verificationTokenExpiresAt).values,
+    emailVerified: !requireEmailVerification,
+    ...(verificationToken && verificationTokenExpiresAt
+      ? getTokenPersistence("verification", verificationToken.digest, verificationTokenExpiresAt).values
+      : { verificationToken: null, verificationTokenExpiresAt: null }),
     lastSignedIn: new Date(),
   } as any);
   const created = await getUserByEmail(input.email);
@@ -173,7 +189,7 @@ export async function registerUser(input: { name: string; email: string; passwor
   const localOpenId = `local:${created.id}`;
   await db.update(users).set({ openId: localOpenId } as any).where(eq(users.id, created.id));
   const finalUser = await getUserByEmail(input.email);
-  return { user: finalUser!, verificationToken: verificationToken.rawToken };
+  return { user: finalUser!, verificationToken: verificationToken?.rawToken ?? "" };
 }
 
 export async function verifyUserPassword(email: string, password: string) {

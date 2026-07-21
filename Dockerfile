@@ -7,7 +7,7 @@ RUN corepack enable && corepack prepare pnpm@10.8.0 --activate
 
 # Copy package manifest and install all deps (--prod for runtime, but keep TypeScript dev for --experimental-transform-types)
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile
 
 # Copy server source code
 COPY tsconfig.json ./
@@ -21,4 +21,4 @@ EXPOSE 9090
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
   CMD wget -qO- http://localhost:9090/health || exit 1
 
-CMD ["node", "--experimental-transform-types", "src/server/execution/server.ts"]
+CMD ["pnpm", "exec", "tsx", "src/server/execution/server.ts"]

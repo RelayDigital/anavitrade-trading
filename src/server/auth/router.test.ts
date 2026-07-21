@@ -103,6 +103,34 @@ test("registration returns a safe DTO, sends verification, and does not set a co
   assert.equal("verificationToken" in result, false);
   assert.equal(headers.has("Set-Cookie"), false);
   assert.equal(sender.messages.length, 1);
+  assert.equal(result.emailVerificationRequired, true);
+});
+
+test("registration can make a password account immediately eligible without sending email", async () => {
+  const { deps, sender } = dependencies({ isEmailVerificationRequired: () => false });
+  const caller = createAuthRouter(deps).createCaller(context(null, { environment: "production" }).ctx);
+  const result = await caller.register({ name: "Test User", email: "user@example.com", password: "long-enough-password" });
+
+  assert.equal(result.emailVerificationRequired, false);
+  assert.equal(sender.messages.length, 0);
+});
+
+test("production registration fails before creating an account when verification email is unavailable", async () => {
+  let registrations = 0;
+  const { deps } = dependencies({
+    isEmailDeliveryConfigured: () => false,
+    registerUser: async () => {
+      registrations += 1;
+      return { user: { ...baseUser, emailVerified: false }, verificationToken: "verify-raw" };
+    },
+  });
+  const caller = createAuthRouter(deps).createCaller(context(null, { environment: "production" }).ctx);
+
+  await assert.rejects(
+    caller.register({ name: "Test User", email: "user@example.com", password: "long-enough-password" }),
+    (error: any) => error.code === "PRECONDITION_FAILED" && error.message === "Email verification is temporarily unavailable. Please try again later.",
+  );
+  assert.equal(registrations, 0);
 });
 
 test("login denies an unverified email without creating a session", async () => {

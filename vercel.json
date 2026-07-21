@@ -35,6 +35,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://anavitrade-trading.erhazeariel.workers.dev/api/:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

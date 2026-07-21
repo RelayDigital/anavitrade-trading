@@ -611,6 +611,9 @@ export const analysisSignals = sqliteTable("analysis_signals", {
   metadataJson: text(),
   dispatched: integer({ mode: "number" }).default(0).notNull(),
   createdAt: integer({ mode: "number" }).notNull(),
+  // The deployed D1 table requires this audit timestamp. Keep the schema and
+  // fresh-database migration aligned so Drizzle never omits it on inserts.
+  updatedAt: integer({ mode: "number" }).$default(() => Date.now()).notNull(),
   dispatchedAt: integer({ mode: "number" }),
 });
 

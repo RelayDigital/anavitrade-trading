@@ -16,9 +16,9 @@ const CAPITAL_OPTIONS = [
 
 const PERKS = [
   "No withdrawal access — ever",
-  "Trade-only API wallet architecture",
+  "Non-custodial account architecture",
   "Revoke access anytime",
-  "Ledger Nano compatible",
+  "Mainnet connection setup",
 ];
 
 export default function Register() {
@@ -38,6 +38,11 @@ export default function Register() {
   // Registration starts email verification and intentionally does not authenticate.
   const register = trpc.auth.register.useMutation({
     onSuccess: (user) => {
+      if (!user.emailVerificationRequired) {
+        toast.success("Account created. You can sign in now.");
+        navigate("/login");
+        return;
+      }
       const developmentVerificationUrl = "developmentVerificationUrl" in user
         ? user.developmentVerificationUrl
         : undefined;
@@ -52,6 +57,8 @@ export default function Register() {
       const msg = e.message ?? "";
       if (msg.toLowerCase().includes("already") || msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("exist")) {
         setErrors({ email: "An account with this email already exists. Sign in instead." });
+      } else if (msg.toLowerCase().includes("email verification is temporarily unavailable")) {
+        setErrors({ _: "Account onboarding is temporarily unavailable while we complete email delivery configuration. Please try again shortly." });
       } else if (msg.toLowerCase().includes("password")) {
         setErrors({ password: "Password must be at least 8 characters." });
       } else {
@@ -110,10 +117,10 @@ export default function Register() {
           </Link>
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.23, 1, 0.32, 1] }}>
             <h2 className="text-4xl font-heading font-bold text-foreground mb-4 leading-tight">
-              Your funds.<br />Your custody.<br /><span className="text-primary">Our execution.</span>
+              Your funds.<br />Your custody.<br /><span className="text-primary">Our research.</span>
             </h2>
             <p className="text-muted-foreground text-lg mb-10 leading-relaxed">
-              Anavitrade mirrors institutional-grade trade signals onto your own Aster account. You keep full control - always.
+              Explore market research and mainnet Aster connection setup while you retain full control of every trading decision.
             </p>
             <div className="space-y-3">
               {PERKS.map((p) => (
@@ -189,7 +196,16 @@ export default function Register() {
                         autoComplete="name"
                         placeholder="Jane Smith"
                         value={form.name}
-                        onChange={(e) => { setErrors({}); setForm({ ...form, name: e.target.value }); }}
+                        onChange={(e) => {
+                          setErrors((current) => {
+                            if (!current.name && !current._) return current;
+                            const next = { ...current };
+                            delete next.name;
+                            delete next._;
+                            return next;
+                          });
+                          setForm((current) => ({ ...current, name: e.target.value }));
+                        }}
                         className={`w-full px-4 py-3 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.name ? "border-red-500/70" : "border-border"}`}
                       />
                       {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
@@ -203,7 +219,16 @@ export default function Register() {
                         autoComplete="email"
                         placeholder="you@example.com"
                         value={form.email}
-                        onChange={(e) => { setErrors({}); setForm({ ...form, email: e.target.value }); }}
+                        onChange={(e) => {
+                          setErrors((current) => {
+                            if (!current.email && !current._) return current;
+                            const next = { ...current };
+                            delete next.email;
+                            delete next._;
+                            return next;
+                          });
+                          setForm((current) => ({ ...current, email: e.target.value }));
+                        }}
                         className={`w-full px-4 py-3 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.email ? "border-red-500/70" : "border-border"}`}
                       />
                       {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email}</p>}
@@ -218,7 +243,16 @@ export default function Register() {
                           autoComplete="new-password"
                           placeholder="Min 8 characters"
                           value={form.password}
-                          onChange={(e) => { setErrors({}); setForm({ ...form, password: e.target.value }); }}
+                          onChange={(e) => {
+                            setErrors((current) => {
+                              if (!current.password && !current._) return current;
+                              const next = { ...current };
+                              delete next.password;
+                              delete next._;
+                              return next;
+                            });
+                            setForm((current) => ({ ...current, password: e.target.value }));
+                          }}
                           className={`w-full px-4 py-3 pr-11 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.password ? "border-red-500/70" : "border-border"}`}
                         />
                         <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
@@ -237,7 +271,16 @@ export default function Register() {
                           autoComplete="new-password"
                           placeholder="Re-enter your password"
                           value={form.confirm}
-                          onChange={(e) => { setErrors({}); setForm({ ...form, confirm: e.target.value }); }}
+                          onChange={(e) => {
+                            setErrors((current) => {
+                              if (!current.confirm && !current._) return current;
+                              const next = { ...current };
+                              delete next.confirm;
+                              delete next._;
+                              return next;
+                            });
+                            setForm((current) => ({ ...current, confirm: e.target.value }));
+                          }}
                           className={`w-full px-4 py-3 pr-11 rounded-xl bg-background border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${errors.confirm ? "border-red-500/70" : "border-border"}`}
                         />
                         <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">

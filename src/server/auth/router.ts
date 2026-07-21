@@ -26,7 +26,7 @@ type VerificationResult = { user: User; verificationToken: string } | undefined;
 type ResetTokenResult = { user: User; resetToken: string } | null;
 
 export type AuthRouterDependencies = {
-  registerUser(input: { name: string; email: string; password: string }): Promise<RegistrationResult>;
+  registerUser(input: { name: string; email: string; password: string; requireEmailVerification?: boolean }): Promise<RegistrationResult>;
   verifyUserPassword(email: string, password: string): Promise<User | null>;
   verifyEmailToken(token: string): Promise<User>;
   resendVerificationEmail(email: string): Promise<VerificationResult>;
@@ -39,6 +39,9 @@ export type AuthRouterDependencies = {
   signSessionToken(user: User): Promise<string>;
   revokeSessionToken(token: string | undefined): Promise<void>;
   getEmailSender(env: Env): AuthEmailSender;
+  /** Returns false only when a production verification email cannot be sent. */
+  isEmailDeliveryConfigured?(env: Env): boolean;
+  isEmailVerificationRequired?(env: Env): boolean;
 };
 
 const developmentEmailSender = new RecordingAuthEmailSender();
@@ -53,7 +56,21 @@ function defaultEmailSender(env: Env): AuthEmailSender {
     isExplicitDevelopmentOrTestnet(env);
   return isExplicitDevelopment
     ? developmentEmailSender
-    : createAuthEmailSender({ mode: "production" });
+    : createAuthEmailSender({
+      mode: "production",
+      cloudflareEmail: env.AUTH_EMAIL,
+      resendApiKey: env.RESEND_API_KEY,
+      emailFrom: env.EMAIL_FROM,
+    });
+}
+
+function defaultEmailDeliveryConfigured(env: Env): boolean {
+  return isExplicitDevelopmentOrTestnet(env)
+    || Boolean(env.EMAIL_FROM?.trim() && (env.AUTH_EMAIL || env.RESEND_API_KEY?.trim()));
+}
+
+function defaultEmailVerificationRequired(env: Env): boolean {
+  return env.REQUIRE_EMAIL_VERIFICATION !== "false";
 }
 
 const defaultDependencies: AuthRouterDependencies = {
@@ -73,6 +90,8 @@ const defaultDependencies: AuthRouterDependencies = {
     }),
   revokeSessionToken,
   getEmailSender: defaultEmailSender,
+  isEmailDeliveryConfigured: defaultEmailDeliveryConfigured,
+  isEmailVerificationRequired: defaultEmailVerificationRequired,
 };
 
 export function createAuthRouter(dependencies: AuthRouterDependencies = defaultDependencies) {
@@ -88,16 +107,27 @@ export function createAuthRouter(dependencies: AuthRouterDependencies = defaultD
       .mutation(async ({ input, ctx }) => {
         try {
           getCanonicalAppOrigin(ctx.env);
-          const result = await dependencies.registerUser(input);
-          const verificationUrl = createCanonicalAuthUrl(ctx.env, "/verify-email", {
-            token: result.verificationToken,
-            email: result.user.email!,
-          });
-          await dependencies.getEmailSender(ctx.env).sendVerification({
-            to: result.user.email!,
-            name: result.user.name ?? "Anavitrade User",
-            verificationUrl,
-          });
+          const emailVerificationRequired = dependencies.isEmailVerificationRequired?.(ctx.env) !== false;
+          if (emailVerificationRequired && dependencies.isEmailDeliveryConfigured?.(ctx.env) === false) {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "Email verification is temporarily unavailable. Please try again later.",
+            });
+          }
+          const result = await dependencies.registerUser({ ...input, requireEmailVerification: emailVerificationRequired });
+          const verificationUrl = emailVerificationRequired
+            ? createCanonicalAuthUrl(ctx.env, "/verify-email", {
+              token: result.verificationToken,
+              email: result.user.email!,
+            })
+            : null;
+          if (verificationUrl) {
+            await dependencies.getEmailSender(ctx.env).sendVerification({
+              to: result.user.email!,
+              name: result.user.name ?? "Anavitrade User",
+              verificationUrl,
+            });
+          }
           await dependencies.writeAuditLog(
             result.user.id,
             "USER_REGISTERED",
@@ -105,16 +135,22 @@ export function createAuthRouter(dependencies: AuthRouterDependencies = defaultD
             getClientIp(ctx.req),
           );
           const safeUser = toSafeUser(result.user);
-          return isExplicitDevelopmentOrTestnet(ctx.env)
-            ? { ...safeUser, developmentVerificationUrl: verificationUrl }
-            : safeUser;
+          return {
+            ...safeUser,
+            emailVerificationRequired,
+            ...(isExplicitDevelopmentOrTestnet(ctx.env) && verificationUrl
+              ? { developmentVerificationUrl: verificationUrl }
+              : {}),
+          };
         } catch (error: any) {
+          if (error instanceof TRPCError) throw error;
           if (error?.message === "EMAIL_EXISTS") {
             throw new TRPCError({
               code: "CONFLICT",
               message: "An account with this email already exists.",
             });
           }
+          console.error("[auth] registration failed:", error?.message ?? "unknown error");
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Registration failed." });
         }
       }),

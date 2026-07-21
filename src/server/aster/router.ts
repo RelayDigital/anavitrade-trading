@@ -11,8 +11,8 @@ import {
   syncAsterFuturesBalance,
 } from "./store";
 
-const activationModeSchema = z.literal("approveAgentWithBuilder");
-const activationEndpointSchema = z.literal("/fapi/v3/approveAgent");
+const activationModeSchema = z.enum(["approveAgentWithBuilder", "registerAndApproveAgent"]);
+const activationEndpointSchema = z.enum(["/fapi/v3/approveAgent", "/fapi/v3/registerAndApproveAgent"]);
 
 const registrationParamsSchema = z.object({
   agentName: z.string().min(1).max(64),
@@ -39,9 +39,10 @@ export const asterRouter = router({
       environment: config.environment,
       asterChain: config.asterChain,
       codeSigningChainId: config.codeSigningChainId,
+      registrationSigningChainId: config.registrationSigningChainId,
       includeCompatParams: config.includeCompatParams,
       liveOrderSubmissionEnabled: config.liveOrderSubmissionEnabled,
-      configured: Boolean(config.builderAddress),
+      configured: Boolean(config.builderAddress) || config.agentOnlyEnabled,
     };
   }),
 
@@ -128,12 +129,30 @@ export const asterRouter = router({
       activationMode: activationModeSchema,
       endpoint: activationEndpointSchema,
       signatureChainId: z.number().int().positive(),
-      params: registrationParamsSchema,
+      params: registrationParamsSchema.or(z.object({
+        user: z.string().min(10).max(100),
+        nonce: z.number().int().positive(),
+        agentName: z.string().min(1).max(64),
+        agentAddress: z.string().min(10).max(100),
+        expired: z.number().int().positive(),
+        signatureChainId: z.number().int().positive(),
+        canSpotTrade: z.boolean(),
+        canPerpTrade: z.boolean(),
+        canWithdraw: z.boolean(),
+        ipWhitelist: z.string().max(512).optional(),
+      })),
       signature: z.string().regex(/^0x[0-9a-fA-F]+$/),
     }))
     .mutation(async ({ input, ctx }) => {
       try {
-        return await completeAsterRegistration({ userId: ctx.user.id, ...input });
+        return await completeAsterRegistration({
+          userId: ctx.user.id,
+          activationMode: input.activationMode,
+          endpoint: input.endpoint,
+          signatureChainId: input.signatureChainId,
+          params: input.params!,
+          signature: input.signature,
+        });
       } catch (e: any) {
         if (String(e?.message ?? "").startsWith("ASTER_REGISTRATION_")) {
           throw new TRPCError({ code: "BAD_REQUEST", message: e.message });

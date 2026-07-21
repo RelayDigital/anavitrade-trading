@@ -27,9 +27,9 @@ safety gates, and whose working tree is clean.
 
 | Item | State | Evidence |
 |---|---|---|
-| Worker + VPS | Deployed; VPS in `testnet` mode | anavitrade-trading.erhazeariel.workers.dev; 5.161.229.209 |
+| Worker + VPS | Deployed; VPS in `testnet` mode (confirmed 2026-07-19: `printenv EXECUTION_MODE` → `testnet`); all containers Up, execution+redis healthy, disk 15% used | anavitrade-trading.erhazeariel.workers.dev; 5.161.229.209 |
 | Auth dev-registration flow | Code done, uncommitted; tests pass | `tests/auth-development-registration.test.ts` — 2/2 pass |
-| Locked validation tooling | Built + unit-tested; **never run to completion** | `scripts/ml/locked-walkforward-backtest.py`, `pipeline/validation.py`, `pipeline/locked_backtest.py` exist; no cached report in repo |
+| Locked validation tooling | Built + unit-tested; VPS cron wired but **still no completed run** — latest attempt (2026-07-19T07:07Z) failed closed at `select_pairs`, `passed: false` | `scripts/cortex/memory/locked-gate.jsonl` on VPS; `/var/log/anavitrade-locked-gate.log` absent; no cached report in repo |
 | meta-v24 / meta-v25 models | Trained via leaky threshold selection — numbers not citable | v24: AUC 0.531, n=54; v25-momentum: n=20; v25-oversold: WR 34.6% at n=205 |
 | Production safety | Code gates done; 8 operator gates open | `2026-07-17-production-safety-remediation.md` §Release Gates |
 | Aster onboarding | v3 signing path reached; full new-user proof outstanding | 2026-07-14 smoke: "No agent found" = signed auth path works; prior chainId/JSON bugs fixed |
@@ -94,13 +94,49 @@ Code gates in `2026-07-17-production-safety-remediation.md` are complete. The ei
 operator gates remain and are copied here as the single open checklist:
 
 - [ ] Apply and verify production D1 migrations with backup + rollback record
+      — not VPS-assessable; requires `wrangler d1` access on the Cloudflare side
+      (audit 2026-07-19, read-only)
 - [ ] Redeploy Redis privately; rotate its credential after removing exposure
+      — ✓ structurally satisfied: `docker ps` shows `anavitrade-redis` with bare
+      `6379/tcp` (no host-published port) and `docker exec anavitrade-redis
+      redis-cli ping` returns `NOAUTH Authentication required.` (auth enforced).
+      Credential *rotation* history not remotely verifiable — needs operator
+      attestation (audit 2026-07-19)
 - [ ] Restrict ports 3000, 6379, 9090, 9091 at host and provider firewalls
+      — ✓ host side verified: `ufw` active, `Default: deny (incoming)`, only
+      22/tcp allowed; `ss -tlnp` shows 3000/9090/9091 bound to 127.0.0.1 only
+      and 6379 not bound on the host at all. Hetzner provider-level firewall
+      not verifiable from the host — needs console check (audit 2026-07-19)
 - [ ] Configure mail provider, rate-limit bindings, monitoring auth
+      — not VPS-assessable; Worker-side secrets/bindings, requires separate
+      Cloudflare check (audit 2026-07-19)
 - [ ] Rotate internal/admin credentials after constant-time validation ships
+      — code gate confirmed (`timingSafeSecretEqual` in
+      `src/server/security/requestSecurity.ts`, present locally and on the VPS);
+      rotation itself requires operator attestation — no evidence found either
+      way (audit 2026-07-19)
 - [ ] Whitelist 5.161.229.209 on exchange API keys
+      — not remotely verifiable without exchange-console access; no evidence
+      found either way (audit 2026-07-19)
 - [ ] Validate Binance testnet ≥48h including forced failure scenarios
+      — ⚠ NOT satisfied: `EXECUTION_MODE=testnet` confirmed, but the execution
+      container had been up only ~5h at audit time and the entire 48h log window
+      contained 24 lines — startup banner plus repeated
+      `[kline-pipeline] exchangeInfo failed ... 451` / `0 klines — skipping
+      analysis`. No order flow, no forced-failure or reconciliation events
+      observed. The 48h continuous clean-run record does not exist yet
+      (audit 2026-07-19)
 - [ ] Keep non-Binance adapters disabled unless independently certified
+      — ✓ structurally satisfied in code: unsupported exchanges are denied
+      before secrets are materialized (`unsupported_exchange` outcome,
+      `src/server/execution/server.ts:654`; regression test
+      `CEX_ENVIRONMENT_UNSUPPORTED:bybit:testnet` in `server.mode.test.ts`).
+      No adapter enable flags found in non-secret config (audit 2026-07-19)
+
+*(2026-07-19 read-only VPS audit — boxes stay unchecked per the
+no-claim-without-full-evidence rule; notes above record partial/structural
+evidence. Gate 8 context: `EXECUTION_MODE` is `testnet`; no evidence production
+mode has ever been enabled — the approval gate is un-crossed, as intended.)*
 
 **Acceptance:** all boxes checked with evidence (command output or screenshot noted
 in `progress.md`), before any consideration of `EXECUTION_MODE=production`.

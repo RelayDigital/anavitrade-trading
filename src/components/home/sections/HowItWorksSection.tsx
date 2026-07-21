@@ -18,24 +18,24 @@ export default function HowItWorksSection() {
     {
       icon: <UserPlus className="w-5 h-5" />,
       title: "Sign up free",
-      desc: "Create an account in a minute and explore the live signal feed on your demo dashboard — no exchange or card needed to start.",
-      perks: ["No credit card", "Instant access", "Live demo dashboard"],
+      desc: "Create an account in a minute and explore market signals and research in the demo dashboard — no exchange or card needed to start.",
+      perks: ["No credit card", "Instant access", "Research dashboard"],
       gradient: "linear-gradient(135deg, oklch(0.60 0.22 220 / 0.20), oklch(0.60 0.22 220 / 0.04))",
       accentColor: "oklch(0.60 0.22 220)",
     },
     {
       icon: <SlidersHorizontal className="w-5 h-5" />,
-      title: "Pick your style",
-      desc: "Keep it simple with signal alerts and trade by hand, or switch on automation and let the engine do it all for you.",
-      perks: ["Manual or automated", "Custom risk settings", "24/7 engine access"],
+      title: "Review the research",
+      desc: "Use the signal context and risk levels to inform your own decisions. Aster mainnet automation is enabled for authorized pilot accounts with capped order sizing.",
+      perks: ["Signal context", "Risk visibility", "Automation controls"],
       gradient: "linear-gradient(135deg, oklch(0.72 0.20 195 / 0.20), oklch(0.72 0.20 195 / 0.04))",
       accentColor: "oklch(0.72 0.20 195)",
     },
     {
       icon: <LineChart className="w-5 h-5" />,
-      title: "Watch it grow",
-      desc: "Follow every signal, trade, and balance change in real time from one clean dashboard. No black boxes, ever.",
-      perks: ["Real-time P&L tracking", "Trade history log", "One-click kill switch"],
+      title: "Follow the evidence",
+      desc: "Follow signals, authorization status, and any connected Aster activity from one clear dashboard. No profitability promises or black boxes.",
+      perks: ["Signal history", "Validation status", "Risk controls"],
       gradient: "linear-gradient(135deg, oklch(0.82 0.16 85 / 0.18), oklch(0.82 0.16 85 / 0.03))",
       accentColor: "oklch(0.82 0.16 85)",
     },
@@ -54,7 +54,7 @@ export default function HowItWorksSection() {
           align="center"
           eyebrow="Getting Started"
           title="Up and running in three steps"
-          subtitle="From zero to live trading in minutes — no complexity, no friction."
+          subtitle="From account creation to transparent signal research — no complexity, no friction."
           className="mb-16"
         />
 

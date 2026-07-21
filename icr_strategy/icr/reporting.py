@@ -219,6 +219,14 @@ def write_reports(result: BacktestResult, output_dir: str | Path) -> dict[str, P
     target_path_stats(result.trades).to_csv(paths["target_path_stats"], index=False)
     regime_report_from_trades(result.trades).to_csv(paths["regime_report"], index=False)
     labels_frame(result.signals, result.trades).to_csv(paths["meta_labels"], index=False)
+
+    # Honest-by-default segment discovery: multiple-comparisons-aware
+    # validation of session/direction/symbol/etc. subgroups. Imported lazily
+    # to avoid a circular import (segment_validation uses session_bucket).
+    from .segment_validation import run_segment_validation, write_segment_validation_reports
+
+    segment_report = run_segment_validation(trades_to_frame(result.trades))
+    paths.update(write_segment_validation_reports(segment_report, out))
     with paths["summary"].open("w", encoding="utf-8") as f:
         json.dump(result.summary, f, indent=2, allow_nan=False)
     with paths["config_snapshot"].open("w", encoding="utf-8") as f:

@@ -231,9 +231,11 @@ export async function runAnalysisEngine(
         if (candles.length < DEFAULT_ICR_CONFIG.slowMa) continue;
 
         try {
-          // Full scan on initial run; cron's findLatestSignals only checks latest candle
-          const scanFn = icrModule.findSignals;
-          const sigs = scanFn(
+          // A production cycle is forward-only: evaluate the one candle that
+          // has just closed. Re-scanning the full retained history on every
+          // cron would turn old patterns into apparent current opportunities
+          // and makes the live and paper lanes disagree.
+          const sigs = icrModule.findLatestSignals(
             candles,
             symbol,
             timeframe,

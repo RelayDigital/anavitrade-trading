@@ -15,11 +15,11 @@ if (confirm !== "PLACE_REAL_ASTER_LIMIT_ORDER_AND_CANCEL") {
 }
 if (!adminKey) throw new Error("Refusing live proof: ADMIN_API_KEY or ASTER_LIVE_PROOF_ADMIN_API_KEY is required.");
 if (!account.startsWith("0x")) throw new Error("Refusing live proof: ASTER_LIVE_PROOF_ACCOUNT must be the active Aster account.");
-if (!Number.isFinite(maxNotionalUsd) || maxNotionalUsd <= 0 || maxNotionalUsd > 5) {
-  throw new Error("Refusing live proof: ASTER_LIVE_PROOF_MAX_NOTIONAL_USD must be > 0 and <= 5.");
+if (!Number.isFinite(maxNotionalUsd) || maxNotionalUsd <= 0 || maxNotionalUsd > 10) {
+  throw new Error("Refusing live proof: ASTER_LIVE_PROOF_MAX_NOTIONAL_USD must be > 0 and <= 10.");
 }
-if (!Number.isFinite(limitOffsetBps) || limitOffsetBps < 1000) {
-  throw new Error("Refusing live proof: ASTER_LIVE_PROOF_LIMIT_OFFSET_BPS must be >= 1000.");
+if (!Number.isFinite(limitOffsetBps) || limitOffsetBps < 100) {
+  throw new Error("Refusing live proof: ASTER_LIVE_PROOF_LIMIT_OFFSET_BPS must be >= 100.");
 }
 
 const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/aster/live-proof`, {

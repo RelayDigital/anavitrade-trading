@@ -1,82 +1,25 @@
-# Task Plan: Anavitrade — Current State (2026-07-16)
+# Obsidian Knowledge Base Migration
 
-## Status: BETA (operational with known gaps)
+## Goal
 
-### Working ✅
-- Worker deployed at anavitrade-trading.erhazeariel.workers.dev
-- 2,347 Coinlegs signals in D1
-- Cron firing every 60s (native signals, scraper, demo sync, outcome, fee, analysis)
-- 8 CEX exchange clients (Binance, Bybit, OKX, Kraken, KuCoin, Gate, Coinbase, Bitunix)
-- Aster DEX v3 client (OTOCO orders, agent approval gates, fee-rate validation)
-- Internal API for VPS↔Worker (pending-intents, active-connections, kill-state, report-execution)
-- VPS at 5.161.229.209 running execution poll loop (testnet mode)
-- TradingView Desktop connected via CDP (port 9222)
-- TradingView MCP installed and configured
-- Meta-v6 ML model trained (LightGBM + isotonic cal + KMeans + adversarial)
-- 62-feature ML pipeline with multi-TF training data
+Turn the shared Codex/Claude Obsidian vault into a linked, typed knowledge base with a small trustworthy briefing.
 
-### Blocking 🟡
-- **klines table: 1 row** — analysis engine generates 0 signals because no OHLCV data
-- Analysis engine runs but can't compute indicators → 0 analysis_signals → 0 trade_intents
-- Root cause: Cloudflare 50-subrequest cap prevents kline fetching from Worker
+## Phases
 
-### In Progress
-- [~] Seed klines into D1 (scripts/seed-klines.mjs running)
-- [~] Rebuild VPS Docker container with updated execution server
+- [in_progress] Preserve and inventory current vault
+- [pending] Create canonical linked vault structure and migrate useful content
+- [pending] Update sync and briefing automation
+- [pending] Validate links, boundaries, and generated briefing
 
-### Immediate Next Steps
-1. Seed 10 pairs × 100 bars of 4h klines → trigger analysis engine
-2. After klines populate: analysis engine produces signals → intents flow to VPS
-3. Seed 1h klines for SMC patterns (4x more signals than 4h)
-4. Switch EXECUTION_MODE=production after 48h validation
+## Guardrails
 
-### ML Next Steps
-1. Retrain metacognitive model on full 40K MTF rows (scripts/data/klines-mtf.json has 50 pairs)
-2. Add 1h SMC pattern features as amplifiers (not prerequisites)
-3. Run backtest via TradingView CDP (TV Desktop running at :9222)
-4. Target: 3+ PF from calibrated model (no arbitrary scoring)
+- Preserve existing notes in an archive before restructuring.
+- Never load raw session logs or unreviewed capture into the briefing.
+- Keep current operational truth separate from durable facts and decisions.
+- Use Obsidian wiki links for relationships and evidence.
 
-### Demo Mode
-- Demo portfolio should start from 0 trades at user registration
-- Live/Demo toggle should show different dashboards without gating order submission
+## Errors Encountered
 
-### Infrastructure
-- [ ] Upgrade wrangler: `npm install --save-dev wrangler@4`
-- [ ] Set up Redis-backed rate limiting on VPS
-- [ ] Add Prometheus alerts for execution failures
-- [ ] Wire Grafana dashboards to Prometheus
-
-## Recent Commits (since July 12)
-- 199dcad: Aster v3 + internal API + UI polish (current HEAD)
-- 0681b2b: fix aster activation flow
-- 2fc9c4c: fix klines inserts — chunked at 90 rows
-- 607363b: fix align aster execution with futures v3
-- fdbf722: remove Coinlegs brand from frontend
-
-## Recovery Next Steps
-```bash
-# Check kline seed
-npx wrangler d1 execute anavitrade-db --remote --command "SELECT COUNT(*) FROM klines"
-
-# Trigger analysis after klines exist
-curl -s -H "x-admin-api-key: [REDACTED — set via wrangler secret]" -X POST \
-  "https://anavitrade-trading.erhazeariel.workers.dev/api/analysis/run"
-
-# Check VPS execution server
-curl http://5.161.229.209:9090/health
-
-# Seed 1h klines (SMC patterns fire 4x more)
-node scripts/seed-klines.mjs --pairs 10 --bars 300 --timeframe 1h
-```
-
-## Orchestration Run — 2026-07-16 (Unified Algo PRD Phase 0 + 1)
-
-PRD: docs/prd/2026-07-16-unified-algo-development-integration.md
-Pattern: task-farm (Codex workers + Claude Opus agents, strict file ownership)
-
-| Workstream | Owner | Files owned |
-|---|---|---|
-| R0.3 calibrator port + R0.4 featurizer parity test | Codex swarm (2 workers) | src/server/ml/inference-router.ts, scripts/ml/infer.py, scripts/ml/tests/* (new) |
-| R1.1 unified gate + R1.3 fail-closed dispatch | Opus agent A | src/server/signals/unified-engine.ts, src/server/execution/dispatch.ts, src/drizzle/schema.ts |
-| R1.2 exit policy (swing-pivot stop + 5ATR ratchet) | Opus agent B | src/server/analysis/exits/* |
-| R0.1 extended kline dataset (≥120d, 50 pairs, 3 TFs) | Opus agent C | scripts/data/* (data only, no src changes) |
+| Error | Attempt | Resolution |
+|---|---:|---|
+| External apply_patch blocked by sandbox network namespace | 1 | Use approved escalated command for vault/script writes |

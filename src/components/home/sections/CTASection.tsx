@@ -104,7 +104,7 @@ export default function CTASection() {
               Start receiving signals today
             </h2>
             <p className="text-muted-foreground max-w-md mx-auto mb-8">
-              Create a free account and access the live signal feed immediately. Upgrade to Automated Trades when you're ready to let the engine execute for you.
+              Create a free account to explore market signals and research. Aster mainnet execution is enabled for the controlled pilot with capped tester order sizing.
             </p>
             <div className="flex flex-wrap gap-3.5 justify-center">
               <Link href="/register">

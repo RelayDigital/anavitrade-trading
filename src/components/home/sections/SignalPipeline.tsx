@@ -50,10 +50,10 @@ export default function SignalPipeline() {
     },
     {
       icon: <Zap className="w-5 h-5" />,
-      title: "We place it for you",
-      desc: "The trade goes straight to your exchange automatically — no button-mashing.",
-      meta: "Capability gated",
-      detail: "The execution layer submits the order via API or your connected Ledger. A kill switch lets you pause everything instantly. Every trade is logged to your dashboard before the confirmation email arrives.",
+      title: "We validate execution",
+      desc: "Aster mainnet execution is enabled for authorized pilot accounts with capped order sizing.",
+      meta: "Automation enabled",
+      detail: "The execution layer is capability-gated and has a kill switch. Aster uses its mainnet authorization flow, and live tester orders remain capped by risk policy.",
       indicatorCount: 1,
     },
   ];
@@ -68,8 +68,8 @@ export default function SignalPipeline() {
         <SectionHeader
           align="center"
           eyebrow="How it works"
-          title="From market signal to done — automatically"
-          subtitle="Signals move through validation, risk checks, and capability-gated execution. Click any step for the technical detail."
+          title="From market signal to a reviewed decision"
+          subtitle="Signals move through research, risk checks, and controlled execution readiness. Click any step for the technical detail."
           className="mb-16"
         />
 

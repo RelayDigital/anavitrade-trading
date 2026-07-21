@@ -9,14 +9,14 @@ import { cappedDelay } from "../hooks/motion";
    Two-column editorial: a sticky "Questions?" heading + support CTA on the
    left, the accordion on the right. Plain-language answers, readable width. */
 const FAQS = [
-  { q: "What is Anavitrade?", a: "It's a trading platform that spots opportunities in the crypto market for you. You can simply receive the alerts and trade by hand, or switch on automation and let it place the trades for you — your choice." },
-  { q: "What's the difference between the two tiers?", a: "Signal Delivery sends you clear Buy/Sell/Hold alerts and you decide what to do. Automated Trades connects to your account and does it all for you — how much to buy, when to take profit, and when to cut a loss." },
-  { q: "Is my money safe?", a: "Yes. We can place trades but can never withdraw or move your funds — they never leave your own account. Everything sensitive is encrypted, and you can switch us off at any time." },
-  { q: "Do I need to know anything about trading?", a: "No. That's the point. The engine handles the analysis and the discipline. You just choose how hands-on you want to be and watch it work from your dashboard." },
-  { q: "Can I try it before using real money?", a: "Absolutely. Create a free account and explore the live signal feed and demo dashboard right away — no exchange connection and no card required." },
-  { q: "What is an API key?", a: "It's a secure permission slip from your exchange that lets Anavitrade place trades on your behalf. You control what it can do — we only ever ask for trade access, never withdrawal access." },
-  { q: "What if I use a Ledger hardware wallet?", a: "Fully supported. Your Ledger keeps your keys, we only get trade-only access, and your seed phrase never leaves your device. You can revoke access anytime from your own account." },
-  { q: "What happens when the market gets crazy?", a: "The engine has built-in safety logic that shrinks position sizes or pauses trading during abnormal, high-risk conditions — helping protect you from flash crashes." },
+  { q: "What is Anavitrade?", a: "Anavitrade is a non-custodial market-intelligence platform. You can explore signals and research in the dashboard, then authorize capped Aster mainnet execution for pilot tester accounts." },
+  { q: "Can Anavitrade trade for me today?", a: "Yes, for approved pilot accounts that complete Aster authorization. Live order submission is enabled with capped tester sizing and risk controls." },
+  { q: "Is my money safe?", a: "Anavitrade does not custody customer funds, request seed phrases, or request withdrawal permissions. Trading remains risky, and signals are not a guarantee of profit. Always review any action you choose to take." },
+  { q: "Do I need to know anything about trading?", a: "You should understand the risks before trading. The dashboard is designed to make the research and risk context easier to review, but it does not replace your own decision-making or guarantee an outcome." },
+  { q: "Can I try it before using real money?", a: "Yes. Create a free account to explore the dashboard and signal research. Aster authorization is separate, and live order sizing is capped for the pilot." },
+  { q: "What is an API key?", a: "It is a credential an exchange can use to authorize trading permissions. Anavitrade does not request withdrawal permissions. Live API execution is limited to configured trade-only connections and pilot caps." },
+  { q: "What if I use a Ledger hardware wallet?", a: "The wallet-based Aster authorization flow supports hardware wallets. Your seed phrase never leaves your device, and live pilot execution stays behind account authorization and risk controls." },
+  { q: "What happens when the market gets crazy?", a: "The research and execution layers include risk controls and a kill switch, but no control can eliminate market risk. Pilot automation can be halted globally or per account." },
 ];
 
 export default function FAQSection() {

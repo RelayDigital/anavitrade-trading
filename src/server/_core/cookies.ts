@@ -4,7 +4,11 @@ import { isExplicitDevelopmentOrTestnet } from "../auth/origin";
 export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 
 export function getSessionCookieOptions(env: Env) {
-  const secure = !isExplicitDevelopmentOrTestnet(env);
+  // Testnet may still run over HTTPS (the deployed Vercel UI does). Secure
+  // cookies are required for the cross-site Vercel → Worker session boundary;
+  // only an explicitly HTTP local origin should receive an insecure cookie.
+  const configuredOrigin = typeof env.APP_BASE_URL === "string" ? env.APP_BASE_URL : "";
+  const secure = configuredOrigin.startsWith("https://") || !isExplicitDevelopmentOrTestnet(env);
   return {
     httpOnly: true,
     secure,

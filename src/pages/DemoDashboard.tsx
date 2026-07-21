@@ -325,14 +325,9 @@ export default function DemoDashboard() {
               <div>
                 <h3 className="font-heading font-semibold text-foreground">Performance Summary</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {closedTrades.length} closed trades · 0.5% fixed-fractional sizing · compounded returns
+                  {closedTrades.length} modeled trades · 0.5% fixed-fractional sizing · simulation only, not live performance
                 </p>
               </div>
-              {summaryStats.winRatePct >= 60 && (
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-green-500/15 text-green-400 border border-green-500/30">
-                  ↑ Strong edge detected
-                </span>
-              )}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <SummaryStatItem
@@ -343,9 +338,9 @@ export default function DemoDashboard() {
                 bar={summaryStats.winRatePct}
               />
               <SummaryStatItem
-                label="Avg Profit / Trade"
+                label="Avg Modeled P&L / Trade"
                 value={`${summaryStats.avgProfitUsd >= 0 ? "+" : ""}$${Math.abs(summaryStats.avgProfitUsd).toFixed(2)}`}
-                sub={`${summaryStats.avgReturnPct >= 0 ? "+" : ""}${summaryStats.avgReturnPct.toFixed(2)}% per signal — it adds up fast`}
+                sub={`${summaryStats.avgReturnPct >= 0 ? "+" : ""}${summaryStats.avgReturnPct.toFixed(2)}% per simulated signal`}
                 positive={summaryStats.avgProfitUsd >= 0}
               />
               <SummaryStatItem
@@ -358,13 +353,13 @@ export default function DemoDashboard() {
               <SummaryStatItem
                 label="Profit Factor"
                 value={summaryStats.profitFactor != null ? summaryStats.profitFactor.toFixed(2) + "×" : "∞"}
-                sub={summaryStats.profitFactor == null || summaryStats.profitFactor > 2 ? "Exceptional edge — wins dwarf losses" : "Gross wins ÷ gross losses"}
+                sub="Gross modeled wins ÷ gross modeled losses"
                 positive={summaryStats.profitFactor == null || summaryStats.profitFactor >= 1}
               />
               <SummaryStatItem
                 label="Best Trade"
                 value={`+${summaryStats.bestTrade.pnlPct.toFixed(2)}%`}
-                sub={`${summaryStats.bestTrade.pair} — modeled historical scenario`}
+                sub={`${summaryStats.bestTrade.pair} — best modeled historical scenario`}
                 positive
               />
             </div>

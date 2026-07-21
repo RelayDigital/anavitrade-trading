@@ -36,6 +36,10 @@ test("only explicit development and testnet may issue insecure local cookies", (
     getSessionCookieOptions({ ...baseEnv, APP_ENVIRONMENT: "testnet" } as any).secure,
     false,
   );
+  assert.equal(
+    getSessionCookieOptions({ ...baseEnv, APP_ENVIRONMENT: "testnet", APP_BASE_URL: "https://app.example.com" } as any).secure,
+    true,
+  );
   assert.equal(getSessionCookieOptions(baseEnv as any).secure, true);
   assert.equal(
     getSessionCookieOptions({ ...baseEnv, APP_ENVIRONMENT: "development" } as any).sameSite,

@@ -1,4 +1,4 @@
-export type AsterApprovalStatus = "pending" | "approved" | "rejected" | "revoked" | "expired";
+export type AsterApprovalStatus = "pending" | "approved" | "not_required" | "rejected" | "revoked" | "expired";
 
 export type AsterAgentAccountStatus =
   | "missing"
@@ -48,7 +48,7 @@ export type AsterOrderRequest = {
   timeInForce?: "GTC" | "IOC" | "FOK" | "GTX";
   newClientOrderId?: string;
   leverage?: number;
-  builder: string;
+  builder?: string;
   feeRate?: string;
   reduceOnly?: boolean;
   closePosition?: boolean;
@@ -87,7 +87,7 @@ export type AsterStrategyOrderRequest = {
   clientStrategyId: string;
   strategyType: "OTOCO";
   subOrderList: AsterStrategySubOrder[];
-  builder: string;
+  builder?: string;
   feeRate?: string;
 };
 
@@ -104,6 +104,18 @@ export type AsterBalanceSnapshot = {
   availableUsd: number;
   unrealizedPnlUsd?: number;
   raw: unknown;
+};
+
+export type AsterSymbolRules = {
+  symbol: string;
+  pricePrecision: number;
+  quantityPrecision: number;
+  tickSize: number;
+  stepSize: number;
+  minQuantity: number;
+  minNotionalUsd: number;
+  multiplierDown: number;
+  multiplierUp: number;
 };
 
 export type ExecutionAdapter = {
@@ -153,8 +165,21 @@ export type AsterAgentRegistrationParams = {
   nonce: number;
 };
 
-export type AsterAgentActivationMode = "approveAgentWithBuilder";
-export type AsterAgentActivationEndpoint = "/fapi/v3/approveAgent";
+export type AsterAgentActivationMode = "approveAgentWithBuilder" | "registerAndApproveAgent";
+export type AsterAgentActivationEndpoint = "/fapi/v3/approveAgent" | "/fapi/v3/registerAndApproveAgent";
+
+export type AsterRegisterAndApproveParams = {
+  user: string;
+  nonce: number;
+  agentName: string;
+  agentAddress: string;
+  expired: number;
+  signatureChainId: number;
+  canSpotTrade: boolean;
+  canPerpTrade: boolean;
+  canWithdraw: boolean;
+  ipWhitelist?: string;
+};
 
 export type AsterManagementTypedData = {
   domain: {
@@ -164,7 +189,7 @@ export type AsterManagementTypedData = {
     verifyingContract: "0x0000000000000000000000000000000000000000";
   };
   types: Record<string, Array<{ name: string; type: "string" | "bool" | "uint256" }>>;
-  primaryType: "ApproveAgent";
+  primaryType: "ApproveAgent" | "Message";
   message: Record<string, string | boolean | number>;
 };
 
@@ -172,6 +197,6 @@ export type AsterAgentRegistrationChallenge = {
   activationMode: AsterAgentActivationMode;
   endpoint: AsterAgentActivationEndpoint;
   signatureChainId: number;
-  params: AsterAgentRegistrationParams;
+  params: AsterAgentRegistrationParams | AsterRegisterAndApproveParams;
   typedData: AsterManagementTypedData;
 };

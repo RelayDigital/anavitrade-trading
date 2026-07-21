@@ -13,7 +13,7 @@ import type { Kline, EnrichedCandle, UnifiedSignal } from "./types";
 import type { IcrConfig } from "./types";
 import { getKlines } from "./kline-repository";
 import { enrichCandles } from "./indicators";
-import { findSignals } from "./icr/signals";
+import { findLatestSignals } from "./icr/signals";
 import { DEFAULT_ICR_CONFIG } from "./icr/config";
 import { simulateSmartExit, DEFAULT_EXIT_CONFIG } from "./exits/exit-engine";
 
@@ -410,9 +410,11 @@ export async function runBacktest(
   let signalsGenerated = 0;
 
   for (let i = startIdx; i <= lastSignalIdx; i++) {
-    // Re-run findSignals with only candles up to i (no forward look)
+    // Evaluate only the just-closed candle. Scanning the whole prefix here
+    // replays previously found signals once for every later candle and makes
+    // the performance report mathematically invalid.
     const windowEnriched = enriched.slice(0, i + 1);
-    const signals = findSignals(windowEnriched, config.symbol, config.timeframe, icrConfig);
+    const signals = findLatestSignals(windowEnriched, config.symbol, config.timeframe, icrConfig);
     signalsGenerated += signals.length;
 
     for (const signal of signals) {

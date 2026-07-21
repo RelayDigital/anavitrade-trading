@@ -1,6 +1,6 @@
-import { getDb } from "../db";
+import { getDb, getDbEnv } from "../db";
 import { tradeIntents, analysisSignals } from "../../drizzle/schema";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, gte, inArray } from "drizzle-orm";
 import type { UnifiedSignal } from "./types";
 import { validateStructure } from "../smc/validator";
 import { createExecutionJobsForIntent } from "../execution/dispatch";
@@ -15,6 +15,20 @@ export interface DispatchResult {
 }
 
 const DEFAULT_STOP_ATR_BUFFER = 0.02; // 2% default stop distance
+
+/**
+ * A candidate can be recorded without being made executable. Production is
+ * deny-by-default, while testnet requires an explicit opt-in only after the
+ * strategy and exchange proof gates have passed.
+ */
+export function isAutomatedSignalDispatchEnabled(env: {
+  APP_ENVIRONMENT?: string;
+  AUTOMATED_SIGNAL_DISPATCH_ENABLED?: string;
+}): boolean {
+  if (env.AUTOMATED_SIGNAL_DISPATCH_ENABLED === "false") return false;
+  if (env.APP_ENVIRONMENT === "production") return env.AUTOMATED_SIGNAL_DISPATCH_ENABLED === "true";
+  return env.AUTOMATED_SIGNAL_DISPATCH_ENABLED === "true";
+}
 
 /**
  * Build an idempotency key from a signal's identifying tuple.
@@ -187,6 +201,28 @@ export async function dispatchSignal(
       };
     }
 
+    // Keep all candidate evidence, but do not create an executable intent
+    // unless the release operator has explicitly enabled automated dispatch.
+    // This prevents testnet research traffic from accumulating as VPS work.
+    if (!isAutomatedSignalDispatchEnabled(getDbEnv())) {
+      await db.insert(analysisSignals).values({
+        ...signalRecord,
+        dispatched: 0,
+        metadataJson: JSON.stringify({
+          ...(signal.metadata ?? {}),
+          executionSuppressed: true,
+          suppressionReason: "automated_signal_dispatch_disabled",
+        }),
+      } as any).onConflictDoNothing();
+      return {
+        intentId: null,
+        jobsCreated: 0,
+        smcPassed: true,
+        smcScore,
+        error: "Automated signal dispatch is disabled.",
+      };
+    }
+
     // 3. Create TradeIntent
     const side = direction === "long" ? "buy" : "sell";
 
@@ -220,6 +256,16 @@ export async function dispatchSignal(
       jobsCreated = execResult.jobs.filter(j => j.status !== "skipped").length;
     } catch (e: any) {
       console.warn("[dispatcher] createExecutionJobsForIntent:", e?.message);
+    }
+
+    // Do not leave an unowned intent in the VPS polling queue. It is still
+    // useful audit history, but it must not be treated as executable work or
+    // recreated on every five-minute analysis cycle.
+    if (jobsCreated === 0) {
+      await db.update(tradeIntents).set({
+        status: "unassigned",
+        updatedAt: Date.now(),
+      } as any).where(eq(tradeIntents.id, intent.id));
     }
 
     // 5. Record dispatched analysis signal ONLY when at least one job was created.
@@ -302,7 +348,7 @@ export async function dispatchSignalsBatch(
         results.push(r);
         if (r.duplicate) {
           duplicates++;
-        } else if (r.intentId !== null) {
+        } else if (r.intentId !== null && r.jobsCreated > 0) {
           dispatched++;
         } else if (
           r.smcPassed === false &&
@@ -344,7 +390,8 @@ export async function findExistingSignalKeys(
   try {
     // Query for any matching externalSignalIds that have been dispatched
     const recent = Date.now() - 7 * 24 * 60 * 60 * 1000; // last 7 days
-    const rows = await db
+    const [rows, intentRows] = await Promise.all([
+      db
       .select({ externalSignalId: analysisSignals.externalSignalId })
       .from(analysisSignals)
       .where(
@@ -352,13 +399,22 @@ export async function findExistingSignalKeys(
           gte(analysisSignals.createdAt, recent),
           eq(analysisSignals.dispatched, 1),
         ),
-      );
+      ),
+      // An intent can be intentionally unassigned when no user is connected.
+      // It still needs idempotency so the same closed candle is not recreated.
+      db.select({ externalSignalId: tradeIntents.externalSignalId })
+        .from(tradeIntents)
+        .where(inArray(tradeIntents.externalSignalId, keys)),
+    ]);
 
     const existingIds = new Set(
       rows
         .filter((r) => r.externalSignalId !== null)
         .map((r) => r.externalSignalId!),
     );
+    for (const row of intentRows) {
+      if (row.externalSignalId) existingIds.add(row.externalSignalId);
+    }
 
     // Intersect with our keys
     const result = new Set<string>();

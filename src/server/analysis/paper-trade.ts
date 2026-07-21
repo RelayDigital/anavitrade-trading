@@ -5,16 +5,14 @@
  */
 
 import { getDb } from "../db";
-import { analysisSignals } from "../../drizzle/schema";
-import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import { analysisSignals, klines } from "../../drizzle/schema";
+import { eq, and, gte, lte, asc, like, sql } from "drizzle-orm";
 import type { UnifiedSignal, EnrichedCandle } from "./types";
 import { DEFAULT_ICR_CONFIG } from "./icr/config";
 import { KlineFetcher } from "./kline-fetcher";
-import { DerivativesFetcher } from "./derivatives/fetcher";
-import { computeAlpha } from "./derivatives/alpha";
 import { getKlines } from "./kline-repository";
 import { enrichCandles } from "./indicators";
-import { findSignals } from "./icr/signals";
+import { findLatestSignals } from "./icr/signals";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -40,49 +38,53 @@ export const DEFAULT_PAPER_CONFIG: PaperTradeConfig = {
 
 /* ─── Helpers ────────────────────────────────────────────────────────── */
 
-/**
- * Convert ms to a Binance kline interval string that covers the outcome window.
- */
-function outcomeWindowToInterval(trackHours: number): string {
-  if (trackHours <= 6) return "15m";
-  if (trackHours <= 24) return "1h";
-  if (trackHours <= 96) return "4h";
-  return "1d";
-}
+type OutcomeCandle = { openTime: number; high: number; low: number; close: number };
+
+export type PaperOutcome = {
+  status: "stop" | "target" | "time";
+  outcomeR: number;
+  grossOutcomeR: number;
+  feeR: number;
+  candlesObserved: number;
+};
 
 /**
- * Fetch Binance klines for outcome validation.
- * Falls back gracefully if the network call fails.
+ * Simulate a bracket using only candles completed after the signal. When a
+ * candle crosses both stop and target, stop wins: this conservative ordering
+ * avoids claiming a fill sequence that the OHLC data cannot prove.
  */
-async function fetchActualKlines(
-  symbol: string,
-  interval: string,
-  sinceMs: number,
-  limit: number,
-): Promise<{ openTime: number; open: number; high: number; low: number; close: number }[]> {
-  try {
-    const cleanSymbol = symbol.replace("/", "").toUpperCase();
-    const params = new URLSearchParams({
-      symbol: cleanSymbol,
-      interval,
-      limit: String(limit),
-      startTime: String(sinceMs),
-    });
-    const url = `https://api.binance.com/api/v3/klines?${params}`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data: any[] = await res.json();
-    if (!Array.isArray(data)) return [];
-    return data.map((k: any) => ({
-      openTime: Number(k[0]),
-      open: Number(k[1]),
-      high: Number(k[2]),
-      low: Number(k[3]),
-      close: Number(k[4]),
-    }));
-  } catch {
-    return [];
+export function evaluatePaperOutcome(input: {
+  direction: string;
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  candles: OutcomeCandle[];
+  roundTripFeeBps?: number;
+}): PaperOutcome | null {
+  const { entry, stopLoss, takeProfit, candles } = input;
+  const risk = Math.abs(entry - stopLoss);
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(risk) || risk <= 0 ||
+      !Number.isFinite(takeProfit) || takeProfit <= 0 || candles.length === 0) return null;
+  const isLong = input.direction === "long";
+  const targetR = Math.abs(takeProfit - entry) / risk;
+  if (!Number.isFinite(targetR) || targetR <= 0) return null;
+  const feeR = ((input.roundTripFeeBps ?? 6) / 10_000 * entry) / risk;
+
+  for (const candle of candles) {
+    const stopHit = isLong ? candle.low <= stopLoss : candle.high >= stopLoss;
+    const targetHit = isLong ? candle.high >= takeProfit : candle.low <= takeProfit;
+    if (stopHit) {
+      return { status: "stop", grossOutcomeR: -1, feeR, outcomeR: -1 - feeR, candlesObserved: candles.length };
+    }
+    if (targetHit) {
+      return { status: "target", grossOutcomeR: targetR, feeR, outcomeR: targetR - feeR, candlesObserved: candles.length };
+    }
   }
+
+  const lastClose = candles[candles.length - 1]!.close;
+  const grossOutcomeR = (isLong ? lastClose - entry : entry - lastClose) / risk;
+  if (!Number.isFinite(grossOutcomeR)) return null;
+  return { status: "time", grossOutcomeR, feeR, outcomeR: grossOutcomeR - feeR, candlesObserved: candles.length };
 }
 
 /* ─── Public API ─────────────────────────────────────────────────────── */
@@ -116,7 +118,9 @@ export async function runPaperEngine(
       if (klines.length < 100) continue;
 
       const enriched = enrichCandles(klines, DEFAULT_ICR_CONFIG);
-      const signals = findSignals(enriched, symbol, "4h", DEFAULT_ICR_CONFIG);
+      // A paper record represents an actionable, just-closed candle. Scanning
+      // the whole history on every cron run would fabricate repeated samples.
+      const signals = findLatestSignals(enriched, symbol, "4h", DEFAULT_ICR_CONFIG);
       signalsFound += signals.length;
 
       for (const sig of signals) {
@@ -126,8 +130,10 @@ export async function runPaperEngine(
         ) {
           // Record with dispatched=0 (paper only — no live order)
           try {
+            const paperSignalId = `paper:${sig.source}:${sig.symbol}:${sig.timeframe}:${sig.direction}:${sig.timestamp}`;
             await db.insert(analysisSignals).values({
               source: sig.source,
+              externalSignalId: paperSignalId,
               symbol: sig.symbol,
               timeframe: sig.timeframe,
               direction: sig.direction,
@@ -140,11 +146,13 @@ export async function runPaperEngine(
               componentsJson: JSON.stringify(sig.components),
               structuralScore: sig.structuralScore,
               structuralConfidence: String(sig.confidence),
-              metadataJson: JSON.stringify(sig.metadata),
+              metadataJson: JSON.stringify({ ...sig.metadata, paperSignalTimestamp: sig.timestamp }),
               dispatched: 0, // PAPER ONLY
               createdAt: Date.now(),
-            } as any);
-            qualified.push(sig);
+            } as any).onConflictDoNothing();
+            const [recorded] = await db.select({ id: analysisSignals.id }).from(analysisSignals)
+              .where(eq(analysisSignals.externalSignalId, paperSignalId)).limit(1);
+            if (recorded) qualified.push(sig);
           } catch {
             skipped++;
           }
@@ -177,14 +185,15 @@ export async function validatePaperOutcomes(
   const db = getDb();
   const cutoff = Date.now() - trackHours * 60 * 60 * 1000;
 
-  // Find paper signals (dispatched=0) older than trackHours that haven't had
-  // their metadata updated with outcome data.
+  // Only evaluate deliberately-recorded paper signals. Never mix in rejected
+  // live candidates: their metadata is not an execution record.
   const pending = await db
     .select()
     .from(analysisSignals)
     .where(
       and(
         eq(analysisSignals.dispatched, 0),
+        like(analysisSignals.externalSignalId, "paper:%"),
         lte(analysisSignals.createdAt, cutoff),
         sql`${analysisSignals.metadataJson} NOT LIKE '%"paperOutcomeR"%'`,
       ),
@@ -203,51 +212,32 @@ export async function validatePaperOutcomes(
 
   for (const paper of pending) {
     try {
-      const interval = outcomeWindowToInterval(trackHours);
-      const klines = await fetchActualKlines(
-        paper.symbol,
-        interval,
-        paper.createdAt,
-        Math.ceil(trackHours * 4), // enough candles to cover the window
-      );
-
-      if (klines.length < 2) continue;
-
       const entryPrice = parseFloat(paper.entry);
-      let maxHigh = entryPrice;
-      let minLow = entryPrice;
-
-      for (const k of klines) {
-        if (k.high > maxHigh) maxHigh = k.high;
-        if (k.low < minLow) minLow = k.low;
-      }
-
-      // Direction-aware R computation
-      const dir = paper.direction;
-      let outcomeR: number;
-      if (dir === "long") {
-        const bestPct = (maxHigh - entryPrice) / entryPrice;
-        const worstPct = (minLow - entryPrice) / entryPrice;
-        // Reward favorable moves, penalize adverse moves
-        outcomeR = bestPct * 100;
-        if (worstPct < -(Math.abs(bestPct) * 0.5)) {
-          // If worst drawdown exceeded 50% of best excursion, cap the R
-          outcomeR = Math.max(outcomeR, worstPct * 100);
-        }
-      } else {
-        const bestPct = (entryPrice - minLow) / entryPrice;
-        const worstPct = (entryPrice - maxHigh) / entryPrice;
-        outcomeR = bestPct * 100;
-        if (worstPct < -(Math.abs(bestPct) * 0.5)) {
-          outcomeR = Math.max(outcomeR, worstPct * 100);
-        }
-      }
+      const stopLoss = parseFloat(paper.stopLoss ?? "");
+      const takeProfit = parseFloat(paper.takeProfit ?? "");
+      const meta = paper.metadataJson ? JSON.parse(paper.metadataJson as string) : {};
+      const enteredAt = Number(meta.paperSignalTimestamp ?? paper.createdAt);
+      const rows = await db.select().from(klines).where(and(
+        eq(klines.symbol, paper.symbol),
+        eq(klines.timeframe, paper.timeframe),
+        gte(klines.openTime, enteredAt),
+        lte(klines.openTime, paper.createdAt + trackHours * 60 * 60 * 1000),
+      )).orderBy(asc(klines.openTime)).limit(500);
+      const outcome = evaluatePaperOutcome({
+        direction: paper.direction,
+        entry: entryPrice,
+        stopLoss,
+        takeProfit,
+        candles: rows.map((row) => ({ openTime: row.openTime, high: Number(row.high), low: Number(row.low), close: Number(row.close) })),
+      });
+      if (!outcome) continue;
 
       // Persist outcome in metadata
-      const meta = paper.metadataJson
-        ? JSON.parse(paper.metadataJson as string)
-        : {};
-      meta.paperOutcomeR = outcomeR;
+      meta.paperOutcomeR = outcome.outcomeR;
+      meta.paperOutcomeGrossR = outcome.grossOutcomeR;
+      meta.paperOutcomeFeeR = outcome.feeR;
+      meta.paperOutcomeStatus = outcome.status;
+      meta.paperOutcomeCandles = outcome.candlesObserved;
       meta.paperOutcomeValidatedAt = Date.now();
 
       await db
@@ -258,17 +248,17 @@ export async function validatePaperOutcomes(
         .where(eq(analysisSignals.id, paper.id));
 
       validated++;
-      totalR += outcomeR;
-      if (outcomeR > 0) winners++;
+      totalR += outcome.outcomeR;
+      if (outcome.outcomeR > 0) winners++;
       else losers++;
 
       const sourceKey = paper.source ?? "unknown";
       if (!summaryMap[sourceKey]) {
         summaryMap[sourceKey] = { totalR: 0, winnerCount: 0, signalCount: 0 };
       }
-      summaryMap[sourceKey].totalR += outcomeR;
+      summaryMap[sourceKey].totalR += outcome.outcomeR;
       summaryMap[sourceKey].signalCount++;
-      if (outcomeR > 0) summaryMap[sourceKey].winnerCount++;
+      if (outcome.outcomeR > 0) summaryMap[sourceKey].winnerCount++;
     } catch {
       // best effort — skip failed validations
     }

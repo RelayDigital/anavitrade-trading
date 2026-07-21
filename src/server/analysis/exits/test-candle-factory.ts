@@ -53,6 +53,11 @@ export function makeCandle(overrides: CandleOverrides = {}): EnrichedCandle {
     bbUpper: close + 1000, // price well inside band → no bollinger return
     bbLower: close - 1000,
     bbWidth: 2000,
+    wt1: 0,
+    wt2: 0,
+    moneyFlow: 0,
+    stochRsiK: 50,
+    stochRsiD: 50,
     displacement: 0, // → no over-extension
   };
 }

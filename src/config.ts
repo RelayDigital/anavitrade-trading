@@ -1,8 +1,6 @@
 export function getApiBaseUrl(): string {
-  if (import.meta.env.DEV) {
-    // In dev, Vite proxies /api to localhost:8787
-    return "";
-  }
-  // In production (Vercel), point at the Cloudflare Worker
-  return "https://anavitrade-trading.erhazeariel.workers.dev";
+  // Keep browser requests same-origin in both local Vite and Vercel. Vite
+  // proxies /api locally and Vercel rewrites /api to the Worker in production;
+  // this avoids third-party-cookie blocking between vercel.app and workers.dev.
+  return "";
 }

@@ -27,10 +27,11 @@ export default function AsterOnboarding() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [activated, setActivated] = useState(false);
   const [recentWalletAddress, setRecentWalletAddress] = useState<string | null>(null);
+  const [isActivating, setIsActivating] = useState(false);
 
   const walletAddress = wagmiAddress ?? recentWalletAddress ?? web3Session?.walletAddress ?? null;
   const isActive = status?.status === "active";
-  const walletReady = !!walletAddress;
+  const walletReady = !!walletAddress && !!connector;
 
   const prepareRegistration = trpc.aster.prepareRegistration.useMutation();
   const saveWallet = trpc.web3Wallet.connect.useMutation();
@@ -42,39 +43,50 @@ export default function AsterOnboarding() {
       utils.liveAccount.get.invalidate();
       setTimeout(() => navigate("/dashboard"), 1200);
     },
-    onError: (e) => toast.error(e.message || "Failed to activate Aster."),
   });
 
-  const ensureServerWalletSession = async (address: string) => {
+  const ensureServerWalletSession = async (address: string, activeChainId: number) => {
     const currentWallet = address.toLowerCase();
     const savedWallet = web3Session?.walletAddress?.toLowerCase();
     const recentlySavedWallet = recentWalletAddress?.toLowerCase();
-    if (savedWallet === currentWallet || recentlySavedWallet === currentWallet) {
+    if ((savedWallet === currentWallet || recentlySavedWallet === currentWallet) && web3Session?.chainId === activeChainId) {
       return;
     }
 
     await saveWallet.mutateAsync({
       walletAddress: address,
       walletType: "other",
-      chainId,
+      chainId: activeChainId,
       maxDailyLossPct: 5,
     });
     await utils.web3Wallet.getSession.invalidate();
   };
 
   const handleActivate = async () => {
+    if (isActivating) return;
     const provider = await connector?.getProvider();
-    const providerAccounts = provider && !wagmiAddress
+    const providerAccounts = provider
       ? await (provider as Parameters<typeof signAsterRegistrationTypedData>[0]["provider"]).request({ method: "eth_accounts" }).catch(() => [])
       : [];
     const providerAddress = Array.isArray(providerAccounts) && typeof providerAccounts[0] === "string" ? providerAccounts[0] : null;
-    const signingAddress = wagmiAddress ?? providerAddress ?? recentWalletAddress;
+    const signingAddress = providerAddress ?? wagmiAddress;
+    const rawChainId = provider
+      ? await (provider as Parameters<typeof signAsterRegistrationTypedData>[0]["provider"]).request({ method: "eth_chainId" }).catch(() => null)
+      : null;
+    const activeChainId = typeof rawChainId === "string"
+      ? (rawChainId.toLowerCase().startsWith("0x") ? Number.parseInt(rawChainId, 16) : Number(rawChainId))
+      : chainId;
     if (!provider || !signingAddress) {
       setShowWalletModal(true);
       return;
     }
+    if (!Number.isInteger(activeChainId) || activeChainId <= 0) {
+      toast.error("Your wallet network could not be read. Reconnect the wallet and try again.");
+      return;
+    }
+    setIsActivating(true);
     try {
-      await ensureServerWalletSession(signingAddress);
+      await ensureServerWalletSession(signingAddress, activeChainId);
       const challenge = await prepareRegistration.mutateAsync();
       const signature = await signAsterRegistrationTypedData({
         provider: provider as Parameters<typeof signAsterRegistrationTypedData>[0]["provider"],
@@ -91,19 +103,21 @@ export default function AsterOnboarding() {
       });
     } catch (e: any) {
       const message = String(e?.message ?? "");
-      const chainRefusal = /chainId should be same as current chainId|wallet_switchEthereumChain|typed data/i.test(message);
-      toast.error(chainRefusal
-        ? "Your wallet refused the Aster signing domain. Switch to a wallet/account that supports Aster typed-data signing and try again."
+      const rejected = /reject|denied|cancel|user refused/i.test(message);
+      toast.error(rejected
+        ? "Signing was cancelled. No Aster permissions changed."
         : message || "Failed to activate Aster.");
+    } finally {
+      setIsActivating(false);
     }
   };
 
   // Auto-close wallet modal once connected
   useEffect(() => {
-    if (walletAddress && showWalletModal) {
+    if (connector && walletAddress && showWalletModal) {
       setShowWalletModal(false);
     }
-  }, [walletAddress, showWalletModal]);
+  }, [connector, walletAddress, showWalletModal]);
 
   return (
     <DashboardLayout variant="onboarding">
@@ -121,7 +135,7 @@ export default function AsterOnboarding() {
             One-click Aster Activation
           </h1>
           <p className="text-muted-foreground leading-relaxed max-w-sm mx-auto">
-            Connect your wallet and approve an Aster Agent signer. Your wallet signs the official Aster registration message.
+            Connect your wallet and approve an Aster Agent signer. Your wallet signs the official Aster registration message; Anavitrade never signs this authorization on your behalf.
           </p>
         </motion.div>
 
@@ -182,9 +196,9 @@ export default function AsterOnboarding() {
             {[
               "Anavitrade generates a dedicated Agent signer for your account",
               "The Agent can place and cancel Aster perp orders only — no withdrawal access",
-              "A 30-day approval is set (auto-renewable)",
-              "Your wallet signs Aster's register-and-approve Agent message",
-              "Zero-custody — funds never leave your account",
+              "A 30-day approval is set; renewal requires another wallet signature",
+              "Your wallet reviews and signs Aster's register-and-approve Agent message",
+              "The Agent never receives custody of your wallet or withdrawal access",
             ].map((item, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
@@ -196,7 +210,7 @@ export default function AsterOnboarding() {
           {/* CTA */}
           <button
             onClick={handleActivate}
-            disabled={saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending || isActive || activated}
+            disabled={isActivating || saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending || isActive || activated}
             className="w-full h-12 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 relative overflow-hidden group font-heading"
             style={{
               color: saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? "var(--color-foreground)" : "var(--color-background)",
@@ -207,7 +221,7 @@ export default function AsterOnboarding() {
               border: isActive ? "1px solid oklch(0.74 0.18 145 / 0.3)" : "none",
             }}
           >
-            {saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? (
+            {isActivating || saveWallet.isPending || prepareRegistration.isPending || completeRegistration.isPending ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Activating...
@@ -230,11 +244,9 @@ export default function AsterOnboarding() {
             )}
           </button>
 
-          {!walletReady && (
-            <p className="text-[11px] text-muted-foreground/60 text-center mt-3">
-              You'll be prompted to connect your wallet. Aster activation requires one wallet signature — no gas fees.
-            </p>
-          )}
+          <p className="text-[11px] text-muted-foreground/60 text-center mt-3">
+            Aster Agent activation uses the typed-data signing domain (chain 56). This does not switch your wallet network, submit an order, or move funds.
+          </p>
         </motion.div>
 
         {/* Trust badges */}
@@ -245,7 +257,7 @@ export default function AsterOnboarding() {
           className="flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground/50"
         >
           <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" /> No withdrawal access</span>
-          <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Direct onchain execution</span>
+          <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Restricted Agent execution</span>
           <span className="flex items-center gap-1.5"><ExternalLink className="w-3.5 h-3.5" /> Powered by Aster</span>
         </motion.div>
       </div>
